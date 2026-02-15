@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:virtual_design/presentation/setup/setup_page.dart';
 
 class UploadPage extends StatelessWidget {
   const UploadPage({super.key});
@@ -65,7 +64,7 @@ class UploadPage extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           const Text(
-            'Virtual Designer',
+            'PrintManager Pro',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -284,7 +283,7 @@ class UploadPage extends StatelessWidget {
             
             // Subtitle
             const Text(
-              'Support for PDF, JPG, PNG. Max file size 5MB.',
+              'Support for PDF, DOCX, PNG. Max file size 500MB.',
               style: TextStyle(
                 fontSize: 14,
                 color: Color(0xFF6B7280),
@@ -667,9 +666,7 @@ class UploadPage extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () {
-                Get.to(SetupPage());
-              },
+              onPressed: () {},
               icon: const Icon(Icons.rocket_launch, size: 20),
               label: const Text(
                 'Start All Uploads',
@@ -809,7 +806,7 @@ class UploadPage extends StatelessWidget {
         Switch(
           value: isEnabled,
           onChanged: (value) {},
-          activeThumbColor: const Color(0xFF4587F9),
+          activeColor: const Color(0xFF4587F9),
         ),
       ],
     );
