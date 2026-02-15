@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:virtual_design/presentation/setup/setup_page.dart';
 
 class UploadPage extends StatelessWidget {
   const UploadPage({super.key});
@@ -64,7 +65,7 @@ class UploadPage extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           const Text(
-            'PrintManager Pro',
+            'Virtua Designer',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -666,7 +667,9 @@ class UploadPage extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: () {},
+              onPressed: () {
+                Get.to(() => const SetupPage());
+              },
               icon: const Icon(Icons.rocket_launch, size: 20),
               label: const Text(
                 'Start All Uploads',

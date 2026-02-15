@@ -424,7 +424,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           SizedBox(width: 8),
           Text(
-            'PrintManager',
+            'Virtual Designer',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
         ],

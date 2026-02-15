@@ -1112,8 +1112,7 @@ class _SetupPageState extends State<SetupPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('PrintManager', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              Text('v2.4.0 (Desktop)', style: TextStyle(fontSize: 10, color: Colors.grey)),
+              Text('Virtua Designer', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ],
           ),
         ],
