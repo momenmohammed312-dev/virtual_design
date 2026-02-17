@@ -28,6 +28,14 @@ except ImportError:
     SVGWRITE_AVAILABLE = False
     print("⚠️  svgwrite not installed. SVG export not available.")
 
+# For Registration Marks
+from core.registration_marks import (
+    RegistrationMarksGenerator,
+    RegistrationConfig,
+    MarkStyle,
+    add_marks_to_all_films,
+)
+
 
 class Exporter:
     """Export films in multiple formats"""
@@ -228,6 +236,139 @@ class Exporter:
             dwg.add(dwg.path(d=path_data, fill=fill_color))
         
         dwg.save()
+        
+        return filepath
+    
+    def export_all_films_with_marks(
+        self,
+        masks,
+        colors,
+        color_names,
+        add_marks: bool = True,
+        mark_type: str = 'full',
+    ):
+        """
+        Export all color films as PNG WITH registration marks
+
+        Args:
+            masks:       List of binary masks
+            colors:      List of RGB colors [[R,G,B], ...]
+            color_names: List of color names
+            add_marks:   Whether to add registration marks
+            mark_type:   'full', 'corner', 'side', 'minimal'
+            
+        Returns:
+            List of file paths
+        """
+        print(f"\n💾 Exporting {len(masks)} films...")
+        
+        exported_files = []
+        total = len(masks)
+        
+        # Configure marks
+        config = RegistrationConfig(
+            add_border=True,
+            border_size=120,
+            mark_type=mark_type,
+            dpi=self.dpi,
+            style=MarkStyle(
+                mark_size=60,
+                line_thickness=2,
+                show_circle=True,
+                show_cross=True,
+                show_corner_marks=True,
+                show_crop_marks=True,
+                show_color_label=True,
+                show_color_bar=(total > 1),
+            )
+        )
+        
+        generator = RegistrationMarksGenerator(dpi=self.dpi)
+        
+        for idx, (mask, color, name) in enumerate(zip(masks, colors, color_names)):
+            color_index = idx + 1
+            
+            if add_marks:
+                # Add registration marks
+                result_image = generator.add_marks(
+                    image=mask,
+                    color_name=name,
+                    color_index=color_index,
+                    total_colors=total,
+                    color_rgb=tuple(color),
+                    config=config,
+                )
+                filename = f"film_{color_index:02d}_{name}_marks.png"
+            else:
+                result_image = mask
+                filename = f"film_{color_index:02d}_{name}.png"
+            
+            # Save with PIL to keep DPI metadata
+            if len(result_image.shape) == 2:
+                result_rgb = cv2.cvtColor(result_image, cv2.COLOR_GRAY2RGB)
+            else:
+                result_rgb = cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB)
+            
+            filepath = self.output_dir / filename
+            pil_image = Image.fromarray(result_rgb)
+            pil_image.save(str(filepath), dpi=(self.dpi, self.dpi))
+            
+            print(f"   ✅ {filename}")
+            exported_files.append(filepath)
+        
+        return exported_files
+    
+    def export_with_marks(
+        self,
+        mask,
+        color_name: str,
+        color_index: int,
+        total_colors: int,
+        color_rgb,
+        mark_type: str = 'full',
+    ) -> Path:
+        """
+        Export single film with registration marks
+
+        Args:
+            mask:         Binary mask numpy array
+            color_name:   Color name (e.g. "Black")
+            color_index:  1-based index
+            total_colors: Total number of films
+            color_rgb:    RGB color [R, G, B]
+            mark_type:    'full', 'corner', 'side', 'minimal'
+            
+        Returns:
+            Path to saved file
+        """
+        config = RegistrationConfig(
+            add_border=True,
+            border_size=120,
+            mark_type=mark_type,
+            dpi=self.dpi,
+        )
+        
+        generator = RegistrationMarksGenerator(dpi=self.dpi)
+        
+        result = generator.add_marks(
+            image=mask,
+            color_name=color_name,
+            color_index=color_index,
+            total_colors=total_colors,
+            color_rgb=tuple(color_rgb),
+            config=config,
+        )
+        
+        filename = f"film_{color_index:02d}_{color_name}_marks.png"
+        filepath = self.output_dir / filename
+        
+        if len(result.shape) == 2:
+            result_rgb = cv2.cvtColor(result, cv2.COLOR_GRAY2RGB)
+        else:
+            result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
+        
+        pil_image = Image.fromarray(result_rgb)
+        pil_image.save(str(filepath), dpi=(self.dpi, self.dpi))
         
         return filepath
     

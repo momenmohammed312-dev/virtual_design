@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  silk_screen:
+    build: .
+    image: silk_screen_processor:latest
+    container_name: silk_screen_processor
+    volumes:
+      - ./input:/app/input:ro
+      - ./output:/app/output:rw
+    environment:
+      - DPI=300
+      - COLORS=4
+    command: >
+      --input /app/input/design.jpg
+      --output /app/output
+      --colors 4
+      --dpi 300
+      --clean
+      --pdf
