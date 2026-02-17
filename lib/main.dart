@@ -3,11 +3,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-import 'package:virtual_design/presentation/splash/splash_screen.dart';
-import 'package:virtual_design/presentation/dashboard/dashboard.dart';
-import 'package:virtual_design/presentation/upload/upload_page.dart';
-import 'package:virtual_design/presentation/setup/setup_page.dart';
-import 'package:virtual_design/presentation/preview/preview_page.dart';
+import 'core/constants/app_constants.dart';
+import 'presentation/splash/splash_screen.dart';
+import 'presentation/dashboard/dashboard.dart';
+import 'presentation/upload/upload_page.dart';
+import 'presentation/setup/setup_page.dart';
+import 'presentation/preview/preview_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,63 +22,15 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Virtual Design – Silk Screen Studio',
-
-      // ── Theme ──────────────────────────────────────────
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1564A5),
-          brightness: Brightness.light,
-        ),
-        fontFamily: 'Roboto',
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0E3182),
-          foregroundColor: Colors.white,
-          elevation: 0,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF1564A5),
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-        ),
-      ),
-
-      // ── Start with Splash ───────────────────────────────
+      title: AppConstants.appTitle,
+      theme: AppConstants.lightTheme,
       initialRoute: '/splash',
-
-      // ── Routes ─────────────────────────────────────────
       getPages: [
-        GetPage(
-          name: '/splash',
-          page: () => const SplashScreen(),
-          transition: Transition.fadeIn,
-        ),
-        GetPage(
-          name: '/dashboard',
-          page: () => DashboardScreen(),
-          transition: Transition.fadeIn,
-          transitionDuration: const Duration(milliseconds: 500),
-        ),
-        GetPage(
-          name: '/upload',
-          page: () => const UploadPage(),
-          transition: Transition.rightToLeft,
-        ),
-        GetPage(
-          name: '/setup',
-          page: () => const SetupPage(),
-          transition: Transition.rightToLeft,
-        ),
-        GetPage(
-          name: '/preview',
-          page: () => const PreviewPage(),
-          transition: Transition.rightToLeft,
-        ),
+        GetPage(name: '/splash', page: () => const SplashScreen()),
+        GetPage(name: '/dashboard', page: () => const DashboardScreen()),
+        GetPage(name: '/upload', page: () => const UploadPage()),
+        GetPage(name: '/setup', page: () => const SetupPage()),
+        GetPage(name: '/preview', page: () => const PreviewPage()),
       ],
     );
   }

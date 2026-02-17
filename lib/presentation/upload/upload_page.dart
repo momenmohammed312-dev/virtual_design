@@ -380,7 +380,7 @@ class UploadPage extends StatelessWidget {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: iconColor.withOpacity(0.1),
+              color: iconColor.withAlpha((0.1 * 255).round()),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
@@ -809,7 +809,7 @@ class UploadPage extends StatelessWidget {
         Switch(
           value: isEnabled,
           onChanged: (value) {},
-          activeColor: const Color(0xFF4587F9),
+          activeThumbColor: const Color(0xFF4587F9),
         ),
       ],
     );

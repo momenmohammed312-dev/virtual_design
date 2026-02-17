@@ -34,24 +34,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: 
-        isClickable ?
-        onTap ?? () {
-          // ignore: avoid_print
-          print('Container clicked!');
-        } : null,
-        // ignore: deprecated_member_use
-        splashColor: primaryBlue.withOpacity(0.2),
-        // ignore: deprecated_member_use
-        highlightColor: primaryBlue.withOpacity(0.1),
+        onTap: isClickable ? onTap ?? () {} : null,
+        splashColor: primaryBlue.withAlpha((0.2 * 255).round()),
+        highlightColor: primaryBlue.withAlpha((0.1 * 255).round()),
         child: Ink(
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(8),
             boxShadow: [
               BoxShadow(
-                // ignore: deprecated_member_use
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withAlpha((0.05 * 255).round()),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
@@ -259,7 +251,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             width: MediaQuery.of(context).size.width * 0.17,
                             height: MediaQuery.of(context).size.height * 0.19,
                             color: Colors.white,
-                            onTap: () => print('New Print Job clicked'),
+                            onTap: () => Get.toNamed('/upload'),
                             child: Padding(
                               padding: const EdgeInsets.all(30.0),
                               child: Column(

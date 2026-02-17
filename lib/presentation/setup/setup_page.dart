@@ -256,7 +256,7 @@ class _SetupPageState extends State<SetupPage> {
               padding: const EdgeInsets.only(bottom: 12),
               child: _buildPrintTypeOption(type),
             );
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -950,7 +950,7 @@ class _SetupPageState extends State<SetupPage> {
         Switch(
           value: value,
           onChanged: onChanged,
-          activeColor: primaryBlue,
+          activeThumbColor: primaryBlue,
         ),
       ],
     );
@@ -1173,7 +1173,7 @@ class _SetupPageState extends State<SetupPage> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withAlpha((0.05 * 255).round()),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
