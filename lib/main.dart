@@ -2,16 +2,17 @@
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'app/routes/app_pages.dart';
+import 'app/routes/app_routes.dart';
+import 'app/themes/app_theme.dart';
+import 'app/bindings/initial_binding.dart';
 
-import 'core/constants/app_constants.dart';
-import 'presentation/splash/splash_screen.dart';
-import 'presentation/dashboard/dashboard.dart';
-import 'presentation/upload/upload_page.dart';
-import 'presentation/setup/setup_page.dart';
-import 'presentation/preview/preview_page.dart';
-
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize app-wide dependencies
+  InitialBinding().dependencies();
+
   runApp(const MyApp());
 }
 
@@ -22,16 +23,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       debugShowCheckedModeBanner: false,
-      title: AppConstants.appTitle,
-      theme: AppConstants.lightTheme,
-      initialRoute: '/splash',
-      getPages: [
-        GetPage(name: '/splash', page: () => const SplashScreen()),
-        GetPage(name: '/dashboard', page: () => const DashboardScreen()),
-        GetPage(name: '/upload', page: () => const UploadPage()),
-        GetPage(name: '/setup', page: () => const SetupPage()),
-        GetPage(name: '/preview', page: () => const PreviewPage()),
-      ],
+      title: 'Virtual Design - Silk Screen Studio',
+      theme: AppTheme.lightTheme,
+      initialRoute: AppRoutes.splash,
+      getPages: AppPages.routes,
     );
   }
 }
