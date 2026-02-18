@@ -1,148 +1,103 @@
 // lib/data/models/processing_settings_model.dart
 
 import 'package:hive/hive.dart';
-import '../../domain/entities/processing_settings.dart';
-import '../../core/enums/app_enums.dart';
-
-part 'processing_settings_model.g.dart';
+import 'package:virtual_design/domain/entities/processing_settings.dart'
+    as ps;
 
 @HiveType(typeId: 0)
-class ProcessingSettingsModel extends HiveObject {
+class ProcessingSettingsModel {
   @HiveField(0)
-  final String printType;
-
-  @HiveField(1)
   final int colorCount;
 
+  @HiveField(1)
+  final String printFinish; // 'solid' or 'halftone'
+
   @HiveField(2)
-  final String detailLevel;
+  final String detailLevel; // 'high', 'medium', 'low'
 
   @HiveField(3)
-  final String printFinish;
+  final double dpi;
 
   @HiveField(4)
   final double strokeWidthMm;
 
   @HiveField(5)
-  final String paperSize;
+  final int meshCount;
 
   @HiveField(6)
-  final int copies;
+  final String edgeEnhancement; // 'none', 'light', 'strong'
 
   @HiveField(7)
-  final double dpi;
-
-  @HiveField(8)
-  final String? fabricType;
-
-  @HiveField(9)
-  final bool autoUpscale;
-
-  @HiveField(10)
-  final bool removeBackground;
-
-  @HiveField(11)
-  final bool edgeEnhancement;
-
-  @HiveField(12)
-  final bool colorCorrection;
-
-  @HiveField(13)
   final int? halftoneLpi;
 
-  @HiveField(14)
-  final String? halftoneDotShape;
+  @HiveField(8)
+  final String? halftoneDotShape; // 'round', 'square', 'ellipse'
+
+  @HiveField(9)
+  final double? halftoneAngle;
 
   ProcessingSettingsModel({
-    required this.printType,
-    required this.colorCount,
-    required this.detailLevel,
-    required this.printFinish,
-    required this.strokeWidthMm,
-    required this.paperSize,
-    required this.copies,
-    required this.dpi,
-    this.fabricType,
-    required this.autoUpscale,
-    required this.removeBackground,
-    required this.edgeEnhancement,
-    required this.colorCorrection,
+    this.colorCount = 2,
+    this.printFinish = 'solid',
+    this.detailLevel = 'medium',
+    this.dpi = 300,
+    this.strokeWidthMm = 0.3,
+    this.meshCount = 160,
+    this.edgeEnhancement = 'light',
     this.halftoneLpi,
     this.halftoneDotShape,
+    this.halftoneAngle,
   });
 
-  factory ProcessingSettingsModel.fromEntity(ProcessingSettings entity) {
+  factory ProcessingSettingsModel.fromEntity(ps.ProcessingSettings entity) {
     return ProcessingSettingsModel(
-      printType: entity.printType.name,
       colorCount: entity.colorCount,
       detailLevel: entity.detailLevel.name,
       printFinish: entity.printFinish.name,
       strokeWidthMm: entity.strokeWidthMm,
-      paperSize: entity.paperSize,
-      copies: entity.copies,
       dpi: entity.dpi,
-      fabricType: entity.fabricType?.name,
-      autoUpscale: entity.autoUpscale,
-      removeBackground: entity.removeBackground,
-      edgeEnhancement: entity.edgeEnhancement,
-      colorCorrection: entity.colorCorrection,
+      meshCount: entity.meshCount,
+      edgeEnhancement: entity.edgeEnhancement.name,
       halftoneLpi: entity.halftoneSettings?.lpi,
-      halftoneDotShape: entity.halftoneSettings?.dotShape.name,
+      halftoneDotShape: entity.halftoneSettings?.dotShape,
+      halftoneAngle: entity.halftoneSettings?.angle,
     );
   }
 
-  ProcessingSettings toEntity() {
-    final printTypeEnum = PrintType.values.firstWhere(
-      (e) => e.name == printType,
-      orElse: () => PrintType.screenPrinting,
-    );
-
-    final detailLevelEnum = DetailLevel.values.firstWhere(
+  ps.ProcessingSettings toEntity() {
+    final detailLevelEnum = ps.DetailLevel.values.firstWhere(
       (e) => e.name == detailLevel,
-      orElse: () => DetailLevel.medium,
+      orElse: () => ps.DetailLevel.medium,
     );
 
-    final printFinishEnum = PrintFinish.values.firstWhere(
+    final printFinishEnum = ps.PrintFinish.values.firstWhere(
       (e) => e.name == printFinish,
-      orElse: () => PrintFinish.solid,
+      orElse: () => ps.PrintFinish.solid,
     );
 
-    FabricType? fabricTypeEnum;
-    if (fabricType != null) {
-      fabricTypeEnum = FabricType.values.firstWhere(
-        (e) => e.name == fabricType,
-        orElse: () => FabricType.cotton,
-      );
-    }
+    final edgeEnhancementEnum = ps.EdgeEnhancement.values.firstWhere(
+      (e) => e.name == edgeEnhancement,
+      orElse: () => ps.EdgeEnhancement.light,
+    );
 
-    HalftoneSettings? halftone;
+    ps.HalftoneSettings? halftone;
     if (halftoneLpi != null && halftoneDotShape != null) {
-      final dotShapeEnum = DotShape.values.firstWhere(
-        (e) => e.name == halftoneDotShape,
-        orElse: () => DotShape.round,
-      );
-      halftone = HalftoneSettings.withAutoMesh(
+      halftone = ps.HalftoneSettings(
         lpi: halftoneLpi!,
-        dotShape: dotShapeEnum,
-        detailLevel: detailLevelEnum,
+        dotShape: halftoneDotShape!,
+        angle: halftoneAngle ?? 45.0,
       );
     }
 
-    return ProcessingSettings(
-      printType: printTypeEnum,
+    return ps.ProcessingSettings(
       colorCount: colorCount,
       detailLevel: detailLevelEnum,
       printFinish: printFinishEnum,
-      halftoneSettings: halftone,
       strokeWidthMm: strokeWidthMm,
-      paperSize: paperSize,
-      copies: copies,
       dpi: dpi,
-      fabricType: fabricTypeEnum,
-      autoUpscale: autoUpscale,
-      removeBackground: removeBackground,
-      edgeEnhancement: edgeEnhancement,
-      colorCorrection: colorCorrection,
+      meshCount: meshCount,
+      edgeEnhancement: edgeEnhancementEnum,
+      halftoneSettings: halftone,
     );
   }
 }

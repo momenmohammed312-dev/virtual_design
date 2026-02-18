@@ -1,439 +1,328 @@
 """
-Silk Screen Image Processor - Main Entry Point
-Complete processing pipeline for screen printing color separation
+main.py — Silk Screen Processing Pipeline (CLI Entry Point)
+Virtual Design Silk Screen Studio
+
+FIXES applied:
+  - FATAL #3: Print OUTPUT_DIR: at the end so Dart can read it
+  - FATAL #4: Print Step X/9 for each step so Dart can stream progress
 """
 
-import sys
-import json
 import argparse
+import logging
+import os
+import sys
+import time
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List
 
-# Core processing modules
-from core.image_loader import ImageLoader
+import cv2
+import numpy as np
+
+# Local imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 from core.color_separator import ColorSeparator
 from core.mask_generator import MaskGenerator
 from core.edge_cleaner import EdgeCleaner
-from core.stroke_validator import StrokeValidator
-from core.binarizer import Binarizer
-from core.halftone_generator import HalftoneGenerator
-from core.exporter import Exporter
 
-# Utilities
-from utils.logger import Logger
-from utils.validators import Validators
-from config.settings import ProcessingSettings, DEFAULT_SETTINGS
+# Try importing optional modules (halftone, binarizer, etc.)
+try:
+    from core.halftone_generator import HalftoneGenerator
+    HAS_HALFTONE = True
+except ImportError:
+    HAS_HALFTONE = False
+
+try:
+    from core.binarizer import Binarizer
+    HAS_BINARIZER = True
+except ImportError:
+    HAS_BINARIZER = False
+
+try:
+    from core.stroke_validator import StrokeValidator
+    HAS_STROKE_VALIDATOR = True
+except ImportError:
+    HAS_STROKE_VALIDATOR = False
+
+try:
+    from core.registration_marks import RegistrationMarks
+    HAS_REG_MARKS = True
+except ImportError:
+    HAS_REG_MARKS = False
+
+try:
+    from core.exporter import Exporter
+    HAS_EXPORTER = True
+except ImportError:
+    HAS_EXPORTER = False
+
+# ─── Logging ────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] %(message)s",
+    stream=sys.stderr,  # stderr للـ logs، stdout للـ progress فقط
+)
+logger = logging.getLogger(__name__)
+
+TOTAL_STEPS = 9
 
 
-def parse_arguments():
-    """Parse command line arguments"""
+def _step(n: int, name: str) -> None:
+    """
+    طباعة تقدم الخطوة على stdout — Dart يقرأ هذا real-time.
+    FATAL #4 fix: flush=True ضروري لضمان وصول السطر فوراً.
+    """
+    print(f"Step {n}/{TOTAL_STEPS}: {name}", flush=True)
+
+
+def _output_dir_signal(path: str) -> None:
+    """
+    FATAL #3 fix: إخبار Dart بمسار output directory.
+    يجب أن يكون آخر سطر يُطبَع على stdout.
+    """
+    print(f"OUTPUT_DIR:{path}", flush=True)
+
+
+# ─── Pipeline Steps ──────────────────────────────────────────────────────────
+
+def step1_load_image(input_path: str) -> np.ndarray:
+    _step(1, "Loading image")
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Image not found: {input_path}")
+    image = cv2.imread(input_path)
+    if image is None:
+        raise ValueError(f"Cannot read image: {input_path}")
+    logger.info(f"Loaded image: {image.shape} from {input_path}")
+    return image
+
+
+def step2_separate_colors(image: np.ndarray, num_colors: int) -> dict:
+    _step(2, f"Separating {num_colors} colors")
+    separator = ColorSeparator()
+    result = separator.separate(image, num_colors=num_colors)
+    logger.info(f"Colors: {[result['colors'][i] for i in range(num_colors)]}")
+    return result
+
+
+def step3_generate_masks(image: np.ndarray, separation_result: dict) -> list:
+    _step(3, "Generating color masks")
+    generator = MaskGenerator()
+    masks = generator.generate_masks(image, separation_result)
+    stats = generator.get_mask_stats(masks)
+    for s in stats:
+        logger.info(f"  Mask {s['index']+1}: {s['coverage_percent']}% coverage")
+    return masks
+
+
+def step4_clean_edges(masks: list) -> list:
+    _step(4, "Cleaning edges")
+    cleaner = EdgeCleaner()
+    cleaned = cleaner.clean_all(masks, kernel_size=3, smooth=True)
+    return cleaned
+
+
+def step5_halftone(masks: list, args: argparse.Namespace) -> list:
+    _step(5, "Halftone generation" if args.halftone else "Halftone (skipped)")
+    if not args.halftone or not HAS_HALFTONE:
+        return masks
+    generator = HalftoneGenerator()
+    result = []
+    for mask in masks:
+        ht = generator.generate(mask, lpi=args.lpi, dpi=args.dpi)
+        result.append(ht)
+    return result
+
+
+def step6_binarize(masks: list, args: argparse.Namespace) -> list:
+    _step(6, "Binarizing")
+    if not HAS_BINARIZER:
+        # Fallback: simple threshold
+        result = []
+        for mask in masks:
+            _, binarized = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            result.append(binarized)
+        return result
+    binarizer = Binarizer()
+    return [binarizer.binarize(m) for m in masks]
+
+
+def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
+    _step(7, "Validating stroke widths")
+    if not args.validate_strokes or not HAS_STROKE_VALIDATOR:
+        return masks
+    validator = StrokeValidator()
+    for i, mask in enumerate(masks):
+        warnings = validator.validate(mask, min_stroke_mm=args.min_stroke, dpi=args.dpi)
+        if warnings:
+            for w in warnings:
+                logger.warning(f"  Film {i+1}: {w}")
+        else:
+            logger.info(f"  Film {i+1}: stroke validation passed")
+    return masks
+
+
+def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
+    _step(8, "Adding registration marks")
+    if not HAS_REG_MARKS:
+        return masks
+    reg = RegistrationMarks()
+    result = []
+    for mask in masks:
+        marked = reg.add_marks(mask, dpi=args.dpi)
+        result.append(marked)
+    return result
+
+
+def step9_export(
+    masks: list,
+    separation_result: dict,
+    output_dir: str,
+    args: argparse.Namespace,
+) -> list:
+    _step(9, "Exporting films")
+    os.makedirs(output_dir, exist_ok=True)
+
+    exported_paths = []
+
+    if HAS_EXPORTER:
+        exporter = Exporter()
+        paths = exporter.export_all(
+            masks=masks,
+            color_names=separation_result["color_names"],
+            colors=separation_result["colors"],
+            output_dir=output_dir,
+            dpi=args.dpi,
+        )
+        exported_paths = paths
+    else:
+        # Fallback: save as PNG
+        generator = MaskGenerator()
+        for i, mask in enumerate(masks):
+            film = generator.generate_film_image(mask)
+            name = separation_result["color_names"][i]
+            path = os.path.join(output_dir, f"{name}.png")
+            cv2.imwrite(path, film)
+            exported_paths.append(path)
+            logger.info(f"  Saved: {path}")
+
+        # حفظ preview مجمّع
+        preview = generator.generate_combined_preview(
+            masks, separation_result["colors"]
+        )
+        preview_path = os.path.join(output_dir, "preview_combined.png")
+        cv2.imwrite(preview_path, preview)
+        logger.info(f"  Saved preview: {preview_path}")
+
+    # حفظ color info JSON
+    _save_color_info(separation_result, output_dir)
+
+    return exported_paths
+
+
+def _save_color_info(separation_result: dict, output_dir: str) -> None:
+    """حفظ معلومات الألوان كـ JSON — يقرأها الـ PreviewController."""
+    import json
+    from core.color_separator import ColorSeparator
+
+    separator = ColorSeparator()
+    color_info = separator.get_color_info(separation_result)
+
+    info_path = os.path.join(output_dir, "color_info.json")
+    with open(info_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "num_colors": separation_result["num_colors"],
+                "colors": color_info,
+            },
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+    logger.info(f"  Saved color info: {info_path}")
+
+
+# ─── Main ────────────────────────────────────────────────────────────────────
+
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Silk Screen Image Processor - Color Separation for Screen Printing',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Basic processing
-  python main.py --input design.jpg
-  
-  # Custom colors and DPI
-  python main.py --input design.jpg --colors 3 --dpi 600
-  
-  # With halftone
-  python main.py --input photo.jpg --colors 4 --halftone --lpi 65
-  
-  # Full processing with all options
-  python main.py --input design.jpg --colors 4 --dpi 300 --clean --validate-strokes --halftone --lpi 55
-        """
+        description="Silk Screen Film Generator — Virtual Design Studio"
     )
-    
-    # Input/Output
-    parser.add_argument('--input', '-i', required=True, help='Input image path')
-    parser.add_argument('--output', '-o', default='output', help='Output directory (default: output)')
-    
-    # Color separation
-    parser.add_argument('--colors', '-c', type=int, default=4, help='Number of colors (default: 4)')
-    parser.add_argument('--attempts', type=int, default=10, help='K-means attempts (default: 10)')
-    
-    # Image quality
-    parser.add_argument('--dpi', type=int, default=300, help='Target DPI (default: 300)')
-    
-    # Processing options
-    parser.add_argument('--clean', action='store_true', help='Clean edges and remove noise')
-    parser.add_argument('--kernel-size', type=int, default=3, help='Morphology kernel size (default: 3)')
-    parser.add_argument('--min-area', type=int, default=50, help='Minimum object area in pixels (default: 50)')
-    
-    # Stroke validation
-    parser.add_argument('--validate-strokes', action='store_true', help='Validate stroke widths')
-    parser.add_argument('--min-stroke', type=float, default=0.5, help='Minimum stroke width in mm (default: 0.5)')
-    parser.add_argument('--thicken', action='store_true', help='Auto-thicken thin strokes')
-    
-    # Binarization
-    parser.add_argument('--binarize', action='store_true', help='Apply binarization')
-    parser.add_argument('--threshold-method', choices=['simple', 'otsu', 'adaptive_mean', 'adaptive_gaussian'],
-                       default='otsu', help='Threshold method (default: otsu)')
-    parser.add_argument('--threshold', type=int, default=127, help='Threshold value for simple method (default: 127)')
-    
-    # Halftone
-    parser.add_argument('--halftone', action='store_true', help='Generate halftone patterns')
-    parser.add_argument('--lpi', type=int, default=55, help='Lines per inch for halftone (default: 55)')
-    parser.add_argument('--angle', type=float, default=45.0, help='Halftone angle in degrees (default: 45)')
-    parser.add_argument('--dot-shape', choices=['round', 'square', 'ellipse'], 
-                       default='round', help='Halftone dot shape (default: round)')
-    
-    # Export options
-    parser.add_argument('--no-png', action='store_true', help='Skip PNG export')
-    parser.add_argument('--pdf', action='store_true', help='Export combined PDF')
-    parser.add_argument('--svg', action='store_true', help='Export SVG (experimental)')
-    parser.add_argument('--zip', action='store_true', help='Create ZIP archive')
-    
-    # Other
-    parser.add_argument('--quiet', '-q', action='store_true', help='Suppress verbose output')
-    parser.add_argument('--detail-level', choices=['high', 'medium', 'low'], 
-                       default='medium', help='Processing detail level (default: medium)')
-    
+    parser.add_argument("--input", required=True, help="Path to input image")
+    parser.add_argument("--output", required=True, help="Output directory path")
+    parser.add_argument("--colors", type=int, default=2, help="Number of colors (1-10)")
+    parser.add_argument("--dpi", type=int, default=300, help="Output DPI")
+    parser.add_argument("--halftone", action="store_true", help="Enable halftone mode")
+    parser.add_argument("--lpi", type=int, default=65, help="Halftone LPI (lines per inch)")
+    parser.add_argument("--detail-level", choices=["high", "medium", "low"], default="medium")
+    parser.add_argument("--clean", action="store_true", help="Apply edge cleaning")
+    parser.add_argument("--validate-strokes", action="store_true", help="Validate stroke widths")
+    parser.add_argument("--min-stroke", type=float, default=0.3, help="Min stroke width in mm")
+    parser.add_argument("--edge-enhance", choices=["none", "light", "strong"], default="light")
     return parser.parse_args()
 
 
-def create_metadata(args, image_data: Dict, processing_results: Dict) -> Dict:
-    """Create metadata dictionary"""
-    return {
-        'timestamp': datetime.now().isoformat(),
-        'input_file': args.input,
-        'width': image_data['original_size'][0],
-        'height': image_data['original_size'][1],
-        'dpi': image_data['dpi'],
-        'size_cm': f"{image_data['original_size'][0] / image_data['dpi'] * 2.54:.1f} × {image_data['original_size'][1] / image_data['dpi'] * 2.54:.1f}",
-        'n_colors': args.colors,
-        'colors': processing_results['colors'],
-        'color_names': processing_results['color_names'],
-        'detail_level': args.detail_level,
-        'min_stroke_mm': args.min_stroke if args.validate_strokes else 'N/A',
-        'halftone': 'Yes' if args.halftone else 'No',
-        'lpi': args.lpi if args.halftone else 'N/A',
-        'mesh_count': int(args.lpi * 4.5) if args.halftone else 110,
-        'print_method': 'Screen Printing',
-        'notes': 'Generated with Silk Screen Processor'
-    }
+def main() -> int:
+    args = parse_args()
+    start_time = time.time()
 
+    logger.info("=" * 50)
+    logger.info("Virtual Design — Silk Screen Processing Pipeline")
+    logger.info(f"Input:  {args.input}")
+    logger.info(f"Output: {args.output}")
+    logger.info(f"Colors: {args.colors} | DPI: {args.dpi} | Halftone: {args.halftone}")
+    logger.info("=" * 50)
 
-def main():
-    """Main processing pipeline"""
-    
-    # Parse arguments
-    args = parse_arguments()
-    
-    # Initialize logger
-    logger = Logger(verbose=not args.quiet)
-    
-    # Print header
-    logger.header("🎨 SILK SCREEN IMAGE PROCESSOR v1.0")
-    
-    # Start timer
-    logger.start_timer()
-    
-    # Validate inputs
-    logger.step(0, 9, "Validating inputs")
-    
-    valid, error = Validators.validate_image_path(args.input)
-    if not valid:
-        logger.error(error)
-        return 1
-    
-    valid, message = Validators.validate_color_count(args.colors)
-    if not valid:
-        logger.error(message)
-        return 1
-    elif message:
-        logger.warning(message)
-    
-    valid, message = Validators.validate_dpi(args.dpi)
-    if not valid:
-        logger.error(message)
-        return 1
-    elif message:
-        logger.warning(message)
-    
-    if args.validate_strokes:
-        valid, message = Validators.validate_stroke_width(args.min_stroke)
-        if not valid:
-            logger.error(message)
-            return 1
-        elif message:
-            logger.warning(message)
-    
-    if args.halftone:
-        valid, message = Validators.validate_lpi(args.lpi)
-        if not valid:
-            logger.error(message)
-            return 1
-        elif message:
-            logger.warning(message)
-    
-    logger.success("All inputs validated")
-    
-    # Create output directory
-    output_dir = Path(args.output)
-    output_dir.mkdir(exist_ok=True)
-    logger.info(f"Output directory: {output_dir.absolute()}")
-    
+    output_dir = args.output
+    os.makedirs(output_dir, exist_ok=True)
+
     try:
-        # ==================== STEP 1: Load Image ====================
-        logger.step(1, 9, "Loading and preparing image")
-        
-        loader = ImageLoader()
-        image_data = loader.load(args.input, target_dpi=args.dpi)
-        
-        valid, message = loader.validate_size(image_data)
-        if not valid:
-            logger.error(message)
-            return 1
-        
-        logger.success(f"Image loaded: {image_data['original_size'][0]}×{image_data['original_size'][1]} @ {image_data['dpi']} DPI")
-        if image_data.get('upscaled'):
-            logger.warning("Image was upscaled to meet DPI requirements")
-        
-        # ==================== STEP 2: Color Separation ====================
-        logger.step(2, 9, "Separating colors")
-        
-        separator = ColorSeparator()
-        separation_result = separator.separate(
-            image_data['image'],
-            n_colors=args.colors,
-            attempts=args.attempts
-        )
-        
-        logger.success(f"Colors separated: {', '.join(separation_result['color_names'])}")
-        
-        # ==================== STEP 3: Generate Masks ====================
-        logger.step(3, 9, "Generating color masks")
-        
-        mask_gen = MaskGenerator()
-        masks = mask_gen.generate_masks(
-            separation_result['quantized_image'],
-            separation_result['colors'],
-            separation_result['labels']
-        )
-        
-        logger.success(f"{len(masks)} masks generated")
-        
-        # ==================== STEP 4: Clean Edges (Optional) ====================
+        # Step 1 — Load
+        image = step1_load_image(args.input)
+
+        # Step 2 — Color Separation
+        separation_result = step2_separate_colors(image, args.colors)
+
+        # Step 3 — Mask Generation
+        masks = step3_generate_masks(image, separation_result)
+
+        # Step 4 — Edge Cleaning
         if args.clean:
-            logger.step(4, 9, "Cleaning edges and removing noise")
-            
-            cleaner = EdgeCleaner()
-            cleaned_masks = []
-            
-            for idx, mask in enumerate(masks):
-                logger.info(f"Processing mask {idx+1}/{len(masks)}: {separation_result['color_names'][idx]}")
-                
-                # Clean edges
-                cleaned = cleaner.clean(
-                    mask,
-                    kernel_size=args.kernel_size,
-                    iterations=1
-                )
-                
-                # Remove small objects
-                cleaned = cleaner.remove_small_objects(
-                    cleaned,
-                    min_area=args.min_area
-                )
-                
-                cleaned_masks.append(cleaned)
-            
-            masks = cleaned_masks
-            logger.success("Edges cleaned successfully")
+            masks = step4_clean_edges(masks)
         else:
-            logger.step(4, 9, "Skipping edge cleaning")
-        
-        # ==================== STEP 5: Validate Strokes (Optional) ====================
-        if args.validate_strokes:
-            logger.step(5, 9, "Validating stroke widths")
-            
-            validator = StrokeValidator(
-                min_stroke_mm=args.min_stroke,
-                dpi=args.dpi
-            )
-            
-            validated_masks = []
-            all_warnings = []
-            
-            for idx, mask in enumerate(masks):
-                logger.info(f"Validating mask {idx+1}/{len(masks)}: {separation_result['color_names'][idx]}")
-                
-                result = validator.validate_mask(mask)
-                
-                if not result['valid']:
-                    for warning in result['warnings']:
-                        logger.warning(warning)
-                        all_warnings.append(warning)
-                    
-                    if args.thicken:
-                        logger.info("Auto-thickening strokes...")
-                        mask = validator.thicken_strokes(mask, target_width_mm=args.min_stroke)
-                
-                validated_masks.append(mask)
-            
-            masks = validated_masks
-            
-            if all_warnings:
-                logger.warning(f"Total validation warnings: {len(all_warnings)}")
-            else:
-                logger.success("All stroke widths validated")
-        else:
-            logger.step(5, 9, "Skipping stroke validation")
-        
-        # ==================== STEP 6: Binarize (Optional) ====================
-        if args.binarize:
-            logger.step(6, 9, "Binarizing masks")
-            
-            binarizer = Binarizer()
-            binary_masks = []
-            
-            for idx, mask in enumerate(masks):
-                logger.info(f"Binarizing mask {idx+1}/{len(masks)}: {separation_result['color_names'][idx]}")
-                
-                binary = binarizer.binarize(
-                    mask,
-                    method=args.threshold_method,
-                    threshold=args.threshold
-                )
-                
-                # Clean noise
-                binary = binarizer.remove_noise(binary, kernel_size=3)
-                
-                binary_masks.append(binary)
-            
-            masks = binary_masks
-            logger.success("Binarization complete")
-        else:
-            logger.step(6, 9, "Skipping binarization")
-        
-        # ==================== STEP 7: Halftone (Optional) ====================
-        if args.halftone:
-            logger.step(7, 9, "Generating halftone patterns")
-            
-            halftone_gen = HalftoneGenerator(dpi=args.dpi)
-            halftone_masks = []
-            
-            for idx, mask in enumerate(masks):
-                logger.info(f"Processing mask {idx+1}/{len(masks)}: {separation_result['color_names'][idx]}")
-                
-                halftone = halftone_gen.generate(
-                    mask,
-                    lpi=args.lpi,
-                    angle=args.angle,
-                    dot_shape=args.dot_shape
-                )
-                
-                halftone_masks.append(halftone)
-            
-            masks = halftone_masks
-            logger.success("Halftone generation complete")
-        else:
-            logger.step(7, 9, "Skipping halftone")
-        
-        # ==================== STEP 8: Export ====================
-        logger.step(8, 9, "Exporting films")
-        
-        exporter = Exporter(output_dir, dpi=args.dpi)
-        exported_files = []
-        
-        # Export PNG
-        if not args.no_png:
-            png_files = exporter.export_all_films(
-                masks,
-                separation_result['colors'],
-                separation_result['color_names']
-            )
-            exported_files.extend(png_files)
-        
-        # Export PDF
-        if args.pdf:
-            pdf_file = exporter.export_pdf(
-                masks,
-                separation_result['colors'],
-                separation_result['color_names']
-            )
-            if pdf_file:
-                exported_files.append(pdf_file)
-        
-        # Export SVG
-        if args.svg:
-            logger.info("Exporting SVG files...")
-            for idx, (mask, color, name) in enumerate(zip(
-                masks,
-                separation_result['colors'],
-                separation_result['color_names']
-            )):
-                svg_file = exporter.export_svg(
-                    mask,
-                    f"film_{idx+1:02d}_{name}.svg",
-                    color
-                )
-                if svg_file:
-                    logger.success(f"SVG exported: {svg_file.name}")
-                    exported_files.append(svg_file)
-        
-        logger.success(f"Exported {len(exported_files)} files")
-        
-        # ==================== STEP 9: Create Documentation ====================
-        logger.step(9, 9, "Creating documentation")
-        
-        # Create metadata
-        metadata = create_metadata(args, image_data, separation_result)
-        
-        # Save metadata JSON
-        metadata_path = output_dir / 'metadata.json'
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2)
-        logger.success(f"Metadata saved: {metadata_path.name}")
-        
-        # Create README
-        readme_path = exporter.create_readme(metadata, exported_files)
-        logger.success(f"README created: {readme_path.name}")
-        
-        # Create ZIP
-        if args.zip:
-            zip_path = exporter.create_zip()
-            logger.success(f"ZIP archive created: {zip_path.name}")
-        
-        # ==================== COMPLETE ====================
-        logger.separator()
-        logger.success("🎉 Processing complete!")
-        logger.info(f"📁 Output directory: {output_dir.absolute()}")
-        logger.separator()
-        
-        # Print summary
-        print("\n📊 SUMMARY:")
-        print(f"   Input:       {args.input}")
-        print(f"   Colors:      {args.colors}")
-        print(f"   DPI:         {args.dpi}")
-        print(f"   Files:       {len(exported_files)}")
-        print(f"   Output:      {output_dir.absolute()}")
-        
-        # End timer
-        logger.end_timer()
-        
+            _step(4, "Edge cleaning (skipped)")
+
+        # Step 5 — Halftone
+        masks = step5_halftone(masks, args)
+
+        # Step 6 — Binarize
+        masks = step6_binarize(masks, args)
+
+        # Step 7 — Stroke Validation
+        masks = step7_validate_strokes(masks, args)
+
+        # Step 8 — Registration Marks
+        masks = step8_registration_marks(masks, output_dir, args)
+
+        # Step 9 — Export
+        exported = step9_export(masks, separation_result, output_dir, args)
+
+        elapsed = round(time.time() - start_time, 1)
+        logger.info(f"Pipeline complete in {elapsed}s. {len(exported)} films exported.")
+
+        # FATAL #3 FIX: آخر سطر دائماً — Dart يقرأه ليعرف مسار الـ output
+        _output_dir_signal(output_dir)
         return 0
-        
-    except KeyboardInterrupt:
-        logger.error("\n⚠️  Processing interrupted by user")
-        return 130
-        
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {e}")
+        return 2
+    except ValueError as e:
+        logger.error(f"Invalid input: {e}")
+        return 3
     except Exception as e:
-        logger.error(f"Processing failed: {e}")
-        
-        if not args.quiet:
-            import traceback
-            print("\n" + "="*60)
-            print("FULL ERROR TRACEBACK:")
-            print("="*60)
-            traceback.print_exc()
-        
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

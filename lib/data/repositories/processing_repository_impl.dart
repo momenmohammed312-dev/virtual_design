@@ -12,9 +12,9 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
   final HiveService _hiveService;
 
   ProcessingRepositoryImpl({
-    PythonProcessor? processor,
+    required PythonProcessor processor,
     HiveService? hiveService,
-  }) : _processor = processor ?? PythonProcessor(),
+  }) : _processor = processor,
        _hiveService = hiveService ?? HiveService.instance;
 
   @override

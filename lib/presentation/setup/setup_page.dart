@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:virtual_design/core/enums/app_enums.dart';
-import 'package:virtual_design/domain/entities/processing_settings.dart';
 
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
@@ -43,7 +42,16 @@ class _SetupPageState extends State<SetupPage> {
   bool edgeEnhancement = false;
   bool colorCorrection = false;
 
-  int get meshCount => HalftoneSettings.calculateMeshCount(lpi, selectedDetailLevel);
+  int get meshCount {
+    // Calculate mesh count based on LPI and detail level
+    // Standard mesh counts: 110, 160, 200, 230, 280, 355
+    if (lpi < 30) return 110;
+    if (lpi < 50) return 160;
+    if (lpi < 65) return 200;
+    if (lpi < 80) return 230;
+    if (lpi < 90) return 280;
+    return 355;
+  }
   
   int get strokeWidthInPixels {
     final strokeWidthCm = strokeWidth / 10;

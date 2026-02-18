@@ -38,11 +38,8 @@ class DashboardController extends GetxController {
       final projects = await _projectRepository.getAllProjects();
       totalProjects.value = projects.length;
 
-      // Count total films
-      int films = 0;
-      for (final project in projects) {
-        films += project.totalFilms;
-      }
+      // Count completed projects as "films"
+      int films = projects.where((p) => p.status.toString() == 'ProjectStatus.completed').length;
       totalFilms.value = films;
 
       // Get recent projects (last 5)
@@ -100,8 +97,8 @@ class DashboardController extends GetxController {
   void goToSetup() => Get.toNamed('/setup');
 
   void openProject(PrintProject project) {
-    if (project.isComplete && project.outputDirectory != null) {
-      Get.toNamed('/preview', arguments: project.outputDirectory);
+    if (project.status.toString() == 'ProjectStatus.completed') {
+      Get.toNamed('/preview', arguments: project);
     }
   }
 
