@@ -2,11 +2,11 @@
 
 **Last Updated:** February 18, 2026  
 **Branch:** `fix/python-bridge-sop`  
-**Commits:** 3 (Phases 0-6)
+**Commits:** 5 (Phases 0-8)
 
 ---
 
-## 📊 Overall Status: 60% Complete
+## 📊 Overall Status: 70% Complete
 
 ```
 ████████████░░░░░░░░░░ 
@@ -21,8 +21,8 @@
 | 4 | Test Infrastructure | ✅ Complete | test_imports.py, test_pipeline.py, Dart tests |
 | 5 | Documentation | ✅ Complete | README_SETUP.md, TESTING.md with checkpoints |
 | 6 | Dart↔Python Bridge | ✅ Complete | Process.start() + PYTHONUNBUFFERED + OUTPUT_DIR parsing |
-| 7 | License Service | 🟡 In Progress | crypto added, needs enforcement |
-| 8 | Android Permissions | ⏳ Pending | permission_handler integration |
+| 7 | License Service | ✅ Complete | SHA-256 validation, activation controller, device ID |
+| 8 | Android Permissions | ✅ Complete | READ_MEDIA_IMAGES, storage permissions, runtime requests |
 | 9 | Error Handling | ⏳ Pending | exit codes mapped to messages |
 | 10 | Tests & CI | ⏳ Pending | GitHub Actions setup |
 | 11 | QA & Acceptance | ⏳ Pending | Full integration testing |
