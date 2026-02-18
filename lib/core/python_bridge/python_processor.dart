@@ -51,7 +51,7 @@ class PythonProcessor {
     final scriptsDir = await config.getPythonScriptsDir();
     final pythonCommand = await config.resolvePythonCommand();
 
-    // بدء العملية
+    // بدء العملية مع بيئة محسّنة (بدون buffering)
     Process process;
     try {
       process = await Process.start(
@@ -59,6 +59,10 @@ class PythonProcessor {
         args,
         runInShell: true,
         workingDirectory: scriptsDir,
+        environment: {
+          ...Platform.environment,
+          'PYTHONUNBUFFERED': '1', // قراءة stdout فوراً
+        },
       );
     } on ProcessException catch (e) {
       return ProcessResult.failure(
