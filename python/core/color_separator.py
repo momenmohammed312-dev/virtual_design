@@ -27,31 +27,27 @@ class ColorSeparator:
         epsilon: float = 0.2,
         white_threshold: int = 240,
         remove_white_bg: bool = True,
+        use_lab: bool = True,
     ) -> Dict:
         """
-        فصل الصورة إلى num_colors طبقة.
+        فصل الصورة إلى num_colors طبقة (محسّن للـ LAB color space).
 
         Args:
             image: BGR numpy array
             num_colors: عدد الألوان المطلوب (1-10)
-            attempts: عدد محاولات K-Means (أكثر = أدق + أبطأ)
+            attempts: عدد محاولات K-Means
             max_iter: أقصى عدد تكرارات للتقارب
             epsilon: دقة التقارب
             white_threshold: قيمة البيكسل اللي تعلاه يُعتبَر أبيض
             remove_white_bg: إزالة الخلفية البيضاء من الحسابات
+            use_lab: استخدام LAB color space (أفضل للطباعة)
 
         Returns:
-            Dict يحتوي على:
-                - colors: list of RGB tuples
-                - color_names: list of strings
-                - label_map: 2D array (h x w) قيمة كل بيكسل = رقم اللون
-                - image: الصورة الأصلية
-                - num_colors: العدد الفعلي للألوان
-                - bg_mask: mask الخلفية البيضاء (أو None)
+            Dict يحتوي على البيانات المطلوبة
         """
-        logger.info(f"[ColorSeparator] Starting: {num_colors} colors, image={image.shape}")
+        logger.info(f"[ColorSeparator] Starting: {num_colors} colors, LAB={use_lab}, image={image.shape}")
 
-        # تحويل BGR → RGB للعمل
+        # تحويل BGR → RGB
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         h, w = img_rgb.shape[:2]
 
@@ -61,21 +57,27 @@ class ColorSeparator:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             _, bg_mask = cv2.threshold(gray, white_threshold, 255, cv2.THRESH_BINARY)
 
-        # تحضير البيكسلات للـ K-Means
-        pixels = img_rgb.reshape(-1, 3).astype(np.float32)
+        # تحويل إلى LAB للـ clustering الأفضل
+        if use_lab:
+            img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+            clustering_image = img_lab
+        else:
+            clustering_image = img_rgb
 
-        # استثناء الخلفية البيضاء من التحليل
+        # تحضير البيكسلات
+        pixels = clustering_image.reshape(-1, 3).astype(np.float32)
+
+        # استثناء الخلفية البيضاء
         if bg_mask is not None:
             bg_flat = bg_mask.reshape(-1)
-            foreground_pixels = pixels[bg_flat < 128]  # البيكسلات غير البيضاء
+            foreground_pixels = pixels[bg_flat < 128]
             if len(foreground_pixels) < num_colors * 10:
-                # صورة بيضاء أو شبه بيضاء — استخدم كل البيكسلات
                 logger.warning("[ColorSeparator] Too few foreground pixels, using all pixels")
                 foreground_pixels = pixels
         else:
             foreground_pixels = pixels
 
-        # تشغيل K-Means
+        # K-Means clustering
         criteria = (
             cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
             max_iter,
@@ -83,39 +85,44 @@ class ColorSeparator:
         )
 
         try:
-            _, labels_fg, centers = cv2.kmeans(
+            _, labels_fg, centers_cluster = cv2.kmeans(
                 foreground_pixels,
                 num_colors,
                 None,
                 criteria,
                 attempts,
-                cv2.KMEANS_PP_CENTERS,  # أفضل من RANDOM_CENTERS
+                cv2.KMEANS_PP_CENTERS,
             )
         except cv2.error as e:
             logger.error(f"[ColorSeparator] cv2.kmeans failed: {e}")
             raise RuntimeError(f"Color separation failed: {e}")
 
-        centers = np.uint8(centers)
+        # تحويل centers إلى RGB للعرض والتخزين
+        if use_lab:
+            centers_lab = np.uint8(centers_cluster)
+            # تحويل LAB centers إلى RGB للعرض
+            centers_rgb = cv2.cvtColor(centers_lab.reshape(1, -1, 3), cv2.COLOR_LAB2RGB)
+            centers = centers_rgb.reshape(-1, 3)
+        else:
+            centers = np.uint8(centers_cluster)
 
-        # ترتيب الألوان من الأغمق للأفتح (أولوية الطباعة)
-        brightness = [int(np.mean(c)) for c in centers]
+        # ترتيب من الأغمق للأفتح
+        brightness = [int(np.mean(cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_RGB2GRAY))) for c in centers]
         sorted_indices = np.argsort(brightness)
         centers = centers[sorted_indices]
+        centers_cluster = centers_cluster[sorted_indices]
 
-        # إعادة بناء الـ label_map الكامل للصورة
-        # نحسب label لكل بيكسل من centers
+        # بناء label_map
         label_map = np.zeros((h, w), dtype=np.int32)
-        all_pixels = img_rgb.reshape(-1, 3).astype(np.float32)
+        all_pixels = clustering_image.reshape(-1, 3).astype(np.float32)
 
-        # حساب أقرب center لكل بيكسل
-        centers_f = centers.astype(np.float32)
         for i in range(len(all_pixels)):
-            dists = np.linalg.norm(centers_f - all_pixels[i], axis=1)
+            dists = np.linalg.norm(centers_cluster.astype(np.float32) - all_pixels[i], axis=1)
             label_map.flat[i] = np.argmin(dists)
 
-        # تعيين الخلفية لـ label خاص
+        # تحديد الخلفية
         if bg_mask is not None:
-            label_map[bg_mask > 128] = -1  # -1 = خلفية
+            label_map[bg_mask > 128] = -1
 
         colors = [tuple(int(c) for c in center) for center in centers]
         color_names = [f"color_{i+1:02d}" for i in range(num_colors)]
