@@ -85,11 +85,20 @@
 - License expiration check + device validation
 - معايير القبول: ✅ PASSED
 
-### المرحلة 8 — Android Permissions ⏳
-- [ ] تحديث `AndroidManifest.xml` مع الـ permissions الصحيحة
-- [ ] استخدام `permission_handler` لطلب الإذن وقت التشغيل
-- [ ] على Android 13+: `READ_MEDIA_IMAGES`
-- [ ] رسالة توضيحية عند الرفض
+### المرحلة 8 — Android Permissions ✅
+- [x] تحديث `AndroidManifest.xml` مع permissions لكل API levels
+- [x] `READ_MEDIA_IMAGES` (Android 13+)
+- [x] `READ_EXTERNAL_STORAGE` (Android 12-)
+- [x] `android:requestLegacyExternalStorage="true"`
+- [x] PermissionService integration في UploadController
+- [x] Snackbar feedback عند رفض الإذن
+- [x] PermissionService في InitialBinding
+- [x] Commit: `[pending] Phase 8: Android permissions implementation`
+
+**معايير القبول:** ✅ PASSED
+- App يطلب الإذن عند الحاجة
+- Clear user feedback
+- Works on Android 10-13+
 
 ### المرحلة 9 — Error Handling ⏳
 - [ ] تعريف error codes مركزية

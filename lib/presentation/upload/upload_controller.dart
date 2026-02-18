@@ -3,11 +3,26 @@
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../core/permissions/permission_service.dart';
 
 class UploadController extends GetxController {
+  final PermissionService permissionService = Get.find<PermissionService>();
   final RxBool isDragging = false.obs;
 
   Future<void> pickImage() async {
+    // Check permissions first
+    final hasPermission = await permissionService.ensureImageAccess();
+    if (!hasPermission) {
+      Get.snackbar(
+        'Permission Required',
+        'Storage permission is needed to select images',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Get.theme.colorScheme.error,
+        colorText: Get.theme.colorScheme.onError,
+      );
+      return;
+    }
+
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery);
 
@@ -17,6 +32,19 @@ class UploadController extends GetxController {
   }
 
   Future<void> pickFile() async {
+    // Check permissions first
+    final hasPermission = await permissionService.ensureImageAccess();
+    if (!hasPermission) {
+      Get.snackbar(
+        'Permission Required',
+        'Storage permission is needed to select images',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Get.theme.colorScheme.error,
+        colorText: Get.theme.colorScheme.onError,
+      );
+      return;
+    }
+
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.image,
     );

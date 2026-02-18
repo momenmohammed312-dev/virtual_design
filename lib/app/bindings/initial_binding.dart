@@ -5,6 +5,7 @@ import '../../data/datasources/local/hive_service.dart';
 import '../../core/python_bridge/python_processor.dart';
 import '../../core/python_bridge/python_config.dart';
 import '../../core/licensing/license_manager.dart';
+import '../../core/permissions/permission_service.dart';
 
 class InitialBinding extends Bindings {
   @override
@@ -15,6 +16,9 @@ class InitialBinding extends Bindings {
 
     // Initialize LicenseManager (singleton)
     Get.put(LicenseManager(), permanent: true);
+
+    // Initialize PermissionService (singleton)
+    Get.put(PermissionService(), permanent: true);
 
     // Initialize Hive on app startup
     Get.putAsync(() async {
