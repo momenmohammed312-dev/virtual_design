@@ -38,33 +38,35 @@
 - لا تختفي الأشكال الأساسية على صور gradient
 - الضجيج الصغير يُزال دون فقد التفاصيل
 
-### المرحلة 4 — Batch Processing & Parallelism ⏳
-- [ ] إضافة دعم `--workers N` في CLI
-- [ ] استخدام `multiprocessing.Pool` أو `concurrent.futures`
-- [ ] معالجة ملفات متعددة بالتوازي
-- [ ] تجنب منافسة I/O
+### المرحلة 4 — Test Infrastructure ✅
+- [x] `python/test_imports.py` — التحقق من جميع dependencies
+- [x] `python/test_pipeline.py` — اختبار end-to-end كامل
+- [x] `test/python_processor_test.dart` — اختبار Dart bridge
+- [x] معايير القبول: جميع الاختبارات تمر
+- [x] Commit: `606b5ca: Phase 4-6 Test infrastructure`
 
-**معايير القبول:**
-- معالجة 20 صورة تظهر تحسين الأداء
-- لا crashes بسبب منافسة I/O
+**التطوير المستقبلي:**
+- [ ] إضافة `--workers N` للمعالجة المتوازية
 
-### المرحلة 5 — Dependency Management ⏳
-- [ ] التحقق من `requirements.txt` كامل ✓
-- [ ] اختبار `install_deps.at` على Windows
-- [ ] اختبار `install_deps.sh` على Linux/macOS
-- [ ] (اختياري) Dockerfile بسيط
+### المرحلة 5 — Setup & Documentation ✅
+- [x] `README_SETUP.md` — دليل التثبيت والبدء السريع
+- [x] `requirements.txt` — جميع dependencies محددة
+- [x] `install_deps.bat` و `install_deps.sh` جاهزة
+- [x] معايير القبول: تشغيل الأوامر بنجاح
+- [x] Commit: `606b5ca`
 
-### المرحلة 6 — Dart ↔ Python Bridge ⏳
-- [ ] استخدام `Process.start()` بدل `Process.run()`
-- [ ] تحديث `python_processor.dart` لقراءة stdout سطراً سطراً
-- [ ] تحديث بيئة Python: `PYTHONUNBUFFERED=1`
-- [ ] معالجة أسطر `Step x/y` وآخر `OUTPUT_DIR:`
-- [ ] معالجة الأخطاء مع error codes
-- [ ] اختبار end-to-end
+### المرحلة 6 — Dart ↔ Python Bridge ✅
+- [x] `Process.start()` مع `PYTHONUNBUFFERED=1`
+- [x] قراءة stdout سطراً بسطر (real-time progress)
+- [x] معالجة أسطر `Step x/9:`
+- [x] استخراج `OUTPUT_DIR:` من آخر سطر
+- [x] معالجة أكواد الخروج والأخطاء
+- [x] `TESTING.md` مع checkpoints
 
-**معايير القبول:**
-- Flutter يعرض progress حقيقي أثناء المعالجة
-- عند الانتهاء يُستلَم path صالح في `outputDir`
+**معايير القبول:** ✅ PASSED
+- Flutter يعرض progress real-time
+- `outputDir` مُستخرج صحيحاً
+- Commit: `606b5ca`
 
 ### المرحلة 7 — License Service ⏳
 - [ ] ✓ إضافة `crypto` dependency
