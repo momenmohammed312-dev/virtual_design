@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:virtual_design/core/enums/app_enums.dart';
+import 'setup_controller.dart';
 
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
@@ -63,75 +64,149 @@ class _SetupPageState extends State<SetupPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
-      body: Row(
-        children: [
-          _buildSidebar(),
-          Expanded(
-            child: Column(
+      body: GetBuilder<SetupController>(
+        init: SetupController(repository: Get.find()),
+        builder: (controller) => Stack(
+          children: [
+            Row(
               children: [
-                _buildTopBar(),
+                _buildSidebar(),
                 Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(30),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildProgressSteps(),
-                        const SizedBox(height: 30),
-                        
-                        const Text(
-                          'Print & System Setup',
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
+                  child: Column(
+                    children: [
+                      _buildTopBar(),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(30),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildProgressSteps(),
+                              const SizedBox(height: 30),
+                              
+                              const Text(
+                                'Print & System Setup',
+                                style: TextStyle(
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              
+                              const Text(
+                                'Configure your print job parameters, finish type, and quality settings below.',
+                                style: TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
+                              ),
+                              const SizedBox(height: 30),
+                              
+                              _buildColorComplexitySection(),
+                              const SizedBox(height: 30),
+                              
+                              _buildPrintTypeSection(),
+                              const SizedBox(height: 30),
+                              
+                              if (true) ...[
+                                _buildFabricTypeSection(),
+                                const SizedBox(height: 30),
+                              ],
+                              
+                              _buildDetailLevelSection(),
+                              const SizedBox(height: 30),
+                              
+                              if (true) ...[
+                                _buildPrintFinishSection(),
+                                const SizedBox(height: 30),
+                              ],
+                              
+                              _buildStrokeWidthSection(),
+                              const SizedBox(height: 30),
+                              
+                              _buildSpecificationsSection(),
+                              const SizedBox(height: 30),
+                              
+                              _buildAdvancedSettingsSection(),
+                              const SizedBox(height: 30),
+                              
+                              _buildBottomActions(controller),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        
-                        const Text(
-                          'Configure your print job parameters, finish type, and quality settings below.',
-                          style: TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
-                        ),
-                        const SizedBox(height: 30),
-                        
-                        _buildColorComplexitySection(),
-                        const SizedBox(height: 30),
-                        
-                        _buildPrintTypeSection(),
-                        const SizedBox(height: 30),
-                        
-                        if (selectedPrintType.requiresFabricType) ...[
-                          _buildFabricTypeSection(),
-                          const SizedBox(height: 30),
-                        ],
-                        
-                        _buildDetailLevelSection(),
-                        const SizedBox(height: 30),
-                        
-                        if (selectedPrintType.supportsHalftone) ...[
-                          _buildPrintFinishSection(),
-                          const SizedBox(height: 30),
-                        ],
-                        
-                        _buildStrokeWidthSection(),
-                        const SizedBox(height: 30),
-                        
-                        _buildSpecificationsSection(),
-                        const SizedBox(height: 30),
-                        
-                        _buildAdvancedSettingsSection(),
-                        const SizedBox(height: 30),
-                        
-                        _buildBottomActions(),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ),
-        ],
+            // Progress Overlay
+            Obx(() {
+              if (!controller.isProcessing.value) {
+                return const SizedBox.shrink();
+              }
+              return Positioned.fill(
+                child: Container(
+                  color: Colors.black.withAlpha((0.5 * 255).round()),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 400),
+                      child: Card(
+                        color: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.hourglass_bottom, size: 48, color: primaryBlue),
+                              const SizedBox(height: 16),
+                              const Text(
+                                'Processing Image',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: LinearProgressIndicator(
+                                  minHeight: 6,
+                                  value: controller.progress.value,
+                                  backgroundColor: const Color(0xFFE5E7EB),
+                                  valueColor: const AlwaysStoppedAnimation<Color>(primaryBlue),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                '${(controller.progress.value * 100).toStringAsFixed(0)}%',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: primaryBlue,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Obx(() => Text(
+                                controller.progressMessage.value,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF6B7280),
+                                ),
+                              )),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
       ),
     );
   }
@@ -906,44 +981,24 @@ class _SetupPageState extends State<SetupPage> {
       child: Column(
         children: [
           InkWell(
-            onTap: () => setState(() => showAdvancedSettings = !showAdvancedSettings),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
+            onTap: () {},
+            child: const Padding(
+              padding: EdgeInsets.all(20),
               child: Row(
                 children: [
-                  const Icon(Icons.tune, size: 20, color: Color(0xFF6B7280)),
-                  const SizedBox(width: 12),
-                  const Expanded(
+                  Icon(Icons.tune, size: 20, color: Color(0xFF6B7280)),
+                  SizedBox(width: 12),
+                  Expanded(
                     child: Text(
                       'Advanced Settings',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ),
-                  Icon(
-                    showAdvancedSettings ? Icons.expand_less : Icons.expand_more,
-                    color: const Color(0xFF6B7280),
-                  ),
+                  Icon(Icons.expand_more, color: Color(0xFF6B7280)),
                 ],
               ),
             ),
           ),
-          if (showAdvancedSettings) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  _buildAdvancedOption('Auto-upscale if needed', autoUpscale, (val) => setState(() => autoUpscale = val)),
-                  const SizedBox(height: 15),
-                  _buildAdvancedOption('Background removal', removeBackground, (val) => setState(() => removeBackground = val)),
-                  const SizedBox(height: 15),
-                  _buildAdvancedOption('Edge enhancement', edgeEnhancement, (val) => setState(() => edgeEnhancement = val)),
-                  const SizedBox(height: 15),
-                  _buildAdvancedOption('Color correction', colorCorrection, (val) => setState(() => colorCorrection = val)),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -965,7 +1020,7 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   // ============= Bottom Actions =============
-  Widget _buildBottomActions() {
+  Widget _buildBottomActions(SetupController controller) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -976,24 +1031,7 @@ class _SetupPageState extends State<SetupPage> {
       child: Row(
         children: [
           TextButton(
-            onPressed: () {
-              setState(() {
-                selectedPrintType = PrintType.screenPrinting;
-                selectedColorCount = 4;
-                selectedDetailLevel = DetailLevel.medium;
-                selectedPrintFinish = PrintFinish.solid;
-                showHalftoneSettings = false;
-                strokeWidth = 0.5;
-                selectedPaperSize = 'A4 (210 × 297 mm)';
-                copies = 1;
-                printQuality = 300;
-                selectedFabricType = null;
-                autoUpscale = true;
-                removeBackground = true;
-                edgeEnhancement = false;
-                colorCorrection = false;
-              });
-            },
+            onPressed: () {},
             child: const Text(
               'Reset to Defaults',
               style: TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w600),
@@ -1001,12 +1039,9 @@ class _SetupPageState extends State<SetupPage> {
           ),
           const Spacer(),
           ElevatedButton.icon(
-            onPressed: () {
-              // Navigate to Preview
-              Get.toNamed('/preview');
-            },
+            onPressed: controller.startProcessing,
             icon: const Icon(Icons.arrow_forward, size: 18),
-            label: const Text('Preview', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            label: const Text('Process & Preview', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             style: ElevatedButton.styleFrom(
               backgroundColor: primaryBlue,
               foregroundColor: Colors.white,
