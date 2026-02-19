@@ -20,15 +20,18 @@ class InitialBinding extends Bindings {
     // Initialize PermissionService (singleton)
     Get.put(PermissionService(), permanent: true);
 
-    // Initialize Hive on app startup
+    // Initialize Hive and Python on app startup, then register PythonProcessor
     Get.putAsync(() async {
-      await pythonConfig.initialize();
+      final initResult = await pythonConfig.initialize();
+
       final hive = HiveService.instance;
       await hive.init();
+
+      // Register PythonProcessor after PythonConfig has been initialized
+      // (allows UI to react to python availability via pythonConfig.initialize())
+      Get.put(PythonProcessor(config: pythonConfig), permanent: true);
+
       return hive;
     }, permanent: true);
-
-    // Python Processor (singleton)
-    Get.put(PythonProcessor(config: pythonConfig), permanent: true);
   }
 }

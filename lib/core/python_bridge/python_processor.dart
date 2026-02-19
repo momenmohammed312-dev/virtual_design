@@ -85,6 +85,18 @@ class PythonProcessor {
         .transform(const LineSplitter())
         .listen(
           (line) {
+            // New IPC fine-grained progress format: PROGRESS:<0.0-1.0>:message
+            if (line.startsWith('PROGRESS:')) {
+              if (onProgress != null) {
+                final parts = line.split(':');
+                if (parts.length >= 3) {
+                  final val = double.tryParse(parts[1]) ?? 0.0;
+                  final msg = parts.sublist(2).join(':');
+                  onProgress(val.clamp(0.0, 1.0), msg);
+                }
+              }
+              return;
+            }
             // FATAL #3 FIX: استخراج مسار output
             if (line.startsWith('OUTPUT_DIR:')) {
               outputDirectory = line.substring('OUTPUT_DIR:'.length).trim();

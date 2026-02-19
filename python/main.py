@@ -83,6 +83,22 @@ def _output_dir_signal(path: str) -> None:
     print(f"OUTPUT_DIR:{path}", flush=True)
 
 
+def _progress(overall_fraction: float, message: str = '') -> None:
+    """
+    طباعة تقدم دقيق بصيغة IPC بسيطة: PROGRESS:<0.0-1.0>:message
+    Dart سيقرأ هذا السطر ويحدّث شريط التقدم بشكل فوري.
+    """
+    try:
+        frac = float(overall_fraction)
+    except Exception:
+        frac = 0.0
+    # Clamp
+    if frac < 0:
+        frac = 0.0
+    if frac > 1:
+        frac = 1.0
+    print(f"PROGRESS:{frac:.4f}:{message}", flush=True)
+
 # ─── Pipeline Steps ──────────────────────────────────────────────────────────
 
 def step1_load_image(input_path: str) -> np.ndarray:
@@ -99,7 +115,11 @@ def step1_load_image(input_path: str) -> np.ndarray:
 def step2_separate_colors(image: np.ndarray, num_colors: int) -> dict:
     _step(2, f"Separating {num_colors} colors")
     separator = ColorSeparator()
+    # If separator supports internal progress, it could emit callbacks.
+    # Fallback: emit coarse progress markers before/after operation.
+    _progress((2 - 1) / TOTAL_STEPS + 0.15, 'K-means starting')
     result = separator.separate(image, num_colors=num_colors)
+    _progress((2 - 1) / TOTAL_STEPS + 0.9, 'K-means complete')
     logger.info(f"Colors: {[result['colors'][i] for i in range(num_colors)]}")
     return result
 
@@ -109,7 +129,12 @@ def step3_generate_masks(image: np.ndarray, separation_result: dict) -> list:
     generator = MaskGenerator()
     masks = generator.generate_masks(image, separation_result)
     stats = generator.get_mask_stats(masks)
-    for s in stats:
+    total = max(1, len(masks))
+    for i, s in enumerate(stats):
+        # emit subprogress across this step
+        sub = (i + 1) / total
+        overall = ((3 - 1) + sub) / TOTAL_STEPS
+        _progress(overall, f"Mask {i+1}/{total} generated")
         logger.info(f"  Mask {s['index']+1}: {s['coverage_percent']}% coverage")
     return masks
 
@@ -127,9 +152,12 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
         return masks
     generator = HalftoneGenerator()
     result = []
-    for mask in masks:
+    total = max(1, len(masks))
+    for i, mask in enumerate(masks):
         ht = generator.generate(mask, lpi=args.lpi, dpi=args.dpi)
         result.append(ht)
+        overall = ((5 - 1) + (i + 1) / total) / TOTAL_STEPS
+        _progress(overall, f"Halftone {i+1}/{total}")
     return result
 
 
@@ -138,12 +166,19 @@ def step6_binarize(masks: list, args: argparse.Namespace) -> list:
     if not HAS_BINARIZER:
         # Fallback: simple threshold
         result = []
-        for mask in masks:
+        total = max(1, len(masks))
+        for i, mask in enumerate(masks):
             _, binarized = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
             result.append(binarized)
+            _progress(((6 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Binarized {i+1}/{total}")
         return result
     binarizer = Binarizer()
-    return [binarizer.binarize(m) for m in masks]
+    total = max(1, len(masks))
+    out = []
+    for i, m in enumerate(masks):
+        out.append(binarizer.binarize(m))
+        _progress(((6 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Binarized {i+1}/{total}")
+    return out
 
 
 def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
@@ -151,6 +186,7 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
     if not args.validate_strokes or not HAS_STROKE_VALIDATOR:
         return masks
     validator = StrokeValidator()
+    total = max(1, len(masks))
     for i, mask in enumerate(masks):
         warnings = validator.validate(mask, min_stroke_mm=args.min_stroke, dpi=args.dpi)
         if warnings:
@@ -158,6 +194,7 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
                 logger.warning(f"  Film {i+1}: {w}")
         else:
             logger.info(f"  Film {i+1}: stroke validation passed")
+        _progress(((7 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Validated {i+1}/{total}")
     return masks
 
 
@@ -195,6 +232,7 @@ def step9_export(
     else:
         # Fallback: save as PNG
         generator = MaskGenerator()
+        total = max(1, len(masks))
         for i, mask in enumerate(masks):
             film = generator.generate_film_image(mask)
             name = separation_result["color_names"][i]
@@ -202,6 +240,7 @@ def step9_export(
             cv2.imwrite(path, film)
             exported_paths.append(path)
             logger.info(f"  Saved: {path}")
+            _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
 
         # حفظ preview مجمّع
         preview = generator.generate_combined_preview(
@@ -213,6 +252,9 @@ def step9_export(
 
     # حفظ color info JSON
     _save_color_info(separation_result, output_dir)
+
+    # Emit final progress 100% before returning
+    _progress(1.0, 'Finished')
 
     return exported_paths
 
