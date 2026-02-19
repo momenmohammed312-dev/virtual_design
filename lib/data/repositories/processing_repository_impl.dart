@@ -5,7 +5,6 @@ import '../../domain/entities/processing_settings.dart';
 import '../../core/python_bridge/process_result.dart';
 import '../../core/python_bridge/python_processor.dart';
 import '../datasources/local/hive_service.dart';
-import '../models/processing_settings_model.dart';
 
 class ProcessingRepositoryImpl implements ProcessingRepository {
   final PythonProcessor _processor;
@@ -42,13 +41,59 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
 
   @override
   Future<void> saveSettings(ProcessingSettings settings) async {
-    final model = ProcessingSettingsModel.fromEntity(settings);
-    await _hiveService.saveLastSettings(model);
+    // Save as JSON directly (no Hive model needed)
+    final box = await _hiveService.getSettingsBox();
+    final json = {
+      'colorCount': settings.colorCount,
+      'detailLevel': settings.detailLevel.name,
+      'printFinish': settings.printFinish.name,
+      'strokeWidthMm': settings.strokeWidthMm,
+      'dpi': settings.dpi,
+      'meshCount': settings.meshCount,
+      'edgeEnhancement': settings.edgeEnhancement.name,
+      'halftoneSettings': settings.halftoneSettings != null
+          ? {
+              'lpi': settings.halftoneSettings!.lpi,
+              'dotShape': settings.halftoneSettings!.dotShape,
+              'angle': settings.halftoneSettings!.angle,
+            }
+          : null,
+    };
+    await box.put('last_settings', json);
   }
 
   @override
   Future<ProcessingSettings?> loadLastSettings() async {
-    final model = _hiveService.loadLastSettings();
-    return model?.toEntity();
+    final box = await _hiveService.getSettingsBox();
+    final json = box.get('last_settings');
+    if (json == null || json is! Map) return null;
+
+    final halftoneData = json['halftoneSettings'] as Map<String, dynamic>?;
+    
+    return ProcessingSettings(
+      colorCount: json['colorCount'] as int,
+      detailLevel: DetailLevel.values.firstWhere(
+        (e) => e.name == json['detailLevel'] as String,
+        orElse: () => DetailLevel.medium,
+      ),
+      printFinish: PrintFinish.values.firstWhere(
+        (e) => e.name == json['printFinish'] as String,
+        orElse: () => PrintFinish.solid,
+      ),
+      strokeWidthMm: (json['strokeWidthMm'] as num).toDouble(),
+      dpi: (json['dpi'] as num).toDouble(),
+      meshCount: (json['meshCount'] as num).toInt(),
+      edgeEnhancement: EdgeEnhancement.values.firstWhere(
+        (e) => e.name == json['edgeEnhancement'] as String,
+        orElse: () => EdgeEnhancement.light,
+      ),
+      halftoneSettings: halftoneData != null
+          ? HalftoneSettings(
+              lpi: (halftoneData['lpi'] as num).toInt(),
+              dotShape: halftoneData['dotShape'] as String,
+              angle: (halftoneData['angle'] as num?)?.toDouble() ?? 45.0,
+            )
+          : null,
+    );
   }
 }

@@ -29,7 +29,7 @@ class _SetupPageState extends State<SetupPage> {
   
   // Specifications
   double strokeWidth = 0.5;
-  String selectedPaperSize = 'A4 (210 × 297 mm)';
+  String selectedPaperSize = 'A4 (21 × 29.7 cm)';
   int copies = 1;
   double printQuality = 300;
   
@@ -872,6 +872,12 @@ class _SetupPageState extends State<SetupPage> {
                         isExpanded: true,
                         underline: const SizedBox(),
                         items: [
+                          // CM options (new default)
+                          'A4 (21 × 29.7 cm)',
+                          'A3 (29.7 × 42 cm)',
+                          'A5 (14.8 × 21 cm)',
+                          'Letter (21.6 × 27.9 cm)',
+                          // MM options (kept for compatibility)
                           'A4 (210 × 297 mm)',
                           'A3 (297 × 420 mm)',
                           'Letter (216 × 279 mm)',
@@ -981,24 +987,45 @@ class _SetupPageState extends State<SetupPage> {
       child: Column(
         children: [
           InkWell(
-            onTap: () {},
-            child: const Padding(
-              padding: EdgeInsets.all(20),
+            onTap: () => setState(() => showAdvancedSettings = !showAdvancedSettings),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
               child: Row(
                 children: [
-                  Icon(Icons.tune, size: 20, color: Color(0xFF6B7280)),
-                  SizedBox(width: 12),
-                  Expanded(
+                  const Icon(Icons.tune, size: 20, color: Color(0xFF6B7280)),
+                  const SizedBox(width: 12),
+                  const Expanded(
                     child: Text(
                       'Advanced Settings',
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ),
-                  Icon(Icons.expand_more, color: Color(0xFF6B7280)),
+                  AnimatedRotation(
+                    turns: showAdvancedSettings ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: const Icon(Icons.expand_more, color: Color(0xFF6B7280)),
+                  ),
                 ],
               ),
             ),
           ),
+          if (showAdvancedSettings) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  _buildAdvancedOption('Auto Upscale', autoUpscale, (val) => setState(() => autoUpscale = val)),
+                  const SizedBox(height: 16),
+                  _buildAdvancedOption('Remove Background', removeBackground, (val) => setState(() => removeBackground = val)),
+                  const SizedBox(height: 16),
+                  _buildAdvancedOption('Edge Enhancement', edgeEnhancement, (val) => setState(() => edgeEnhancement = val)),
+                  const SizedBox(height: 16),
+                  _buildAdvancedOption('Color Correction', colorCorrection, (val) => setState(() => colorCorrection = val)),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

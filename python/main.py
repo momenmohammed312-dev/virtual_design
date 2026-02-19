@@ -105,11 +105,56 @@ def step1_load_image(input_path: str) -> np.ndarray:
     _step(1, "Loading image")
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Image not found: {input_path}")
+    
+    logger.info(f"Attempting to load: {input_path}")
+    
+    # Try OpenCV first
     image = cv2.imread(input_path)
-    if image is None:
-        raise ValueError(f"Cannot read image: {input_path}")
-    logger.info(f"Loaded image: {image.shape} from {input_path}")
-    return image
+    if image is not None:
+        logger.info(f"Loaded with OpenCV: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        # Convert CMYK to RGB if needed (OpenCV reads CMYK as 4 channels: B,G,R,Key)
+        if len(image.shape) > 2 and image.shape[2] == 4:
+            logger.info("Converting CMYK (4 channels) to RGB (3 channels)")
+            # OpenCV reads CMYK as BGRA, but it's actually CMYK in wrong order
+            # Better to use PIL for proper CMYK conversion
+            try:
+                from PIL import Image
+                pil_img = Image.open(input_path)
+                if pil_img.mode == 'CMYK':
+                    logger.info("Using PIL to convert CMYK to RGB")
+                    pil_img = pil_img.convert('RGB')
+                    image = np.array(pil_img)
+                    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                else:
+                    # Fallback: simple channel slicing
+                    image = image[:, :, :3]
+            except Exception as e:
+                logger.warning(f"PIL CMYK conversion failed: {e}, using simple channel slicing")
+                image = image[:, :, :3]
+        return image
+    
+    # If OpenCV fails, try PIL (supports more formats)
+    try:
+        from PIL import Image
+        pil_img = Image.open(input_path)
+        logger.info(f"PIL info: format={pil_img.format}, mode={pil_img.mode}, size={pil_img.size}")
+        
+        # Convert to RGB if needed (handle CMYK, RGBA, grayscale, etc.)
+        if pil_img.mode == 'CMYK':
+            logger.info("Converting CMYK to RGB")
+            pil_img = pil_img.convert('RGB')
+        elif pil_img.mode != 'RGB':
+            logger.info(f"Converting from {pil_img.mode} to RGB")
+            pil_img = pil_img.convert('RGB')
+        
+        image = np.array(pil_img)
+        # PIL gives RGB, OpenCV expects BGR
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        logger.info(f"Loaded with PIL: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        return image
+    except Exception as e:
+        logger.error(f"PIL failed: {e}")
+        raise ValueError(f"Cannot read image {input_path}: {e}")
 
 
 def step2_separate_colors(image: np.ndarray, num_colors: int) -> dict:
@@ -188,7 +233,8 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
     validator = StrokeValidator()
     total = max(1, len(masks))
     for i, mask in enumerate(masks):
-        warnings = validator.validate(mask, min_stroke_mm=args.min_stroke, dpi=args.dpi)
+        result = validator.validate_mask(mask)
+        warnings = result['warnings']
         if warnings:
             for w in warnings:
                 logger.warning(f"  Film {i+1}: {w}")
@@ -255,6 +301,9 @@ def step9_export(
 
     # Emit final progress 100% before returning
     _progress(1.0, 'Finished')
+
+    # NOTE: OUTPUT_DIR signal is sent in main() after pipeline completes
+    # Do NOT send it here to avoid "Future already completed" error
 
     return exported_paths
 

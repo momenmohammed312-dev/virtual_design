@@ -21,12 +21,14 @@ class HiveService {
 
     await Hive.initFlutter();
 
+    // Register adapters (only PrintProjectModel needed)
     if (!Hive.isAdapterRegistered(1)) {
       Hive.registerAdapter(PrintProjectModelAdapter());
     }
 
     await Hive.openBox<PrintProjectModel>(_projectsBox);
-    await Hive.openBox<ProcessingSettingsModel>(_settingsBox);
+    // Open settings box as untyped for JSON storage
+    await Hive.openBox(_settingsBox);
 
     _initialized = true;
   }
@@ -55,19 +57,25 @@ class HiveService {
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
-  Box<ProcessingSettingsModel> get _settings =>
-      Hive.box<ProcessingSettingsModel>(_settingsBox);
+  // For JSON storage (untyped box)
+  Box<dynamic> get _settingsDynamic => Hive.box(_settingsBox);
 
   Future<void> saveLastSettings(ProcessingSettingsModel settings) async {
-    await _settings.put(_lastSettingsKey, settings);
+    await _settingsDynamic.put(_lastSettingsKey, settings);
   }
 
   ProcessingSettingsModel? loadLastSettings() =>
-      _settings.get(_lastSettingsKey);
+      _settingsDynamic.get(_lastSettingsKey);
+
+  // New method for JSON storage
+  Future<Box<dynamic>> getSettingsBox() async {
+    await Hive.openBox(_settingsBox);
+    return Hive.box(_settingsBox);
+  }
 
   Future<void> clearAll() async {
     await _projects.clear();
-    await _settings.clear();
+    await _settingsDynamic.clear();
   }
 
   Future<void> close() async {
