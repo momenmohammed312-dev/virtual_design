@@ -1,10 +1,9 @@
 // lib/presentation/setup/setup_controller.dart
 
-import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../domain/entities/processing_settings.dart';
+import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
-import '../../core/enums/app_enums.dart';
+import '../../core/errors/error_handler.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
@@ -16,11 +15,10 @@ class SetupController extends GetxController {
   final RxString imagePath = ''.obs;
 
   // Settings State
-  final Rx<PrintType> selectedPrintType = PrintType.screenPrinting.obs;
   final RxInt selectedColors = 4.obs;
   final RxDouble strokeWidth = 0.5.obs; // mm
-  final Rx<DetailLevel> selectedDetail = DetailLevel.medium.obs;
-  final Rx<PrintFinish> selectedFinish = PrintFinish.solid.obs;
+  final Rx<ps.DetailLevel> selectedDetail = ps.DetailLevel.medium.obs;
+  final Rx<ps.PrintFinish> selectedFinish = ps.PrintFinish.solid.obs;
   final RxBool removeBackground = true.obs;
   final RxBool autoUpscale = true.obs;
 
@@ -43,11 +41,10 @@ class SetupController extends GetxController {
   Future<void> _loadLastSettings() async {
     final settings = await _repository.loadLastSettings();
     if (settings != null) {
-      selectedPrintType.value = settings.printType;
       selectedColors.value = settings.colorCount;
       selectedDetail.value = settings.detailLevel;
       selectedFinish.value = settings.printFinish;
-      removeBackground.value = settings.removeBackground;
+      strokeWidth.value = settings.strokeWidthMm;
       // ... load other settings
     }
   }
@@ -60,19 +57,19 @@ class SetupController extends GetxController {
     progressMessage.value = 'Starting...';
 
     // Build settings object
-    final settings = ProcessingSettings(
-      printType: selectedPrintType.value,
+    final halftone = selectedFinish.value == ps.PrintFinish.halftone
+        ? ps.HalftoneSettings(lpi: 65)
+        : null;
+
+    final settings = ps.ProcessingSettings(
       colorCount: selectedColors.value,
       detailLevel: selectedDetail.value,
       printFinish: selectedFinish.value,
       strokeWidthMm: strokeWidth.value,
-      paperSize: 'A4', // Default or make selectable
-      copies: 1,
       dpi: 300,
-      removeBackground: removeBackground.value,
-      autoUpscale: autoUpscale.value,
-      edgeEnhancement: true,
-      colorCorrection: true,
+      meshCount: 160,
+      edgeEnhancement: ps.EdgeEnhancement.light,
+      halftoneSettings: halftone,
     );
 
     try {
@@ -92,19 +89,28 @@ class SetupController extends GetxController {
       if (result.success) {
         Get.offNamed('/preview', arguments: result.outputDirectory);
       } else {
-        Get.defaultDialog(
-          title: 'Error',
-          middleText: result.errorMessage ?? 'Unknown error occurred',
-          textConfirm: 'OK',
-          onConfirm: () => Get.back(),
+        // Show error screen with retry option
+        Get.toNamed(
+          '/error',
+          arguments: {
+            'processResult': result,
+            'onRetry': () {
+              // Retry processing
+              Get.back(); // Close error page
+              startProcessing();
+            },
+            'onGoBack': () {
+              Get.offAllNamed('/dashboard');
+            },
+          },
         );
       }
     } catch (e) {
-      Get.defaultDialog(
-        title: 'Error',
-        middleText: e.toString(),
-        textConfirm: 'OK',
-        onConfirm: () => Get.back(),
+      ErrorHandler.handleError(
+        e,
+        context: 'SetupController.startProcessing',
+        showDialog: true,
+        onRetry: startProcessing,
       );
     } finally {
       isProcessing.value = false;

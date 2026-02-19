@@ -27,6 +27,8 @@ dependencies:
   # ── Local Storage ─────────────────────────────────────
   hive: ^2.2.3                       # Local database
   hive_flutter: ^1.1.0               # Hive + Flutter
+  crypto: ^3.0.7                     # Cryptography (SHA-256, etc.)
+  device_info_plus: ^10.0.1          # Get device info for licensing
 
   # ── UI ────────────────────────────────────────────────
   cupertino_icons: ^1.0.8

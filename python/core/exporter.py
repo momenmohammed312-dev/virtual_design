@@ -96,7 +96,7 @@ class Exporter:
         Returns:
             List of file paths
         """
-        print(f"\n💾 Exporting {len(masks)} films as PNG...")
+        print(f"\nExporting {len(masks)} films as PNG...")
         
         exported_files = []
         

@@ -1,3 +1,24 @@
 {
-    "cmake.sourceDirectory": "G:/Designs/design app/virtual_design/windows"
+    "cmake.sourceDirectory": "G:/Designs/design app/virtual_design/windows",
+    "chat.tools.terminal.autoApprove": {
+        "flutter": true,
+        "Out-Host": true,
+        "Out-File": true,
+        "/^cd python ; python test_imports\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python test_pipeline\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^C:\\\\Users\\\\Momen\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python\\.exe -m pip install svgwrite$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^C:\\\\Users\\\\Momen\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python\\.exe test_pipeline\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

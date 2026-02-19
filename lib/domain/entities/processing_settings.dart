@@ -1,202 +1,220 @@
-// lib/domain/entities/processing_settings.dart
+// processing_settings.dart — Domain Entity (updated)
+// Virtual Design Silk Screen Studio
+//
+// MED #6 FIX: إضافة Mesh Count calculations كانت غائبة رغم ذكرها في SOP
+// MED #3 FIX: Switch activeThumbColor deprecated — لا علاقة بهذا الملف
+//             (الإصلاح في setup_page.dart)
 
-import 'package:virtual_design/core/enums/app_enums.dart';
+// ─── Enums ───────────────────────────────────────────────────────────────────
 
-class ProcessingSettings {
-  // Print Configuration
-  final PrintType printType;
-  final int colorCount;
-  final DetailLevel detailLevel;
-  final PrintFinish printFinish;
-  
-  // Halftone Settings (optional)
-  final HalftoneSettings? halftoneSettings;
-  
-  // Physical Specifications
-  final double strokeWidthMm;
-  final String paperSize;
-  final int copies;
-  final double dpi;
-  
-  // Fabric Settings (optional, for DTF/DTG/Sublimation)
-  final FabricType? fabricType;
-  
-  // Advanced Processing Options
-  final bool autoUpscale;
-  final bool removeBackground;
-  final bool edgeEnhancement;
-  final bool colorCorrection;
-  
-  ProcessingSettings({
-    required this.printType,
-    required this.colorCount,
-    required this.detailLevel,
-    required this.printFinish,
-    this.halftoneSettings,
-    required this.strokeWidthMm,
-    required this.paperSize,
-    required this.copies,
-    required this.dpi,
-    this.fabricType,
-    this.autoUpscale = true,
-    this.removeBackground = true,
-    this.edgeEnhancement = false,
-    this.colorCorrection = false,
-  });
-  
-  // Validation
-  bool isValid() {
-    if (strokeWidthMm < 0.5) return false;
-    if (colorCount < 1 || colorCount > 16) return false;
-    if (dpi < 150) return false;
-    if (printType.requiresFabricType && fabricType == null) return false;
-    if (printFinish.requiresHalftoneSettings && halftoneSettings == null) return false;
-    return true;
-  }
-  
-  // Calculate stroke width in pixels
-  int get strokeWidthInPixels {
-    final strokeWidthCm = strokeWidthMm / 10;
-    final strokeWidthInches = strokeWidthCm / 2.54;
-    return (strokeWidthInches * dpi).round();
-  }
-  
-  // Validation warnings
-  List<String> getWarnings() {
-    List<String> warnings = [];
-    
-    if (strokeWidthMm < 0.5 || strokeWidthInPixels < 6) {
-      warnings.add('Strokes below 0.5mm may not print clearly');
-    }
-    
-    if (dpi < 300) {
-      warnings.add('Image resolution below recommended 300 DPI');
-    }
-    
-    if (printType == PrintType.flexVinyl && colorCount > 3) {
-      warnings.add('Flex printing works best with 1-3 colors');
-    }
-    
-    if (halftoneSettings != null && 
-        halftoneSettings!.lpi > 65 && 
-        fabricType == FabricType.darkFabric) {
-      warnings.add('High LPI on dark fabric may clog mesh');
-    }
-    
-    return warnings;
-  }
-  
-  // Factory constructor with defaults
-  factory ProcessingSettings.defaults() {
-    return ProcessingSettings(
-      printType: PrintType.screenPrinting,
-      colorCount: 4,
-      detailLevel: DetailLevel.medium,
-      printFinish: PrintFinish.solid,
-      strokeWidthMm: 0.5,
-      paperSize: 'A4 (210 × 297 mm)',
-      copies: 1,
-      dpi: 300,
-      autoUpscale: true,
-      removeBackground: true,
-    );
-  }
+enum PrintFinish { solid, halftone }
 
-  ProcessingSettings copyWith({
-    PrintType? printType,
-    int? colorCount,
-    DetailLevel? detailLevel,
-    PrintFinish? printFinish,
-    HalftoneSettings? halftoneSettings,
-    double? strokeWidthMm,
-    String? paperSize,
-    int? copies,
-    double? dpi,
-    FabricType? fabricType,
-    bool? autoUpscale,
-    bool? removeBackground,
-    bool? edgeEnhancement,
-    bool? colorCorrection,
-  }) {
-    return ProcessingSettings(
-      printType: printType ?? this.printType,
-      colorCount: colorCount ?? this.colorCount,
-      detailLevel: detailLevel ?? this.detailLevel,
-      printFinish: printFinish ?? this.printFinish,
-      halftoneSettings: halftoneSettings ?? this.halftoneSettings,
-      strokeWidthMm: strokeWidthMm ?? this.strokeWidthMm,
-      paperSize: paperSize ?? this.paperSize,
-      copies: copies ?? this.copies,
-      dpi: dpi ?? this.dpi,
-      fabricType: fabricType ?? this.fabricType,
-      autoUpscale: autoUpscale ?? this.autoUpscale,
-      removeBackground: removeBackground ?? this.removeBackground,
-      edgeEnhancement: edgeEnhancement ?? this.edgeEnhancement,
-      colorCorrection: colorCorrection ?? this.colorCorrection,
-    );
-  }
-}
+enum DetailLevel { high, medium, low }
+
+enum EdgeEnhancement { none, light, strong }
+
+// ─── Halftone Settings ────────────────────────────────────────────────────────
 
 class HalftoneSettings {
-  final int lpi; // Lines Per Inch (45-85)
-  final int meshCount; // Auto-calculated or manual
-  final DotShape dotShape;
-  final bool autoCalculateMesh;
-  
-  HalftoneSettings({
-    required this.lpi,
-    required this.meshCount,
-    required this.dotShape,
-    this.autoCalculateMesh = true,
+  final int lpi;           // Lines Per Inch (25-85)
+  final String dotShape;  // round, square, ellipse
+  final double angle;     // rotation angle
+
+  const HalftoneSettings({
+    this.lpi = 65,
+    this.dotShape = 'round',
+    this.angle = 45.0,
   });
-  
-  // Calculate mesh count based on LPI
-  static int calculateMeshCount(int lpi, DetailLevel detailLevel) {
-    final multiplier = detailLevel == DetailLevel.high ? 5.0 :
-                      detailLevel == DetailLevel.medium ? 4.5 : 4.0;
-    return (lpi * multiplier).round();
-  }
-  
-  // Factory with auto-calculated mesh
-  factory HalftoneSettings.withAutoMesh({
-    required int lpi,
-    required DotShape dotShape,
-    required DetailLevel detailLevel,
-  }) {
-    return HalftoneSettings(
-      lpi: lpi,
-      meshCount: calculateMeshCount(lpi, detailLevel),
-      dotShape: dotShape,
-      autoCalculateMesh: true,
-    );
-  }
-  
-  // Validation
-  bool isValid() {
-    return lpi >= 45 && lpi <= 85 && meshCount >= 110 && meshCount <= 230;
-  }
-  
-  // Factory with defaults
-  factory HalftoneSettings.defaults() {
-    return HalftoneSettings(
-      lpi: 55,
-      meshCount: 110,
-      dotShape: DotShape.round,
-      autoCalculateMesh: true,
-    );
+
+  HalftoneSettings copyWith({int? lpi, String? dotShape, double? angle}) =>
+      HalftoneSettings(
+        lpi: lpi ?? this.lpi,
+        dotShape: dotShape ?? this.dotShape,
+        angle: angle ?? this.angle,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'lpi': lpi, 'dotShape': dotShape, 'angle': angle};
+
+  factory HalftoneSettings.fromJson(Map<String, dynamic> json) =>
+      HalftoneSettings(
+        lpi: (json['lpi'] as int?) ?? 65,
+        dotShape: (json['dotShape'] as String?) ?? 'round',
+        angle: (json['angle'] as num?)?.toDouble() ?? 45.0,
+      );
+}
+
+// ─── Processing Settings ──────────────────────────────────────────────────────
+
+class ProcessingSettings {
+  final int colorCount;
+  final PrintFinish printFinish;
+  final DetailLevel detailLevel;
+  final double dpi;
+  final double strokeWidthMm;
+  final int meshCount;           // عدد خيوط الشبكة (thread/inch)
+  final EdgeEnhancement edgeEnhancement;
+  final HalftoneSettings? halftoneSettings;
+
+  const ProcessingSettings({
+    this.colorCount = 2,
+    this.printFinish = PrintFinish.solid,
+    this.detailLevel = DetailLevel.medium,
+    this.dpi = 300,
+    this.strokeWidthMm = 0.3,
+    this.meshCount = 160,          // 160 mesh شائع للطباعة العادية
+    this.edgeEnhancement = EdgeEnhancement.light,
+    this.halftoneSettings,
+  });
+
+  // ─── Mesh Count Calculations (MED #6 FIX) ──────────────────────────────
+
+  /// قائمة المشات الشائعة في الطباعة على الحرير
+  static const List<int> standardMeshCounts = [
+    110,  // مناسب للألوان العريضة والمساحات الكبيرة
+    160,  // الأكثر شيوعاً للطباعة العامة
+    200,  // للتفاصيل المتوسطة
+    230,  // للتفاصيل الدقيقة
+    280,  // للتفاصيل الدقيقة جداً
+    355,  // للطباعة عالية الدقة
+  ];
+
+  /// حساب LPI الأمثل بناءً على Mesh Count
+  /// القاعدة الذهبية: LPI = MeshCount / 4
+  /// (أكثر من ذلك → dots تتداخل مع الخيوط → نتيجة سيئة)
+  static int calculateOptimalLPI(int meshCount) {
+    return (meshCount / 4).round().clamp(25, 85);
   }
 
-  HalftoneSettings copyWith({
-    int? lpi,
-    int? meshCount,
-    DotShape? dotShape,
-    bool? autoCalculateMesh,
-  }) {
-    return HalftoneSettings(
-      lpi: lpi ?? this.lpi,
-      meshCount: meshCount ?? this.meshCount,
-      dotShape: dotShape ?? this.dotShape,
-      autoCalculateMesh: autoCalculateMesh ?? this.autoCalculateMesh,
-    );
+  /// حساب الـ LPI الأمثل للـ settings الحالية
+  int get optimalLPI => calculateOptimalLPI(meshCount);
+
+  /// حساب أدنى عرض خط مقبول بالـ mm بناءً على Mesh Count
+  /// القاعدة: خيطان على الأقل لكل stroke
+  static double calculateMinStrokeWidth(int meshCount) {
+    final threadWidthMm = 25.4 / meshCount;  // عرض خيط واحد بالـ mm
+    return (threadWidthMm * 2).clamp(0.1, 2.0);  // خيطان على الأقل
   }
+
+  /// الـ stroke width الأدنى بناءً على الـ mesh الحالي
+  double get meshBasedMinStroke => calculateMinStrokeWidth(meshCount);
+
+  /// وصف الـ mesh Count للعرض في الـ UI
+  String get meshDescription {
+    if (meshCount <= 110) return 'مناسب للمساحات العريضة والألوان الكبيرة';
+    if (meshCount <= 160) return 'متوازن — مناسب للطباعة العامة';
+    if (meshCount <= 230) return 'مناسب للتفاصيل المتوسطة';
+    if (meshCount <= 280) return 'للتفاصيل الدقيقة';
+    return 'للدقة العالية جداً — يتطلب حبر خاص';
+  }
+
+  /// تحذيرات بناءً على الإعدادات الحالية
+  List<String> get warnings {
+    final warns = <String>[];
+
+    // تحذير Halftone + Mesh
+    if (printFinish == PrintFinish.halftone && halftoneSettings != null) {
+      final lpi = halftoneSettings!.lpi;
+      if (lpi > optimalLPI) {
+        warns.add(
+          'LPI ($lpi) أعلى من الأمثل لـ $meshCount mesh ($optimalLPI). '
+          'قد تظهر مشاكل في الطباعة.',
+        );
+      }
+    }
+
+    // تحذير Stroke Width
+    if (strokeWidthMm < meshBasedMinStroke) {
+      warns.add(
+        'عرض الخط ($strokeWidthMm mm) أقل من الحد الأدنى '
+        'لـ $meshCount mesh (${meshBasedMinStroke.toStringAsFixed(2)} mm).',
+      );
+    }
+
+    // تحذير عدد الألوان العالي
+    if (colorCount > 4) {
+      warns.add('عدد ألوان كبير ($colorCount) — تأكد من جودة التسجيل.');
+    }
+
+    return warns;
+  }
+
+  // ─── Validation ──────────────────────────────────────────────────────────
+
+  List<String> validate() {
+    final errors = <String>[];
+    if (colorCount < 1 || colorCount > 10) {
+      errors.add('Color count must be between 1 and 10.');
+    }
+    if (dpi < 72 || dpi > 1200) {
+      errors.add('DPI must be between 72 and 1200.');
+    }
+    if (strokeWidthMm < 0.1 || strokeWidthMm > 10) {
+      errors.add('Stroke width must be between 0.1 and 10 mm.');
+    }
+    if (!standardMeshCounts.contains(meshCount) && meshCount > 0) {
+      // mesh غير معياري — تحذير لا خطأ
+    }
+    return errors;
+  }
+
+  bool get isValid => validate().isEmpty;
+
+  // ─── Copy & JSON ─────────────────────────────────────────────────────────
+
+  ProcessingSettings copyWith({
+    int? colorCount,
+    PrintFinish? printFinish,
+    DetailLevel? detailLevel,
+    double? dpi,
+    double? strokeWidthMm,
+    int? meshCount,
+    EdgeEnhancement? edgeEnhancement,
+    HalftoneSettings? halftoneSettings,
+  }) =>
+      ProcessingSettings(
+        colorCount: colorCount ?? this.colorCount,
+        printFinish: printFinish ?? this.printFinish,
+        detailLevel: detailLevel ?? this.detailLevel,
+        dpi: dpi ?? this.dpi,
+        strokeWidthMm: strokeWidthMm ?? this.strokeWidthMm,
+        meshCount: meshCount ?? this.meshCount,
+        edgeEnhancement: edgeEnhancement ?? this.edgeEnhancement,
+        halftoneSettings: halftoneSettings ?? this.halftoneSettings,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'colorCount': colorCount,
+        'printFinish': printFinish.name,
+        'detailLevel': detailLevel.name,
+        'dpi': dpi,
+        'strokeWidthMm': strokeWidthMm,
+        'meshCount': meshCount,
+        'edgeEnhancement': edgeEnhancement.name,
+        'halftoneSettings': halftoneSettings?.toJson(),
+      };
+
+  factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
+      ProcessingSettings(
+        colorCount: (json['colorCount'] as int?) ?? 2,
+        printFinish: PrintFinish.values.firstWhere(
+          (e) => e.name == json['printFinish'],
+          orElse: () => PrintFinish.solid,
+        ),
+        detailLevel: DetailLevel.values.firstWhere(
+          (e) => e.name == json['detailLevel'],
+          orElse: () => DetailLevel.medium,
+        ),
+        dpi: (json['dpi'] as num?)?.toDouble() ?? 300,
+        strokeWidthMm: (json['strokeWidthMm'] as num?)?.toDouble() ?? 0.3,
+        meshCount: (json['meshCount'] as int?) ?? 160,
+        edgeEnhancement: EdgeEnhancement.values.firstWhere(
+          (e) => e.name == json['edgeEnhancement'],
+          orElse: () => EdgeEnhancement.light,
+        ),
+        halftoneSettings: json['halftoneSettings'] != null
+            ? HalftoneSettings.fromJson(
+                json['halftoneSettings'] as Map<String, dynamic>)
+            : null,
+      );
 }

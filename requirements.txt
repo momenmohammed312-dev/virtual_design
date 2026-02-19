@@ -1,0 +1,19 @@
+# Virtual Design - Silk Screen Processing Pipeline
+# Python 3.8+ required
+
+# Core dependencies
+numpy>=1.21.0,<2.0
+opencv-python>=4.5.0,<5.0
+Pillow>=9.0.0
+scikit-image>=0.19.0
+
+# Optional but recommended
+scipy>=1.7.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=3.0.0
+
+# Development
+black>=22.0.0
+flake8>=4.0.0

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:get/get.dart';
+import '../../core/python_bridge/python_config.dart';
+import 'dart:io';
 import 'package:virtual_design/core/constants/app_constants.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -75,6 +77,43 @@ class _SplashScreenState extends State<SplashScreen>
     }
 
     await Future.delayed(const Duration(milliseconds: 600));
+
+    // Check Python availability and dependencies before navigating
+    try {
+      final pythonConfig = Get.find<PythonConfig>();
+      final initResult = await pythonConfig.initialize();
+      if (!initResult.success) {
+        if (!mounted) return;
+        // Show dialog informing the user and offer to continue or quit
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => AlertDialog(
+            title: const Text('Python Not Available'),
+            content: Text(initResult.error ?? 'Required Python packages are missing or Python is not installed.'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  // Continue without Python (limited functionality)
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Continue (limited)'),
+              ),
+              TextButton(
+                onPressed: () {
+                  // Quit the app
+                  exit(0);
+                },
+                child: const Text('Quit'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (_) {
+      // ignore and continue
+    }
+
     if (mounted) Get.offAllNamed('/dashboard');
   }
 

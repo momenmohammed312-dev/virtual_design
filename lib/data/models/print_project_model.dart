@@ -50,7 +50,7 @@ class PrintProjectModel extends HiveObject {
       createdAt: entity.createdAt,
       settings: ProcessingSettingsModel.fromEntity(entity.settings),
       filmPaths: entity.filmPaths,
-      originalImagePath: entity.originalImagePath,
+      originalImagePath: entity.imagePath ?? '',
       status: entity.status.name,
       outputDirectory: entity.outputDirectory,
     );
@@ -65,10 +65,10 @@ class PrintProjectModel extends HiveObject {
     return PrintProject(
       id: id,
       name: name,
+      imagePath: originalImagePath,
       createdAt: createdAt,
       settings: settings.toEntity(),
       filmPaths: filmPaths,
-      originalImagePath: originalImagePath,
       status: statusEnum,
       outputDirectory: outputDirectory,
     );
