@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 
 import 'process_result.dart';
 import 'python_config.dart';
@@ -39,10 +40,10 @@ class PythonProcessor {
       return ProcessResult.failure('Image file not found: $imagePath');
     }
 
-    // مجلد الـ output
+    // مجلد الـ output داخل مجلد التطبيق الموثوق
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final outputDir =
-        '${File(imagePath).parent.path}/silk_output_$timestamp';
+    final appDir = await getApplicationDocumentsDirectory();
+    final outputDir = '${appDir.path}/silk_output_$timestamp';
 
     // بناء قائمة الـ arguments
     final args = _buildArgs(imagePath, outputDir, settings);

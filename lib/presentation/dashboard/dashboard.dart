@@ -253,7 +253,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             color: Colors.white,
                             onTap: () => Get.toNamed('/upload'),
                             child: Padding(
-                              padding: const EdgeInsets.all(30.0),
+                              padding: const EdgeInsets.all(16.0),
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -270,11 +270,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       color: Color.fromARGB(200, 69, 135, 249),
                                     ),
                                   ),
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: 8),
                                   const Text(
                                     'New Print Job',
                                     style: TextStyle(
-                                      fontSize: 16,
+                                      fontSize: 14,
                                       fontWeight: FontWeight.w500,
                                       color: Colors.black87,
                                     ),
@@ -292,7 +292,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               Get.to(() => const UploadPage());
                             },
                             child: Padding(
-                              padding: const EdgeInsets.all(30.0),
+                              padding: const EdgeInsets.all(16.0),
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -309,11 +309,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       color: Color.fromARGB(200, 69, 135, 249),
                                     ),
                                   ),
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: 8),
                                   const Text(
                                     'Upload File',
                                     style: TextStyle(
-                                      fontSize: 16,
+                                      fontSize: 14,
                                       fontWeight: FontWeight.w500,
                                       color: Colors.black87,
                                     ),
