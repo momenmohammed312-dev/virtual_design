@@ -1,9 +1,9 @@
-/// app_theme.dart — Single source of truth for all theming
-/// Virtual Design Silk Screen Studio
-///
-/// MED #4 FIX: كانت قيم الـ theme معرّفة في مكانين (هنا + app_constants.dart)
-/// الحل: app_theme.dart هو المصدر الوحيد — احذف من app_constants.dart أي
-///       static const lightTheme أو darkTheme موجود هناك.
+// app_theme.dart — Single source of truth for all theming
+// Virtual Design Silk Screen Studio
+//
+// MED #4 FIX: كانت قيم الـ theme معرّفة في مكانين (هنا + app_constants.dart)
+// الحل: app_theme.dart هو المصدر الوحيد — احذف من app_constants.dart أي
+//       static const lightTheme أو darkTheme موجود هناك.
 
 import 'package:flutter/material.dart';
 
@@ -246,7 +246,7 @@ class AppTheme {
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return AppColors.primary.withOpacity(0.4);
+            return AppColors.primary.withAlpha((0.4 * 255).round());
           }
           return AppColors.surface4;
         }),
@@ -258,7 +258,7 @@ class AppTheme {
         activeTrackColor:   AppColors.primary,
         inactiveTrackColor: AppColors.surface4,
         thumbColor:         AppColors.primary,
-        overlayColor:       AppColors.primary.withOpacity(0.15),
+        overlayColor:       AppColors.primary.withAlpha((0.15 * 255).round()),
         valueIndicatorColor: AppColors.surface3,
         valueIndicatorTextStyle: AppTextStyles.bodyS.copyWith(
           color: AppColors.textPrimary,
@@ -268,7 +268,7 @@ class AppTheme {
       // ── Chip ────────────────────────────────────────────────────────────────
       chipTheme: ChipThemeData(
         backgroundColor:       AppColors.surface3,
-        selectedColor:         AppColors.primary.withOpacity(0.2),
+        selectedColor:         AppColors.primary.withAlpha((0.2 * 255).round()),
         disabledColor:         AppColors.surface2,
         labelStyle:            AppTextStyles.bodyS,
         side:                  const BorderSide(color: AppColors.border),
@@ -364,7 +364,7 @@ class AppTheme {
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return AppColors.primary.withOpacity(0.3);
+            return AppColors.primary.withAlpha((0.3 * 255).round());
           }
           return Colors.grey.shade300;
         }),

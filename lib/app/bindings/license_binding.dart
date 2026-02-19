@@ -1,7 +1,5 @@
-/// license_binding.dart — License Module Bindings
-/// Virtual Design Silk Screen Studio
-
-library virtual_design.app.bindings.license_binding;
+// license_binding.dart — License Module Bindings
+// Virtual Design Silk Screen Studio
 
 import 'package:get/get.dart';
 import 'package:virtual_design/core/licensing/license_manager.dart';

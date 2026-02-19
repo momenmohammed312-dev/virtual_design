@@ -1,7 +1,7 @@
-/// python_bridge_test.dart — Dart Unit Tests
-/// Virtual Design Silk Screen Studio
-///
-/// Tests for: PythonConfig, ProcessResult, PythonProcessor
+// python_bridge_test.dart — Dart Unit Tests
+// Virtual Design Silk Screen Studio
+//
+// Tests for: PythonConfig, ProcessResult, PythonProcessor
 
 import 'dart:convert';
 import 'package:crypto/crypto.dart';

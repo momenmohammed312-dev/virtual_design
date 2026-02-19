@@ -1,5 +1,5 @@
-/// process_result.dart — Result object from Python processing
-/// Virtual Design Silk Screen Studio
+// process_result.dart — Result object from Python processing
+// Virtual Design Silk Screen Studio
 
 class ProcessResult {
   final bool success;

@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/permissions/permission_service.dart';
 
+
 class UploadController extends GetxController {
   final PermissionService permissionService = Get.find<PermissionService>();
   final RxBool isDragging = false.obs;

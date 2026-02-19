@@ -1,10 +1,10 @@
-/// python_processor.dart — Fixed Dart↔Python Bridge
-/// Virtual Design Silk Screen Studio
-///
-/// FATAL #1 FIX: يستدعي main.py بدل registration_marks.py
-/// FATAL #3 FIX: يقرأ OUTPUT_DIR: من stdout
-/// FATAL #4 FIX: يستخدم Process.start() لـ real-time progress streaming
-/// HIGH #1 FIX:  يستخدم PythonConfig لاكتشاف أمر Python تلقائياً
+// python_processor.dart — Fixed Dart↔Python Bridge
+// Virtual Design Silk Screen Studio
+//
+// FATAL #1 FIX: يستدعي main.py بدل registration_marks.py
+// FATAL #3 FIX: يقرأ OUTPUT_DIR: من stdout
+// FATAL #4 FIX: يستخدم Process.start() لـ real-time progress streaming
+// HIGH #1 FIX:  يستخدم PythonConfig لاكتشاف أمر Python تلقائياً
 
 import 'dart:async';
 import 'dart:convert';
@@ -163,26 +163,26 @@ class PythonProcessor {
   String _parseError(int exitCode, String stderr) {
     switch (exitCode) {
       case 2:
-        return 'Image file not found. Please re-select the image.';
+        return 'FILE_NOT_FOUND:Image file not found. Please re-select the image.';
       case 3:
-        return 'Invalid image format. Use PNG, JPG, or TIFF.';
+        return 'INVALID_FORMAT:Invalid image format. Use PNG, JPG, or TIFF.';
       case 1:
         // البحث في stderr عن تفاصيل
         if (stderr.contains('ModuleNotFoundError') ||
             stderr.contains('ImportError')) {
           final missing = _extractMissingModule(stderr);
-          return 'Missing Python package: $missing\n'
+          return 'MISSING_DEPENDENCY:Missing Python package: $missing\n'
               'Run: pip install -r requirements.txt';
         }
         if (stderr.contains('MemoryError')) {
-          return 'Image is too large. Try reducing resolution or file size.';
+          return 'MEMORY_ERROR:Image is too large. Try reducing resolution or file size.';
         }
         if (stderr.contains('cv2.error')) {
-          return 'Image processing error. Check image format.';
+          return 'PROCESSING_FAILED:Image processing error. Check image format.';
         }
-        return 'Processing failed (exit code $exitCode).\n$stderr';
+        return 'PROCESSING_FAILED:Processing failed (exit code $exitCode).\n$stderr';
       default:
-        return 'Unknown error (exit code $exitCode).';
+        return 'UNKNOWN_ERROR:Unknown error (exit code $exitCode).';
     }
   }
 

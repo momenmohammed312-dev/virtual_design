@@ -1,5 +1,5 @@
-/// license_controller.dart — GetX Controller for License Page
-/// Virtual Design Silk Screen Studio
+// license_controller.dart — GetX Controller for License Page
+// Virtual Design Silk Screen Studio
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';

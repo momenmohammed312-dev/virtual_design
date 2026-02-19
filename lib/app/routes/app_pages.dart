@@ -6,6 +6,7 @@ import '../../presentation/dashboard/dashboard.dart';
 import '../../presentation/upload/upload_page.dart';
 import '../../presentation/setup/setup_page.dart';
 import '../../presentation/preview/preview_page.dart';
+import '../../presentation/error/error_page.dart';
 import '../bindings/dashboard_binding.dart';
 import '../bindings/upload_binding.dart';
 import '../bindings/setup_binding.dart';
@@ -43,6 +44,11 @@ class AppPages {
       page: () => const PreviewPage(),
       binding: PreviewBinding(),
       transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: AppRoutes.error,
+      page: () => const ErrorPage(),
+      transition: Transition.fadeIn,
     ),
   ];
 }

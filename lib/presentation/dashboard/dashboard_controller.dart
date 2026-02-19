@@ -124,5 +124,6 @@ class DashboardController extends GetxController {
     }
   }
 
+  @override
   void refresh() => loadStats();
 }

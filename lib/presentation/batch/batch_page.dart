@@ -1,7 +1,7 @@
-/// batch_page.dart — Batch Processing Screen
-/// Virtual Design Silk Screen Studio
-///
-/// MED #5 FIX: الـ use case كان موجوداً لكن الـ UI غائب
+// batch_page.dart — Batch Processing Screen
+// Virtual Design Silk Screen Studio
+//
+// MED #5 FIX: الـ use case كان موجوداً لكن الـ UI غائب
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -303,9 +303,9 @@ class _AddMoreChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: AppColors.primary.withOpacity(0.1),
+          color: AppColors.primary.withAlpha((0.1 * 255).round()),
           borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+          border: Border.all(color: AppColors.primary.withAlpha((0.3 * 255).round())),
         ),
         child: const Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(Icons.add, size: 14, color: AppColors.primary),
@@ -398,9 +398,9 @@ class _ProgressCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withAlpha((0.08 * 255).round()),
         borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withAlpha((0.3 * 255).round())),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

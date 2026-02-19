@@ -1,7 +1,7 @@
-/// permission_service.dart — Runtime Storage Permission Handling
-/// Virtual Design Silk Screen Studio
-///
-/// HIGH #5 FIX: طلب إذن Storage من المستخدم runtime على Android
+// permission_service.dart — Runtime Storage Permission Handling
+// Virtual Design Silk Screen Studio
+//
+// HIGH #5 FIX: طلب إذن Storage من المستخدم runtime على Android
 
 import 'dart:io';
 import 'package:permission_handler/permission_handler.dart';
@@ -78,6 +78,20 @@ class PermissionService {
     if (!Platform.isAndroid && !Platform.isIOS) return true;
     final status = await Permission.photos.status;
     return status.isGranted || status.isLimited;
+  }
+
+  /// التأكد من وجود الإذن - يتحقق أولاً ثم يطلبه إذا لزم الأمر
+  /// يرجع true لو تم منح الإذن
+  Future<bool> ensureImageAccess() async {
+    // التحقق أولاً إذا كان الإذن موجوداً بالفعل
+    final alreadyHasAccess = await hasImageAccess();
+    if (alreadyHasAccess) {
+      return true;
+    }
+
+    // إذا لم يكن موجوداً، قم بطلبه
+    final result = await requestImageAccess();
+    return result.isGranted;
   }
 }
 

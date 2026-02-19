@@ -3,6 +3,7 @@
 import 'package:get/get.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
+import '../../core/errors/error_handler.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
@@ -88,19 +89,28 @@ class SetupController extends GetxController {
       if (result.success) {
         Get.offNamed('/preview', arguments: result.outputDirectory);
       } else {
-        Get.defaultDialog(
-          title: 'Error',
-          middleText: result.errorMessage ?? 'Unknown error occurred',
-          textConfirm: 'OK',
-          onConfirm: () => Get.back(),
+        // Show error screen with retry option
+        Get.toNamed(
+          '/error',
+          arguments: {
+            'processResult': result,
+            'onRetry': () {
+              // Retry processing
+              Get.back(); // Close error page
+              startProcessing();
+            },
+            'onGoBack': () {
+              Get.offAllNamed('/dashboard');
+            },
+          },
         );
       }
     } catch (e) {
-      Get.defaultDialog(
-        title: 'Error',
-        middleText: e.toString(),
-        textConfirm: 'OK',
-        onConfirm: () => Get.back(),
+      ErrorHandler.handleError(
+        e,
+        context: 'SetupController.startProcessing',
+        showDialog: true,
+        onRetry: startProcessing,
       );
     } finally {
       isProcessing.value = false;

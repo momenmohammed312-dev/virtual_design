@@ -1,30 +1,30 @@
-/// setup_page_switch_fix.dart
-/// Virtual Design Silk Screen Studio
-///
-/// MED #3 FIX: activeThumbColor deprecated في Flutter 3.x
-///
-/// هذا الملف يحتوي على:
-/// 1. الـ AppSwitch widget الصحيح (استبدل كل Switch في setup_page.dart به)
-/// 2. تعليمات find & replace لـ setup_page.dart
-///
-/// ─────────────────────────────────────────────────────────────────────────
-/// FIND & REPLACE في setup_page.dart:
-///
-///   ❌ ابحث عن:
-///       Switch(
-///         value: ...,
-///         onChanged: ...,
-///         activeThumbColor: ...,
-///         activeColor: ...,
-///       )
-///
-///   ✅ استبدل بـ:
-///       AppSwitch(
-///         value: ...,
-///         onChanged: ...,
-///       )
-///
-/// ─────────────────────────────────────────────────────────────────────────
+// setup_page_switch_fix.dart
+// Virtual Design Silk Screen Studio
+//
+// MED #3 FIX: activeThumbColor deprecated في Flutter 3.x
+//
+// هذا الملف يحتوي على:
+// 1. الـ AppSwitch widget الصحيح (استبدل كل Switch في setup_page.dart به)
+// 2. تعليمات find & replace لـ setup_page.dart
+//
+// ─────────────────────────────────────────────────────────────────────────
+// FIND & REPLACE في setup_page.dart:
+//
+//   ❌ ابحث عن:
+//       Switch(
+//         value: ...,
+//         onChanged: ...,
+//         activeThumbColor: ...,
+//         activeColor: ...,
+//       )
+//
+//   ✅ استبدل بـ:
+//       AppSwitch(
+//         value: ...,
+//         onChanged: ...,
+//       )
+//
+// ─────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
 import '../../app/themes/app_theme.dart';
@@ -63,10 +63,10 @@ class AppSwitch extends StatelessWidget {
       // ✅ trackColor يشمل الحالة المختارة وغير المختارة
       trackColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.disabled)) {
-          return AppColors.surface4.withOpacity(0.5);
+          return AppColors.surface4.withAlpha((0.5 * 255).round());
         }
         if (states.contains(WidgetState.selected)) {
-          return primary.withOpacity(0.4);
+          return primary.withAlpha((0.4 * 255).round());
         }
         return AppColors.surface4;
       }),

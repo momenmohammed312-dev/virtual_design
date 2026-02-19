@@ -1,7 +1,5 @@
-/// license_model.dart — License Data Model
-/// Virtual Design Silk Screen Studio
-
-library virtual_design.licensing.license_model;
+// license_model.dart — License Data Model
+// Virtual Design Silk Screen Studio
 
 class License {
   final String activationKey;

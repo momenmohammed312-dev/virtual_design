@@ -1,9 +1,9 @@
-/// processing_settings.dart — Domain Entity (updated)
-/// Virtual Design Silk Screen Studio
-///
-/// MED #6 FIX: إضافة Mesh Count calculations كانت غائبة رغم ذكرها في SOP
-/// MED #3 FIX: Switch activeThumbColor deprecated — لا علاقة بهذا الملف
-///             (الإصلاح في setup_page.dart)
+// processing_settings.dart — Domain Entity (updated)
+// Virtual Design Silk Screen Studio
+//
+// MED #6 FIX: إضافة Mesh Count calculations كانت غائبة رغم ذكرها في SOP
+// MED #3 FIX: Switch activeThumbColor deprecated — لا علاقة بهذا الملف
+//             (الإصلاح في setup_page.dart)
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 

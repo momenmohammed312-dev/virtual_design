@@ -1,13 +1,12 @@
-/// license_manager.dart — License Management & Validation
-/// Virtual Design Silk Screen Studio
-/// Phase 7: Offline license validation with SHA-256
-
-library virtual_design.licensing.license_manager;
+// license_manager.dart — License Management & Validation
+// Virtual Design Silk Screen Studio
+// Phase 7: Offline license validation with SHA-256
 
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
 import 'license_model.dart';
 
 class LicenseManager {
@@ -27,7 +26,7 @@ class LicenseManager {
       final json = jsonDecode(jsonStr) as Map<String, dynamic>;
       return License.fromJson(json);
     } catch (e) {
-      print('❌ Failed to load license: $e');
+      debugPrint('❌ Failed to load license: $e');
       return null;
     }
   }
@@ -41,10 +40,10 @@ class LicenseManager {
       final json = license.toJson();
       await file.writeAsString(jsonEncode(json));
       
-      print('✅ License saved successfully');
+      debugPrint('✅ License saved successfully');
       return true;
     } catch (e) {
-      print('❌ Failed to save license: $e');
+      debugPrint('❌ Failed to save license: $e');
       return false;
     }
   }
@@ -121,12 +120,12 @@ class LicenseManager {
       
       if (file.existsSync()) {
         await file.delete();
-        print('✅ License deactivated');
+        debugPrint('✅ License deactivated');
         return true;
       }
       return true;
     } catch (e) {
-      print('❌ Failed to deactivate license: $e');
+      debugPrint('❌ Failed to deactivate license: $e');
       return false;
     }
   }

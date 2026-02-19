@@ -1,7 +1,7 @@
-/// batch_process_usecase.dart — Batch Processing Use Case
-/// Virtual Design Silk Screen Studio
-///
-/// MED #5 FIX: Batch Processing مذكور في SOP ومفيش له كود — إضافة جديدة
+// batch_process_usecase.dart — Batch Processing Use Case
+// Virtual Design Silk Screen Studio
+//
+// MED #5 FIX: Batch Processing مذكور في SOP ومفيش له كود — إضافة جديدة
 
 import 'dart:async';
 import '../../core/python_bridge/python_processor.dart';

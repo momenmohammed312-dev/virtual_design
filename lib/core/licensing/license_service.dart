@@ -1,9 +1,8 @@
-/// license_service.dart — Offline Licensing System
-/// Virtual Design Silk Screen Studio
-///
-/// HIGH #4 FIX: نظام ترخيص offline كامل كان غائب تماماً
-/// يستخدم SHA-256 + Base64 لـ key generation/validation بدون cloud
-library virtual_design.licensing.license_service;
+// license_service.dart — Offline Licensing System
+// Virtual Design Silk Screen Studio
+//
+// HIGH #4 FIX: نظام ترخيص offline كامل كان غائب تماماً
+// يستخدم SHA-256 + Base64 لـ key generation/validation بدون cloud
 
 import 'dart:convert';
 import 'package:crypto/crypto.dart';

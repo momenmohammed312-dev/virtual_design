@@ -1,7 +1,7 @@
-/// error_screen_widget.dart — Professional Error Screens
-/// Virtual Design Silk Screen Studio
-///
-/// HIGH #2 FIX: شاشات خطأ احترافية بدل Snackbar أو Demo Mode بدون توضيح
+// error_screen_widget.dart — Professional Error Screens
+// Virtual Design Silk Screen Studio
+//
+// HIGH #2 FIX: شاشات خطأ احترافية بدل Snackbar أو Demo Mode بدون توضيح
 
 import 'package:flutter/material.dart';
 
@@ -92,9 +92,9 @@ class ProcessingErrorScreen extends StatelessWidget {
                 Container(
                   width: 80, height: 80,
                   decoration: BoxDecoration(
-                    color: info.color.withOpacity(0.12),
+                    color: info.color.withAlpha((0.12 * 255).round()),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: info.color.withOpacity(0.3)),
+                    border: Border.all(color: info.color.withAlpha((0.3 * 255).round())),
                   ),
                   child: Icon(info.icon, size: 40, color: info.color),
                 ),
@@ -116,7 +116,7 @@ class ProcessingErrorScreen extends StatelessWidget {
                 Text(
                   info.description,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.65),
+                    color: Colors.white.withAlpha((0.65 * 255).round()),
                     fontSize: 14,
                     height: 1.7,
                   ),
@@ -311,7 +311,7 @@ class _TechnicalDetailsState extends State<_TechnicalDetails> {
               Text(
                 'تفاصيل تقنية',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.4),
+                  color: Colors.white.withAlpha((0.4 * 255).round()),
                   fontSize: 12,
                 ),
               ),
@@ -319,7 +319,7 @@ class _TechnicalDetailsState extends State<_TechnicalDetails> {
               Icon(
                 _expanded ? Icons.expand_less : Icons.expand_more,
                 size: 14,
-                color: Colors.white.withOpacity(0.4),
+                color: Colors.white.withAlpha((0.4 * 255).round()),
               ),
             ],
           ),
@@ -369,7 +369,7 @@ class ProcessingErrorBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFF1A0A0A),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFF87171).withOpacity(0.4)),
+        border: Border.all(color: const Color(0xFFF87171).withAlpha((0.4 * 255).round())),
       ),
       child: Row(
         children: [

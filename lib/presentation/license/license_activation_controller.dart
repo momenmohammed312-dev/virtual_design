@@ -1,10 +1,9 @@
-/// license_activation_controller.dart — License Activation Control
-/// Virtual Design Silk Screen Studio — Phase 7
-
-library virtual_design.licensing.license_activation_controller;
+// license_activation_controller.dart — License Activation Control
+// Virtual Design Silk Screen Studio — Phase 7
 
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
 import '../../core/licensing/license_manager.dart';
 import '../../core/licensing/license_model.dart';
 
@@ -37,7 +36,7 @@ class LicenseActivationController extends GetxController {
     try {
       _deviceId = await _getDeviceId();
     } catch (e) {
-      print('❌ Failed to get device ID: $e');
+      debugPrint('❌ Failed to get device ID: $e');
       _deviceId = 'unknown_device';
     }
   }
@@ -83,7 +82,7 @@ class LicenseActivationController extends GetxController {
         statusMessage.value = 'No active license found';
       }
     } catch (e) {
-      print('❌ Failed to load license: $e');
+      debugPrint('❌ Failed to load license: $e');
       licenseStatus.value = LicenseStatus.invalid;
       statusMessage.value = 'Error loading license';
     }

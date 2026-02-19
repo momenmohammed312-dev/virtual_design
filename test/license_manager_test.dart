@@ -1,5 +1,5 @@
-/// license_manager_test.dart — License Manager Tests
-/// Virtual Design Silk Screen Studio
+// license_manager_test.dart — License Manager Tests
+// Virtual Design Silk Screen Studio
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:virtual_design/core/licensing/license_manager.dart';

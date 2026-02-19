@@ -1,7 +1,7 @@
-/// license_page.dart — License Activation Screen
-/// Virtual Design Silk Screen Studio
-///
-/// شاشة تفعيل الترخيص — كانت موجودة في الـ routes بدون محتوى
+// license_page.dart — License Activation Screen
+// Virtual Design Silk Screen Studio
+//
+// شاشة تفعيل الترخيص — كانت موجودة في الـ routes بدون محتوى
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -67,9 +67,9 @@ class _Header extends StatelessWidget {
         Container(
           width: 72, height: 72,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.15),
+            color: AppColors.primary.withAlpha((0.15 * 255).round()),
             borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+            border: Border.all(color: AppColors.primary.withAlpha((0.3 * 255).round())),
           ),
           child: const Icon(Icons.workspace_premium, size: 36, color: AppColors.primary),
         ),
@@ -104,9 +104,9 @@ class _ActiveLicenseCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
+          color: color.withAlpha((0.08 * 255).round()),
           borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: color.withOpacity(0.3)),
+          border: Border.all(color: color.withAlpha((0.3 * 255).round())),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -125,7 +125,7 @@ class _ActiveLicenseCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
+                  color: color.withAlpha((0.15 * 255).round()),
                   borderRadius: BorderRadius.circular(AppRadius.full),
                 ),
                 child: Text(
@@ -377,10 +377,10 @@ class _TierCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: highlighted ? color.withOpacity(0.08) : AppColors.surface3,
+        color: highlighted ? color.withAlpha((0.08 * 255).round()) : AppColors.surface3,
         borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(
-          color: highlighted ? color.withOpacity(0.5) : AppColors.border,
+          color: highlighted ? color.withAlpha((0.5 * 255).round()) : AppColors.border,
           width: highlighted ? 1.5 : 1,
         ),
       ),

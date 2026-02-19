@@ -185,15 +185,13 @@ def step9_export(
     exported_paths = []
 
     if HAS_EXPORTER:
-        exporter = Exporter()
-        paths = exporter.export_all(
+        exporter = Exporter(output_dir=Path(output_dir), dpi=args.dpi)
+        paths = exporter.export_all_films(
             masks=masks,
-            color_names=separation_result["color_names"],
             colors=separation_result["colors"],
-            output_dir=output_dir,
-            dpi=args.dpi,
+            color_names=separation_result["color_names"],
         )
-        exported_paths = paths
+        exported_paths = [str(p) for p in paths]
     else:
         # Fallback: save as PNG
         generator = MaskGenerator()

@@ -1,8 +1,8 @@
-/// python_config.dart — Python Command Auto-Detection
-/// Virtual Design Silk Screen Studio
-///
-/// HIGH #1 FIX: بدل hardcoded 'python' يبحث عن الأمر الصح تلقائياً
-/// يجرب: python3 → python → py (Windows)
+// python_config.dart — Python Command Auto-Detection
+// Virtual Design Silk Screen Studio
+//
+// HIGH #1 FIX: بدل hardcoded 'python' يبحث عن الأمر الصح تلقائياً
+// يجرب: python3 → python → py (Windows)
 
 import 'dart:io';
 

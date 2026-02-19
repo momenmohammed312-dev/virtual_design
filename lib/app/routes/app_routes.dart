@@ -6,4 +6,5 @@ abstract class AppRoutes {
   static const upload = '/upload';
   static const setup = '/setup';
   static const preview = '/preview';
+  static const error = '/error';
 }

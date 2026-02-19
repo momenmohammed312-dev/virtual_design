@@ -1,10 +1,10 @@
-/// app_constants.dart — App-wide Constants
-/// Virtual Design Silk Screen Studio
-///
-/// MED #4 FIX: حُذِفَ منه static const lightTheme / darkTheme
-///             استخدم AppTheme.darkTheme من app_theme.dart دائماً
-///
-/// القاعدة: app_theme.dart هو المصدر الوحيد لكل theme values.
+// app_constants.dart — App-wide Constants
+// Virtual Design Silk Screen Studio
+//
+// MED #4 FIX: حُذِفَ منه static const lightTheme / darkTheme
+//             استخدم AppTheme.darkTheme من app_theme.dart دائماً
+//
+// القاعدة: app_theme.dart هو المصدر الوحيد لكل theme values.
 
 class AppConstants {
   AppConstants._();

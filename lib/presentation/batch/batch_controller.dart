@@ -1,5 +1,5 @@
-/// batch_controller.dart — GetX Controller for Batch Processing
-/// Virtual Design Silk Screen Studio
+// batch_controller.dart — GetX Controller for Batch Processing
+// Virtual Design Silk Screen Studio
 
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
