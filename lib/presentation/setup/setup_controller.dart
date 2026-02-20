@@ -1,9 +1,9 @@
 // lib/presentation/setup/setup_controller.dart
 
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
-import '../../core/errors/error_handler.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
@@ -31,10 +31,8 @@ class SetupController extends GetxController {
     super.onInit();
     if (Get.arguments != null && Get.arguments is String) {
       imagePath.value = Get.arguments as String;
-    } else {
-      // Fallback or error - should not happen in normal flow
-      Get.back();
     }
+    // No crash — just uses empty path if not provided
     _loadLastSettings();
   }
 
@@ -52,30 +50,54 @@ class SetupController extends GetxController {
   Future<void> startProcessing() async {
     if (isProcessing.value) return;
 
+    Get.log('=== startProcessing() called ===');
+    Get.log('imagePath: ${imagePath.value}');
+    Get.log('selectedColors: ${selectedColors.value}');
+    Get.log('selectedDetail: ${selectedDetail.value}');
+    Get.log('selectedFinish: ${selectedFinish.value}');
+
+    // Guard: if no image selected, show snackbar and redirect to upload
+    if (imagePath.value.isEmpty) {
+      Get.log('❌ No image selected, redirecting to upload');
+      Get.snackbar(
+        'No Image Selected',
+        'Please upload an image first.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red.withAlpha((0.1 * 255).round()),
+        colorText: Colors.red,
+      );
+      Future.delayed(const Duration(seconds: 1), () {
+        Get.offNamed('/upload');
+      });
+      return;
+    }
+
     isProcessing.value = true;
     progress.value = 0.0;
     progressMessage.value = 'Starting...';
 
-    // Build settings object
-    final halftone = selectedFinish.value == ps.PrintFinish.halftone
-        ? ps.HalftoneSettings(lpi: 65)
-        : null;
-
-    final settings = ps.ProcessingSettings(
-      colorCount: selectedColors.value,
-      detailLevel: selectedDetail.value,
-      printFinish: selectedFinish.value,
-      strokeWidthMm: strokeWidth.value,
-      dpi: 300,
-      meshCount: 160,
-      edgeEnhancement: ps.EdgeEnhancement.light,
-      halftoneSettings: halftone,
-    );
-
     try {
+      // Build settings object
+      final halftone = selectedFinish.value == ps.PrintFinish.halftone
+          ? ps.HalftoneSettings(lpi: 65)
+          : null;
+
+      final settings = ps.ProcessingSettings(
+        colorCount: selectedColors.value,
+        detailLevel: selectedDetail.value,
+        printFinish: selectedFinish.value,
+        strokeWidthMm: strokeWidth.value,
+        dpi: 300,
+        meshCount: 160,
+        edgeEnhancement: ps.EdgeEnhancement.light,
+        halftoneSettings: halftone,
+      );
+
+      Get.log('✅ Settings built, saving...');
       // Save settings for next time
       await _repository.saveSettings(settings);
 
+      Get.log('🔄 Starting image processing...');
       // Process
       final result = await _repository.processImage(
         imagePath: imagePath.value,
@@ -83,12 +105,16 @@ class SetupController extends GetxController {
         onProgress: (p, msg) {
           progress.value = p;
           progressMessage.value = msg;
+          Get.log('Progress: $p - $msg');
         },
       );
 
+      Get.log('Processing result: ${result.success}');
       if (result.success) {
+        Get.log('✅ Success! Navigating to preview with: ${result.outputDirectory}');
         Get.offNamed('/preview', arguments: result.outputDirectory);
       } else {
+        Get.log('❌ Processing failed: ${result.errorMessage}');
         // Show error screen with retry option
         Get.toNamed(
           '/error',
@@ -105,15 +131,21 @@ class SetupController extends GetxController {
           },
         );
       }
-    } catch (e) {
-      ErrorHandler.handleError(
-        e,
-        context: 'SetupController.startProcessing',
-        showDialog: true,
-        onRetry: startProcessing,
+    } catch (e, stackTrace) {
+      Get.log('🔥 EXCEPTION in startProcessing: $e');
+      Get.log('Stack trace: $stackTrace');
+      
+      Get.snackbar(
+        'Processing Error',
+        'An unexpected error occurred: $e',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red.withAlpha((0.1 * 255).round()),
+        colorText: Colors.red,
+        duration: const Duration(seconds: 5),
       );
     } finally {
       isProcessing.value = false;
+      Get.log('=== startProcessing() finished ===');
     }
   }
 }

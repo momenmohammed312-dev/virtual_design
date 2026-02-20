@@ -3,7 +3,7 @@
 enum PrintType {
   screenPrinting('Screen Printing', 'screen_printing', true),
   dtf('DTF (Direct to Film)', 'dtf', false),
-  sublimation('Sublimation', 'sublimation', false),
+  sublimation('Sublimation', 'sublimation', true),
   dtg('DTG (Direct to Garment)', 'dtg', false),
   flexVinyl('Flex/Vinyl Cutting', 'flex_vinyl', false);
 

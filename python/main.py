@@ -16,6 +16,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -105,11 +107,56 @@ def step1_load_image(input_path: str) -> np.ndarray:
     _step(1, "Loading image")
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Image not found: {input_path}")
+    
+    logger.info(f"Attempting to load: {input_path}")
+    
+    # Try OpenCV first
     image = cv2.imread(input_path)
-    if image is None:
-        raise ValueError(f"Cannot read image: {input_path}")
-    logger.info(f"Loaded image: {image.shape} from {input_path}")
-    return image
+    if image is not None:
+        logger.info(f"Loaded with OpenCV: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        # Convert CMYK to RGB if needed (OpenCV reads CMYK as 4 channels: B,G,R,Key)
+        if len(image.shape) > 2 and image.shape[2] == 4:
+            logger.info("Converting CMYK (4 channels) to RGB (3 channels)")
+            # OpenCV reads CMYK as BGRA, but it's actually CMYK in wrong order
+            # Better to use PIL for proper CMYK conversion
+            try:
+                from PIL import Image
+                pil_img = Image.open(input_path)
+                if pil_img.mode == 'CMYK':
+                    logger.info("Using PIL to convert CMYK to RGB")
+                    pil_img = pil_img.convert('RGB')
+                    image = np.array(pil_img)
+                    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                else:
+                    # Fallback: simple channel slicing
+                    image = image[:, :, :3]
+            except Exception as e:
+                logger.warning(f"PIL CMYK conversion failed: {e}, using simple channel slicing")
+                image = image[:, :, :3]
+        return image
+    
+    # If OpenCV fails, try PIL (supports more formats)
+    try:
+        from PIL import Image
+        pil_img = Image.open(input_path)
+        logger.info(f"PIL info: format={pil_img.format}, mode={pil_img.mode}, size={pil_img.size}")
+        
+        # Convert to RGB if needed (handle CMYK, RGBA, grayscale, etc.)
+        if pil_img.mode == 'CMYK':
+            logger.info("Converting CMYK to RGB")
+            pil_img = pil_img.convert('RGB')
+        elif pil_img.mode != 'RGB':
+            logger.info(f"Converting from {pil_img.mode} to RGB")
+            pil_img = pil_img.convert('RGB')
+        
+        image = np.array(pil_img)
+        # PIL gives RGB, OpenCV expects BGR
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        logger.info(f"Loaded with PIL: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        return image
+    except Exception as e:
+        logger.error(f"PIL failed: {e}")
+        raise ValueError(f"Cannot read image {input_path}: {e}")
 
 
 def step2_separate_colors(image: np.ndarray, num_colors: int) -> dict:
@@ -188,7 +235,8 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
     validator = StrokeValidator()
     total = max(1, len(masks))
     for i, mask in enumerate(masks):
-        warnings = validator.validate(mask, min_stroke_mm=args.min_stroke, dpi=args.dpi)
+        result = validator.validate_mask(mask)
+        warnings = result['warnings']
         if warnings:
             for w in warnings:
                 logger.warning(f"  Film {i+1}: {w}")
@@ -230,19 +278,62 @@ def step9_export(
         )
         exported_paths = [str(p) for p in paths]
     else:
-        # Fallback: save as PNG
+        # Fallback: when exporter not available.
+        # If halftone is disabled, export vector SVG paths for each mask.
         generator = MaskGenerator()
         total = max(1, len(masks))
-        for i, mask in enumerate(masks):
+
+        def _export_mask_png(i, mask):
             film = generator.generate_film_image(mask)
             name = separation_result["color_names"][i]
             path = os.path.join(output_dir, f"{name}.png")
             cv2.imwrite(path, film)
             exported_paths.append(path)
             logger.info(f"  Saved: {path}")
+
+        def _export_mask_pdf(i, mask):
+            # Export mask contours as a vector PDF (filled shape).
+            name = separation_result["color_names"][i]
+            pdf_path = os.path.join(output_dir, f"{name}.pdf")
+            h, w = mask.shape[:2]
+            # Ensure binary image
+            _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            try:
+                c = canvas.Canvas(pdf_path, pagesize=(w, h))
+                c.setFillColorRGB(0, 0, 0)
+                for cnt in contours:
+                    if cnt is None or len(cnt) == 0:
+                        continue
+                    pts = cnt.reshape(-1, 2)
+                    epsilon = 0.001 * cv2.arcLength(cnt, True)
+                    approx = cv2.approxPolyDP(cnt, epsilon, True).reshape(-1, 2)
+                    if len(approx) < 3:
+                        continue
+                    path = c.beginPath()
+                    x0, y0 = approx[0]
+                    path.moveTo(x0, h - y0)  # flip Y for PDF coordinate system
+                    for (x, y) in approx[1:]:
+                        path.lineTo(x, h - y)
+                    path.close()
+                    c.drawPath(path, fill=1, stroke=0)
+                c.showPage()
+                c.save()
+                exported_paths.append(pdf_path)
+                logger.info(f"  Saved PDF: {pdf_path}")
+            except Exception as e:
+                logger.error(f"Failed to write PDF {pdf_path}: {e}")
+                _export_mask_png(i, mask)
+
+        for i, mask in enumerate(masks):
+            if not args.halftone:
+                _export_mask_pdf(i, mask)
+            else:
+                _export_mask_png(i, mask)
+
             _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
 
-        # حفظ preview مجمّع
+        # حفظ preview مجمّع (raster preview remains useful)
         preview = generator.generate_combined_preview(
             masks, separation_result["colors"]
         )
@@ -255,6 +346,9 @@ def step9_export(
 
     # Emit final progress 100% before returning
     _progress(1.0, 'Finished')
+
+    # NOTE: OUTPUT_DIR signal is sent in main() after pipeline completes
+    # Do NOT send it here to avoid "Future already completed" error
 
     return exported_paths
 

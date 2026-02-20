@@ -10,8 +10,8 @@ Pillow>=10.0.0
 # Advanced image operations
 scikit-image>=0.21.0
 
-# PDF export
-reportlab>=4.0.0
+# PDF export (pin to version compatible with Python 3.8)
+reportlab==3.6.12
 
 # SVG export
 svgwrite>=1.4.3

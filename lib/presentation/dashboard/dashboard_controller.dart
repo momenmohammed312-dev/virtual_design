@@ -90,6 +90,14 @@ class DashboardController extends GetxController {
   }
 
   // ═══════════════════════════════════════════════════════
+  // Computed Properties
+  // ═══════════════════════════════════════════════════════
+
+  int get pendingCount {
+    return recentProjects.where((p) => p.status.toString() != 'ProjectStatus.completed').length;
+  }
+
+  // ═══════════════════════════════════════════════════════
   // Navigation
   // ═══════════════════════════════════════════════════════
 

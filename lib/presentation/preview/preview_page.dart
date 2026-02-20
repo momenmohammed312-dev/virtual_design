@@ -1,7 +1,9 @@
 // lib/presentation/preview/preview_page.dart
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'preview_controller.dart';
 
 class PreviewPage extends StatelessWidget {
   const PreviewPage({super.key});
@@ -11,6 +13,8 @@ class PreviewPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final controller = Get.find<PreviewController>();
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: Row(
@@ -28,7 +32,7 @@ class PreviewPage extends StatelessWidget {
                       children: [
                         _buildProgressSteps(),
                         const SizedBox(height: 30),
-                        
+
                         const Text(
                           'Print Preview',
                           style: TextStyle(
@@ -38,13 +42,13 @@ class PreviewPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 10),
-                        
+
                         const Text(
                           'Review your color separations and films before exporting.',
                           style: TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
                         ),
                         const SizedBox(height: 30),
-                        
+
                         Expanded(
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -52,21 +56,21 @@ class PreviewPage extends StatelessWidget {
                               // Main Preview Area
                               Expanded(
                                 flex: 7,
-                                child: _buildPreviewArea(),
+                                child: _buildPreviewArea(controller),
                               ),
                               const SizedBox(width: 20),
-                              
+
                               // Sidebar with layers
                               SizedBox(
                                 width: 300,
-                                child: _buildLayersPanel(),
+                                child: _buildLayersPanel(controller),
                               ),
                             ],
                           ),
                         ),
-                        
+
                         const SizedBox(height: 20),
-                        _buildBottomActions(),
+                        _buildBottomActions(controller),
                       ],
                     ),
                   ),
@@ -79,7 +83,7 @@ class PreviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildPreviewArea() {
+  Widget _buildPreviewArea(PreviewController controller) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -119,77 +123,149 @@ class PreviewPage extends StatelessWidget {
               ],
             ),
           ),
-          
+
           // Preview Canvas
           Expanded(
-            child: Container(
-              margin: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF9FAFB),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 200,
-                      height: 200,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withAlpha((0.1 * 255).round()),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: const Center(
-                        child: Icon(
+            child: Obx(() {
+              if (controller.isLoading.value) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (controller.filmPaths.isEmpty) {
+                return Container(
+                  margin: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
                           Icons.image_outlined,
                           size: 64,
                           color: Color(0xFF9CA3AF),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Preview will appear here',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Color(0xFF6B7280),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEFF6FF),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        '28 × 35 cm @ 300 DPI',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF1E40AF),
-                          fontWeight: FontWeight.w600,
+                        const SizedBox(height: 20),
+                        const Text(
+                          'No films generated yet',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Color(0xFF6B7280),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 10),
+                        ElevatedButton.icon(
+                          onPressed: () => Get.offAllNamed('/upload'),
+                          icon: const Icon(Icons.upload),
+                          label: const Text('Upload Image'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primaryBlue,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
+                );
+              }
+
+              return Container(
+                margin: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF9FAFB),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
                 ),
-              ),
-            ),
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Film display
+                      Container(
+                        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 500),
+                        child: Obx(() {
+                          final idx = controller.selectedFilmIndex.value;
+                          if (controller.filmPaths.isEmpty) {
+                            return const Icon(Icons.broken_image, size: 64, color: Colors.grey);
+                          }
+                          final path = controller.filmPaths[idx];
+                          return _buildFilmPreview(controller, path);
+                        }),
+                      ),
+                      const SizedBox(height: 16),
+                      Obx(() => Text(
+                        'Film ${controller.selectedFilmIndex.value + 1} of ${controller.filmPaths.length}',
+                        style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+                      )),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(controller.filmPaths.length, (index) {
+                          return Obx(() {
+                            final isSelected = controller.selectedFilmIndex.value == index;
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              margin: const EdgeInsets.symmetric(horizontal: 4),
+                              width: isSelected ? 24 : 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: isSelected ? primaryBlue : Colors.grey,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            );
+                          });
+                        }),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildLayersPanel() {
+  Widget _buildFilmPreview(PreviewController controller, String path) {
+    final isPdf = path.toLowerCase().endsWith('.pdf');
+    if (isPdf) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.picture_as_pdf, size: 80, color: Colors.red),
+          const SizedBox(height: 20),
+          const Text(
+            'PDF Vector Output',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          ElevatedButton.icon(
+            onPressed: () => controller.openFile(path),
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Open PDF'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryBlue,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      );
+    } else {
+      return Image.file(
+        File(path),
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(Icons.broken_image, size: 64, color: Colors.grey);
+        },
+      );
+    }
+  }
+
+  Widget _buildLayersPanel(PreviewController controller) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -204,32 +280,115 @@ class PreviewPage extends StatelessWidget {
               border: Border(bottom: BorderSide(color: Color(0xFFE5E7EB))),
             ),
             child: Row(
-              children: const [
-                Icon(Icons.layers, size: 20, color: Color(0xFF6B7280)),
-                SizedBox(width: 10),
-                Text(
+              children: [
+                const Icon(Icons.layers, size: 20, color: Color(0xFF6B7280)),
+                const SizedBox(width: 10),
+                const Text(
                   'Color Layers',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
+                const Spacer(),
+                Obx(() => Text(
+                      '${controller.filmPaths.length} films',
+                      style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                    )),
               ],
             ),
           ),
-          
+
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(15),
-              children: [
-                _buildLayerItem('Black', Colors.black, true),
-                const SizedBox(height: 10),
-                _buildLayerItem('Cyan', const Color(0xFF00BCD4), true),
-                const SizedBox(height: 10),
-                _buildLayerItem('Magenta', const Color(0xFFE91E63), true),
-                const SizedBox(height: 10),
-                _buildLayerItem('Yellow', const Color(0xFFFFC107), true),
-              ],
-            ),
+            child: Obx(() {
+              if (controller.filmPaths.isEmpty) {
+                return const Center(
+                  child: Text(
+                    'No films available',
+                    style: TextStyle(color: Color(0xFF6B7280)),
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.all(15),
+                itemCount: controller.filmPaths.length,
+                itemBuilder: (context, index) {
+                  final isSelected = controller.selectedFilmIndex.value == index;
+                  final path = controller.filmPaths[index];
+                  final isPdf = path.toLowerCase().endsWith('.pdf');
+                  return GestureDetector(
+                    onTap: () => controller.selectFilm(index),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: isSelected ? primaryBlue.withAlpha((0.05 * 255).round()) : const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isSelected ? primaryBlue : const Color(0xFFE5E7EB),
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(6),
+                              image: isPdf
+                                  ? null
+                                  : (controller.filmPaths.isNotEmpty
+                                      ? DecorationImage(
+                                          image: FileImage(File(path)),
+                                          fit: BoxFit.cover,
+                                        )
+                                      : null),
+                            ),
+                            child: isPdf
+                                ? const Icon(Icons.picture_as_pdf, color: Colors.red, size: 24)
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isPdf ? 'Film ${index + 1} (PDF)' : 'Film ${index + 1}',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                    color: isSelected ? primaryBlue : Colors.black87,
+                                  ),
+                                ),
+                                Text(
+                                  path.split('/').last,
+                                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                          isPdf
+                              ? IconButton(
+                                  icon: const Icon(Icons.open_in_new, size: 18),
+                                  onPressed: () => controller.openFile(path),
+                                  tooltip: 'Open PDF',
+                                )
+                              : Icon(
+                                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                  color: isSelected ? primaryBlue : Colors.grey,
+                                ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            }),
           ),
-          
+
           Container(
             padding: const EdgeInsets.all(15),
             decoration: const BoxDecoration(
@@ -238,14 +397,14 @@ class PreviewPage extends StatelessWidget {
             child: Column(
               children: [
                 Row(
-                  children: const [
-                    Icon(Icons.info_outline, size: 18, color: Color(0xFF6B7280)),
-                    SizedBox(width: 8),
+                  children: [
+                    const Icon(Icons.info_outline, size: 18, color: Color(0xFF6B7280)),
+                    const SizedBox(width: 8),
                     Expanded(
-                      child: Text(
-                        '4 colors detected',
-                        style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
-                      ),
+                      child: Obx(() => Text(
+                            '${controller.filmPaths.length} film${controller.filmPaths.length == 1 ? '' : 's'} detected',
+                            style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                          )),
                     ),
                   ],
                 ),
@@ -253,7 +412,7 @@ class PreviewPage extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () {},
+                    onPressed: controller.exportAll,
                     icon: const Icon(Icons.download, size: 18),
                     label: const Text('Export All'),
                     style: ElevatedButton.styleFrom(
@@ -271,50 +430,7 @@ class PreviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildLayerItem(String name, Color color, bool isVisible) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(6),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              name,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          IconButton(
-            onPressed: () {},
-            icon: Icon(
-              isVisible ? Icons.visibility : Icons.visibility_off,
-              size: 20,
-              color: const Color(0xFF6B7280),
-            ),
-            constraints: const BoxConstraints(),
-            padding: EdgeInsets.zero,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBottomActions() {
+  Widget _buildBottomActions(PreviewController controller) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -336,7 +452,7 @@ class PreviewPage extends StatelessWidget {
           ),
           const Spacer(),
           OutlinedButton.icon(
-            onPressed: () {},
+            onPressed: controller.exportAll,
             icon: const Icon(Icons.download, size: 18),
             label: const Text('Export Films'),
             style: OutlinedButton.styleFrom(
@@ -347,7 +463,14 @@ class PreviewPage extends StatelessWidget {
           ),
           const SizedBox(width: 15),
           ElevatedButton.icon(
-            onPressed: () {},
+            onPressed: () {
+              // Send to print functionality
+              Get.snackbar(
+                'Send to Print',
+                'Sending ${controller.filmPaths.length} films to printer...',
+                snackPosition: SnackPosition.BOTTOM,
+              );
+            },
             icon: const Icon(Icons.print, size: 18),
             label: const Text('Send to Print'),
             style: ElevatedButton.styleFrom(

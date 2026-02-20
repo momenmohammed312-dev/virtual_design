@@ -6,6 +6,9 @@ import '../../presentation/dashboard/dashboard.dart';
 import '../../presentation/upload/upload_page.dart';
 import '../../presentation/setup/setup_page.dart';
 import '../../presentation/preview/preview_page.dart';
+import '../../presentation/settings/settings_page.dart';
+import '../../presentation/users/users_page.dart';
+import '../../presentation/files/files_page.dart';
 import '../../presentation/error/error_page.dart';
 import '../bindings/dashboard_binding.dart';
 import '../bindings/upload_binding.dart';
@@ -43,6 +46,21 @@ class AppPages {
       name: AppRoutes.preview,
       page: () => const PreviewPage(),
       binding: PreviewBinding(),
+      transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: AppRoutes.settings,
+      page: () => const SettingsPage(),
+      transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: AppRoutes.users,
+      page: () => const UsersPage(),
+      transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: AppRoutes.files,
+      page: () => const FilesPage(),
       transition: Transition.rightToLeft,
     ),
     GetPage(
