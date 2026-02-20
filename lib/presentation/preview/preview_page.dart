@@ -335,8 +335,8 @@ class PreviewPage extends StatelessWidget {
                             decoration: BoxDecoration(
                               color: Colors.grey[300],
                               borderRadius: BorderRadius.circular(6),
-                              child: isPdf
-                                  ? const Icon(Icons.picture_as_pdf, color: Colors.red, size: 24)
+                              image: isPdf
+                                  ? null
                                   : (controller.filmPaths.isNotEmpty
                                       ? DecorationImage(
                                           image: FileImage(File(path)),
@@ -344,6 +344,9 @@ class PreviewPage extends StatelessWidget {
                                         )
                                       : null),
                             ),
+                            child: isPdf
+                                ? const Icon(Icons.picture_as_pdf, color: Colors.red, size: 24)
+                                : null,
                           ),
                           const SizedBox(width: 12),
                           Expanded(

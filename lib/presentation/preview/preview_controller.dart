@@ -32,11 +32,12 @@ class PreviewController extends GetxController {
         final files = dir
             .listSync()
             .whereType<File>()
-          .where((f) =>
-              f.path.toLowerCase().endsWith('.png') ||
-              f.path.toLowerCase().endsWith('.pdf'))
-        // Sort to ensure consistent order (e.g., specific colors first)
-        files.sort();
+            .where((f) =>
+                f.path.toLowerCase().endsWith('.png') ||
+                f.path.toLowerCase().endsWith('.pdf'))
+            .map((f) => f.path)
+            .toList()
+          ..sort();
 
         filmPaths.value = files;
         if (filmPaths.isNotEmpty) {
