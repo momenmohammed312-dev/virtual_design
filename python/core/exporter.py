@@ -39,7 +39,9 @@ def _write_minimal_pdf(filepath: Path, width: int, height: int, contours):
     """
     # Build content stream: draw each polygon as filled path
     content = "q\n"
-    content += f"{width:.3f} 0 0 {height:.3f} 0 0 cm\n"  # coordinate transform (origin top-left)
+    # Coordinate transform: flip Y to convert from top-left origin to PDF bottom-left origin
+    # matrix: [1 0 0 -1 0 height] maps (x,y) -> (x, height - y)
+    content += f"1 0 0 -1 0 {height:.3f} cm\n"
     content += "0 0 0 rg\n"  # set fill color black
     for cnt in contours:
         if cnt is None or len(cnt) == 0:
@@ -80,6 +82,7 @@ endobj
 <<
 /Type /Page
 /Parent 2 0 R
+/MediaBox [0 0 {width} {height}]
 /Resources <<
 /Font <<
 /F1 4 0 R
@@ -100,6 +103,7 @@ endobj
     obj5 = f"""5 0 obj
 <<
 /Length {len(compressed)}
+/Filter /FlateDecode
 >>
 stream
 {compressed.decode('latin1')}
@@ -218,6 +222,7 @@ class Exporter:
         # Ensure binary
         _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        print(f"[DEBUG] Export PDF: {filename}, mask shape={mask.shape}, nonzero={np.count_nonzero(mask)}, contours={len(contours) if contours is not None else 0}")
         _write_minimal_pdf(filepath, w, h, contours)
         return filepath
     
