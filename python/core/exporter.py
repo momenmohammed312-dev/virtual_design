@@ -222,7 +222,7 @@ class Exporter:
         # Ensure binary
         _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        print(f"[DEBUG] Export PDF: {filename}, mask shape={mask.shape}, nonzero={np.count_nonzero(mask)}, contours={len(contours) if contours is not None else 0}")
+
         _write_minimal_pdf(filepath, w, h, contours)
         return filepath
     
