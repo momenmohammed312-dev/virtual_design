@@ -16,6 +16,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -276,19 +278,62 @@ def step9_export(
         )
         exported_paths = [str(p) for p in paths]
     else:
-        # Fallback: save as PNG
+        # Fallback: when exporter not available.
+        # If halftone is disabled, export vector SVG paths for each mask.
         generator = MaskGenerator()
         total = max(1, len(masks))
-        for i, mask in enumerate(masks):
+
+        def _export_mask_png(i, mask):
             film = generator.generate_film_image(mask)
             name = separation_result["color_names"][i]
             path = os.path.join(output_dir, f"{name}.png")
             cv2.imwrite(path, film)
             exported_paths.append(path)
             logger.info(f"  Saved: {path}")
+
+        def _export_mask_pdf(i, mask):
+            # Export mask contours as a vector PDF (filled shape).
+            name = separation_result["color_names"][i]
+            pdf_path = os.path.join(output_dir, f"{name}.pdf")
+            h, w = mask.shape[:2]
+            # Ensure binary image
+            _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            try:
+                c = canvas.Canvas(pdf_path, pagesize=(w, h))
+                c.setFillColorRGB(0, 0, 0)
+                for cnt in contours:
+                    if cnt is None or len(cnt) == 0:
+                        continue
+                    pts = cnt.reshape(-1, 2)
+                    epsilon = 0.001 * cv2.arcLength(cnt, True)
+                    approx = cv2.approxPolyDP(cnt, epsilon, True).reshape(-1, 2)
+                    if len(approx) < 3:
+                        continue
+                    path = c.beginPath()
+                    x0, y0 = approx[0]
+                    path.moveTo(x0, h - y0)  # flip Y for PDF coordinate system
+                    for (x, y) in approx[1:]:
+                        path.lineTo(x, h - y)
+                    path.close()
+                    c.drawPath(path, fill=1, stroke=0)
+                c.showPage()
+                c.save()
+                exported_paths.append(pdf_path)
+                logger.info(f"  Saved PDF: {pdf_path}")
+            except Exception as e:
+                logger.error(f"Failed to write PDF {pdf_path}: {e}")
+                _export_mask_png(i, mask)
+
+        for i, mask in enumerate(masks):
+            if not args.halftone:
+                _export_mask_pdf(i, mask)
+            else:
+                _export_mask_png(i, mask)
+
             _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
 
-        # حفظ preview مجمّع
+        # حفظ preview مجمّع (raster preview remains useful)
         preview = generator.generate_combined_preview(
             masks, separation_result["colors"]
         )

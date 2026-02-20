@@ -9,16 +9,8 @@ from PIL import Image
 from pathlib import Path
 from typing import List, Dict, Optional
 import json
-
-# For PDF export
-try:
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.pagesizes import A4, A3
-    from reportlab.lib.units import mm
-    REPORTLAB_AVAILABLE = True
-except ImportError:
-    REPORTLAB_AVAILABLE = False
-    print("⚠️  reportlab not installed. PDF export will be limited.")
+import zlib
+import struct
 
 # For SVG export
 try:
@@ -35,6 +27,102 @@ from core.registration_marks import (
     MarkStyle,
     add_marks_to_all_films,
 )
+
+# PDF export: using minimal writer (no external deps)
+REPORTLAB_AVAILABLE = True
+
+# --- Minimal PDF writer (no external deps) ---
+def _write_minimal_pdf(filepath: Path, width: int, height: int, contours):
+    """
+    Write a single-page PDF with filled polygons from contours.
+    Uses pure Python, no reportlab/fpdf.
+    """
+    # Build content stream: draw each polygon as filled path
+    content = "q\n"
+    content += f"{width:.3f} 0 0 {height:.3f} 0 0 cm\n"  # coordinate transform (origin top-left)
+    content += "0 0 0 rg\n"  # set fill color black
+    for cnt in contours:
+        if cnt is None or len(cnt) == 0:
+            continue
+        pts = cnt.reshape(-1, 2)
+        epsilon = 0.001 * cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, epsilon, True).reshape(-1, 2)
+        if len(approx) < 3:
+            continue
+        # Move to first point
+        x0, y0 = approx[0]
+        content += f"{x0:.3f} {height - y0:.3f} m\n"
+        for (x, y) in approx[1:]:
+            content += f"{x:.3f} {height - y:.3f} l\n"
+        content += "h f\n"
+    content += "Q\n"
+    # Compress content
+    compressed = zlib.compress(content.encode('latin1'))
+
+    # PDF objects (we'll build them and then compute offsets)
+    header = "%PDF-1.4\n"
+    obj1 = f"""1 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+"""
+    obj2 = f"""2 0 obj
+<<
+/Type /Pages
+/Kids [3 0 R]
+/Count 1
+>>
+endobj
+"""
+    obj3 = f"""3 0 obj
+<<
+/Type /Page
+/Parent 2 0 R
+/Resources <<
+/Font <<
+/F1 4 0 R
+>>
+>>
+/Contents 5 0 R
+>>
+endobj
+"""
+    obj4 = f"""4 0 obj
+<<
+/Type /Font
+/Subtype /Type1
+/BaseFont /Helvetica
+>>
+endobj
+"""
+    obj5 = f"""5 0 obj
+<<
+/Length {len(compressed)}
+>>
+stream
+{compressed.decode('latin1')}
+endstream
+endobj
+"""
+    # Build full PDF body
+    body = obj1 + obj2 + obj3 + obj4 + obj5
+    # Cross-reference table offsets (after header)
+    startxref_pos = len(header) + len(body)
+    xref = "xref\n0 6\n0000000000 65535 f \n"
+    # Offsets for each object (relative to start of file)
+    offsets = []
+    current = len(header)
+    for obj in [obj1, obj2, obj3, obj4, obj5]:
+        offsets.append(current)
+        current += len(obj)
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n"
+    xref += f"trailer\n<<\n/Size 6\n/Root 1 0 R\n>>\nstartxref\n{startxref_pos}\n%%EOF"
+    pdf = header + body + xref
+    with open(filepath, 'wb') as f:
+        f.write(pdf.encode('latin1'))
 
 
 class Exporter:
@@ -86,7 +174,7 @@ class Exporter:
                         colors: List[List[int]],
                         color_names: List[str]) -> List[Path]:
         """
-        Export all color films as PNG
+        Export all color films as PDF (vector) if reportlab available, else PNG.
         
         Args:
             masks: List of binary masks
@@ -96,21 +184,42 @@ class Exporter:
         Returns:
             List of file paths
         """
-        print(f"\nExporting {len(masks)} films as PNG...")
-        
-        exported_files = []
-        
-        for idx, (mask, color, name) in enumerate(zip(masks, colors, color_names)):
-            filename = f"film_{idx+1:02d}_{name}.png"
-            filepath = self.export_png(
-                mask,
-                filename,
-                {'color': color, 'name': name}
-            )
-            print(f"   ✅ {filename}")
-            exported_files.append(filepath)
-        
-        return exported_files
+        if REPORTLAB_AVAILABLE:
+            print(f"\nExporting {len(masks)} films as PDF (vector)...")
+            exported_files = []
+            for idx, (mask, color, name) in enumerate(zip(masks, colors, color_names)):
+                filename = f"film_{idx+1:02d}_{name}.pdf"
+                filepath = self.export_pdf_single(mask, filename)
+                print(f"   ✅ {filename}")
+                exported_files.append(filepath)
+            return exported_files
+        else:
+            print(f"\nExporting {len(masks)} films as PNG (reportlab not available)...")
+            exported_files = []
+            for idx, (mask, color, name) in enumerate(zip(masks, colors, color_names)):
+                filename = f"film_{idx+1:02d}_{name}.png"
+                filepath = self.export_png(
+                    mask,
+                    filename,
+                    {'color': color, 'name': name}
+                )
+                print(f"   ✅ {filename}")
+                exported_files.append(filepath)
+            return exported_files
+
+    def export_pdf_single(self,
+                          mask: np.ndarray,
+                          filename: str) -> Path:
+        """
+        Export a single mask as vector PDF using minimal writer.
+        """
+        filepath = self.output_dir / filename
+        h, w = mask.shape[:2]
+        # Ensure binary
+        _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        _write_minimal_pdf(filepath, w, h, contours)
+        return filepath
     
     def export_pdf(self,
                    masks: List[np.ndarray],

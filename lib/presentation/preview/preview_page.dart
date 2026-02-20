@@ -186,19 +186,20 @@ class PreviewPage extends StatelessWidget {
                       // Film display
                       Container(
                         constraints: const BoxConstraints(maxWidth: 500, maxHeight: 500),
-                        child: Image.file(
-                          File(controller.filmPaths.first),
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) {
+                        child: Obx(() {
+                          final idx = controller.selectedFilmIndex.value;
+                          if (controller.filmPaths.isEmpty) {
                             return const Icon(Icons.broken_image, size: 64, color: Colors.grey);
-                          },
-                        ),
+                          }
+                          final path = controller.filmPaths[idx];
+                          return _buildFilmPreview(controller, path);
+                        }),
                       ),
                       const SizedBox(height: 16),
-                      Text(
-                        'Film 1 of ${controller.filmPaths.length}',
+                      Obx(() => Text(
+                        'Film ${controller.selectedFilmIndex.value + 1} of ${controller.filmPaths.length}',
                         style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
-                      ),
+                      )),
                       const SizedBox(height: 8),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -227,6 +228,41 @@ class PreviewPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildFilmPreview(PreviewController controller, String path) {
+    final isPdf = path.toLowerCase().endsWith('.pdf');
+    if (isPdf) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.picture_as_pdf, size: 80, color: Colors.red),
+          const SizedBox(height: 20),
+          const Text(
+            'PDF Vector Output',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          ElevatedButton.icon(
+            onPressed: () => controller.openFile(path),
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Open PDF'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryBlue,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      );
+    } else {
+      return Image.file(
+        File(path),
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(Icons.broken_image, size: 64, color: Colors.grey);
+        },
+      );
+    }
   }
 
   Widget _buildLayersPanel(PreviewController controller) {
@@ -276,6 +312,8 @@ class PreviewPage extends StatelessWidget {
                 itemCount: controller.filmPaths.length,
                 itemBuilder: (context, index) {
                   final isSelected = controller.selectedFilmIndex.value == index;
+                  final path = controller.filmPaths[index];
+                  final isPdf = path.toLowerCase().endsWith('.pdf');
                   return GestureDetector(
                     onTap: () => controller.selectFilm(index),
                     child: Container(
@@ -297,10 +335,14 @@ class PreviewPage extends StatelessWidget {
                             decoration: BoxDecoration(
                               color: Colors.grey[300],
                               borderRadius: BorderRadius.circular(6),
-                              image: DecorationImage(
-                                image: FileImage(File(controller.filmPaths[index])),
-                                fit: BoxFit.cover,
-                              ),
+                              child: isPdf
+                                  ? const Icon(Icons.picture_as_pdf, color: Colors.red, size: 24)
+                                  : (controller.filmPaths.isNotEmpty
+                                      ? DecorationImage(
+                                          image: FileImage(File(path)),
+                                          fit: BoxFit.cover,
+                                        )
+                                      : null),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -309,7 +351,7 @@ class PreviewPage extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Film ${index + 1}',
+                                  isPdf ? 'Film ${index + 1} (PDF)' : 'Film ${index + 1}',
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
@@ -317,7 +359,7 @@ class PreviewPage extends StatelessWidget {
                                   ),
                                 ),
                                 Text(
-                                  controller.filmPaths[index].split('/').last,
+                                  path.split('/').last,
                                   style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -325,10 +367,16 @@ class PreviewPage extends StatelessWidget {
                               ],
                             ),
                           ),
-                          Icon(
-                            isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                            color: isSelected ? primaryBlue : Colors.grey,
-                          ),
+                          isPdf
+                              ? IconButton(
+                                  icon: const Icon(Icons.open_in_new, size: 18),
+                                  onPressed: () => controller.openFile(path),
+                                  tooltip: 'Open PDF',
+                                )
+                              : Icon(
+                                  isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                  color: isSelected ? primaryBlue : Colors.grey,
+                                ),
                         ],
                       ),
                     ),
