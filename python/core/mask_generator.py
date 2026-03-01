@@ -25,6 +25,7 @@ class MaskGenerator:
         morph_kernel_size: int = 3,
         min_area: int = 50,
         apply_cleanup: bool = True,
+        grayscale_output: bool = False,
     ) -> List[np.ndarray]:
         """
         توليد قائمة masks — mask لكل لون.
@@ -35,25 +36,37 @@ class MaskGenerator:
             morph_kernel_size: حجم kernel للـ morphological ops
             min_area: أصغر مساحة (pixels) تُحذَف كـ noise
             apply_cleanup: تطبيق التنظيف المورفولوجي
+            grayscale_output: إذا كان True، الـ mask يحتفظ بـ grayscale intensity
+                              من الصورة الأصلية (للـ halftone قبل الـ binarization)
 
         Returns:
-            List[np.ndarray]: mask أبيض/أسود لكل لون (255=هذا اللون, 0=لأ)
+            List[np.ndarray]: mask لكل لون
         """
         label_map = separation_result["label_map"]
         num_colors = separation_result["num_colors"]
 
-        logger.info(f"[MaskGenerator] Generating {num_colors} masks")
+        logger.info(f"[MaskGenerator] Generating {num_colors} masks (grayscale_output={grayscale_output})")
         masks = []
+
+        # تحويل الصورة الأصلية لـ grayscale إذا احتجناه
+        if grayscale_output:
+            gray_orig = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
         for i in range(num_colors):
             # بناء الـ mask الأساسي
             mask = np.zeros(label_map.shape, dtype=np.uint8)
-            mask[label_map == i] = 255
+            
+            if grayscale_output:
+                # استخدام grayscale intensity من الصورة الأصلية
+                mask[label_map == i] = gray_orig[label_map == i]
+            else:
+                mask[label_map == i] = 255
 
-            if apply_cleanup:
+            if apply_cleanup and not grayscale_output:
+                # لا نطبق cleanup على الـ grayscale masks لأنه يغير الـ intensities
                 mask = self._cleanup_mask(mask, morph_kernel_size, min_area)
 
-            pixel_count = int(np.sum(mask > 0))
+            pixel_count = int(np.sum(mask > 0)) if not grayscale_output else int(np.sum(mask > 0))
             logger.info(f"[MaskGenerator] Mask {i+1}/{num_colors}: {pixel_count} pixels")
             masks.append(mask)
 

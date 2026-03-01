@@ -19,6 +19,55 @@
         "/^C:\\\\Users\\\\Momen\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python\\.exe test_pipeline\\.py$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "explorer": true,
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_sample5_pdf\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_final\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_final2\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_final3\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_final4\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^pip uninstall -y pypdf$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_final5\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_minimal\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_minimal2\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"from PyPDF2 import PdfReader; r=PdfReader\\(r'python/output_pdf_minimal2/film_01_color_01\\.pdf'\\); print\\('pages:', len\\(r\\.pages\\)\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -c \"open\\('python/output_pdf_minimal2/film_01_color_01\\.pdf','rb'\\)\\.read\\(8\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd python; python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_valid\"$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

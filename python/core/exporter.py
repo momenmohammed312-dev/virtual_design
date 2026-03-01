@@ -21,15 +21,26 @@ except ImportError:
     print("⚠️  svgwrite not installed. SVG export not available.")
 
 # For Registration Marks
-from core.registration_marks import (
-    RegistrationMarksGenerator,
-    RegistrationConfig,
-    MarkStyle,
-    add_marks_to_all_films,
-)
+try:
+    from core.registration_marks import (
+        RegistrationMarksGenerator,
+        RegistrationConfig,
+        MarkStyle,
+        add_marks_to_all_films,
+    )
+    REG_MARKS_AVAILABLE = True
+except ImportError:
+    REG_MARKS_AVAILABLE = False
+    print("⚠️  registration_marks not available. Registration marks disabled.")
 
 # PDF export: using minimal writer (no external deps)
-REPORTLAB_AVAILABLE = True
+try:
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    print("⚠️  reportlab not installed. PDF export will use PNG fallback.")
 
 # --- Minimal PDF writer (no external deps) ---
 def _write_minimal_pdf(filepath: Path, width: int, height: int, contours):
@@ -173,43 +184,61 @@ class Exporter:
         
         return filepath
     
-    def export_all_films(self,
-                        masks: List[np.ndarray],
-                        colors: List[List[int]],
-                        color_names: List[str]) -> List[Path]:
+    def export_all_films(
+        self,
+        masks: List[np.ndarray],
+        colors: List[List[int]],
+        color_names: List[str],
+        combine_pdf: bool = True,
+        smooth_factor: float = 0.25,
+    ) -> List[Path]:
         """
-        Export all color films as PDF (vector) if reportlab available, else PNG.
-        
-        Args:
-            masks: List of binary masks
-            colors: List of RGB colors
-            color_names: List of color names
+        Export all films.
+        - combine_pdf=True: كل الأفلام في films_combined.pdf واحد (الموصى به)
+        - combine_pdf=False: فيلم منفصل لكل لون
+        """
+        if combine_pdf and REPORTLAB_AVAILABLE:
+            # استخدام vector exporter المحسّن
+            from core.vector_exporter import export_vector_pdf
             
-        Returns:
-            List of file paths
-        """
-        if REPORTLAB_AVAILABLE:
-            print(f"\nExporting {len(masks)} films as PDF (vector)...")
-            exported_files = []
+            combined_path = self.output_dir / "films_combined.pdf"
+            export_vector_pdf(
+                masks=masks,
+                colors=[tuple(c) for c in colors],
+                color_names=color_names,
+                output_path=combined_path,
+                dpi=self.dpi,
+                smooth_factor=smooth_factor,
+            )
+            print(f"   ✅ Combined PDF: {combined_path}")
+            return [combined_path]
+        
+        elif REPORTLAB_AVAILABLE:
+            # أفلام منفصلة — vector
+            from core.vector_exporter import export_vector_pdf
+            paths = []
             for idx, (mask, color, name) in enumerate(zip(masks, colors, color_names)):
-                filename = f"film_{idx+1:02d}_{name}.pdf"
-                filepath = self.export_pdf_single(mask, filename)
-                print(f"   ✅ {filename}")
-                exported_files.append(filepath)
-            return exported_files
+                out = self.output_dir / f"film_{idx+1:02d}_{name}.pdf"
+                export_vector_pdf(
+                    masks=[mask],
+                    colors=[tuple(color)],
+                    color_names=[name],
+                    output_path=out,
+                    dpi=self.dpi,
+                    smooth_factor=smooth_factor,
+                )
+                paths.append(out)
+            return paths
+        
         else:
-            print(f"\nExporting {len(masks)} films as PNG (reportlab not available)...")
-            exported_files = []
+            # Fallback: PNG
+            print("⚠️  reportlab not installed — exporting as PNG")
+            paths = []
             for idx, (mask, color, name) in enumerate(zip(masks, colors, color_names)):
                 filename = f"film_{idx+1:02d}_{name}.png"
-                filepath = self.export_png(
-                    mask,
-                    filename,
-                    {'color': color, 'name': name}
-                )
-                print(f"   ✅ {filename}")
-                exported_files.append(filepath)
-            return exported_files
+                path = self.export_png(mask, filename, {'color': color, 'name': name})
+                paths.append(path)
+            return paths
 
     def export_pdf_single(self,
                           mask: np.ndarray,

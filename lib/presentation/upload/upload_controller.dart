@@ -1,5 +1,6 @@
 // lib/presentation/upload/upload_controller.dart
 
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
@@ -47,11 +48,28 @@ class UploadController extends GetxController {
     }
 
     FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
+      type: FileType.custom,
+      allowedExtensions: ['png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp'],
+      allowMultiple: false,
     );
 
     if (result != null && result.files.single.path != null) {
-      _proceedToSetup(result.files.single.path!);
+      final file = result.files.single;
+      final ext = file.extension?.toLowerCase() ?? '';
+      
+      final supported = ['png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp'];
+      if (!supported.contains(ext)) {
+        Get.snackbar(
+          'صيغة غير مدعومة',
+          'يُرجى اختيار ملف PNG أو JPG أو TIFF أو BMP أو WEBP',
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.red,
+          colorText: Colors.white,
+        );
+        return;
+      }
+      
+      _proceedToSetup(file.path!);
     }
   }
 

@@ -24,6 +24,7 @@ class PythonProcessor {
   ///
   /// [imagePath]   مسار الصورة الأصلية
   /// [settings]    إعدادات الطباعة
+  /// [outputDir]   مجلد الـ output اختياري (إذا فارغ، يُنشأ تلقائياً)
   /// [onProgress]  callback لتحديث شريط التقدم (0.0 → 1.0, message)
   ///
   /// Returns [ProcessResult] يحتوي على:
@@ -33,6 +34,7 @@ class PythonProcessor {
   Future<ProcessResult> processImage({
     required String imagePath,
     required ProcessingSettings settings,
+    String? outputDir,
     void Function(double progress, String message)? onProgress,
   }) async {
     // التحقق من الصورة
@@ -40,13 +42,16 @@ class PythonProcessor {
       return ProcessResult.failure('Image file not found: $imagePath');
     }
 
-    // مجلد الـ output داخل مجلد التطبيق الموثوق
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final appDir = await getApplicationDocumentsDirectory();
-    final outputDir = '${appDir.path}/silk_output_$timestamp';
+    // إذا لم يتم تحديد مجلد output، أنشئ واحد تلقائياً
+    String finalOutputDir = outputDir ?? '';
+    if (finalOutputDir.isEmpty) {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final appDir = await getApplicationDocumentsDirectory();
+      finalOutputDir = '${appDir.path}/silk_output_$timestamp';
+    }
 
     // بناء قائمة الـ arguments
-    final args = _buildArgs(imagePath, outputDir, settings);
+    final args = _buildArgs(imagePath, finalOutputDir, settings);
 
     // مسار مجلد python scripts
     final scriptsDir = await config.getPythonScriptsDir();
@@ -149,13 +154,19 @@ class PythonProcessor {
       'main.py',
       '--input', imagePath,
       '--output', outputDir,
-      '--colors', settings.colorCount.toString(),
       '--dpi', settings.dpi.toInt().toString(),
       '--detail-level', settings.detailLevel.name,
       '--clean',
       '--validate-strokes',
       '--min-stroke', settings.strokeWidthMm.toString(),
     ];
+
+    // Color count: if 0, use auto-colors flag
+    if (settings.colorCount == 0) {
+      args.add('--auto-colors');
+    } else {
+      args.addAll(['--colors', settings.colorCount.toString()]);
+    }
 
     // Halftone mode
     if (settings.printFinish == PrintFinish.halftone) {
@@ -168,6 +179,9 @@ class PythonProcessor {
     if (settings.edgeEnhancement != EdgeEnhancement.none) {
       args.addAll(['--edge-enhance', settings.edgeEnhancement.name]);
     }
+
+    // PDF export: combine by default
+    args.add('--combine-pdf');
 
     return args;
   }

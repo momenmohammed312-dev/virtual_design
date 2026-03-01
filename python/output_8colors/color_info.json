@@ -1,0 +1,101 @@
+{
+  "num_colors": 8,
+  "colors": [
+    {
+      "index": 7,
+      "name": "color_08",
+      "rgb": [
+        243,
+        236,
+        224
+      ],
+      "hex": "#F3ECE0",
+      "pixel_count": 489506,
+      "percentage": 50.7
+    },
+    {
+      "index": 0,
+      "name": "color_01",
+      "rgb": [
+        48,
+        35,
+        82
+      ],
+      "hex": "#302352",
+      "pixel_count": 112124,
+      "percentage": 11.6
+    },
+    {
+      "index": 3,
+      "name": "color_04",
+      "rgb": [
+        220,
+        46,
+        33
+      ],
+      "hex": "#DC2E21",
+      "pixel_count": 62545,
+      "percentage": 6.5
+    },
+    {
+      "index": 4,
+      "name": "color_05",
+      "rgb": [
+        0,
+        161,
+        151
+      ],
+      "hex": "#00A197",
+      "pixel_count": 60575,
+      "percentage": 6.3
+    },
+    {
+      "index": 5,
+      "name": "color_06",
+      "rgb": [
+        244,
+        111,
+        27
+      ],
+      "hex": "#F46F1B",
+      "pixel_count": 60493,
+      "percentage": 6.3
+    },
+    {
+      "index": 6,
+      "name": "color_07",
+      "rgb": [
+        248,
+        178,
+        18
+      ],
+      "hex": "#F8B212",
+      "pixel_count": 60192,
+      "percentage": 6.2
+    },
+    {
+      "index": 1,
+      "name": "color_02",
+      "rgb": [
+        0,
+        88,
+        135
+      ],
+      "hex": "#005887",
+      "pixel_count": 59712,
+      "percentage": 6.2
+    },
+    {
+      "index": 2,
+      "name": "color_03",
+      "rgb": [
+        8,
+        109,
+        47
+      ],
+      "hex": "#086D2F",
+      "pixel_count": 59524,
+      "percentage": 6.2
+    }
+  ]
+}

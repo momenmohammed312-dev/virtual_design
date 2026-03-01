@@ -1,12 +1,13 @@
 import cv2
 import math
 import numpy as np
-from typing import List, Literal, Optional
+from typing import List, Literal, Tuple
 from dataclasses import dataclass
 
 
 @dataclass
 class HalftoneDot:
+    """Single halftone dot — pure data, no raster."""
     cx: float
     cy: float
     radius: float
@@ -14,10 +15,9 @@ class HalftoneDot:
 
 
 class HalftoneGenerator:
-    """Generate halftone patterns for screen printing"""
+    """Generate halftone patterns for screen printing."""
 
     def __init__(self, dpi: int = 300):
-        """Initialize halftone generator"""
         self.dpi = dpi
 
     # ─── VECTOR OUTPUT ───────────────────────────────────────────────────────
@@ -27,15 +27,16 @@ class HalftoneGenerator:
         image: np.ndarray,
         lpi: int = 55,
         angle: float = 45.0,
-        dot_shape: str = "circle",
+        dot_shape: Literal["circle", "square"] = "circle",
     ) -> List[HalftoneDot]:
-        """Generate halftone as list of HalftoneDot objects.
+        """
+        Generate halftone as list of HalftoneDot objects.
         NO raster intermediate — feed directly to PDFDocumentBuilder.
         Angle is ACTUALLY APPLIED via rotation matrix (was broken before).
         """
         gray = self._to_gray(image)
         h, w = gray.shape
-        dot_spacing = int(self.dpi / lpi)
+        dot_spacing = self.dpi / lpi
         angle_rad = math.radians(angle)
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
@@ -74,7 +75,6 @@ class HalftoneGenerator:
         lpi: int = 55,
         angle: float = 45.0,
         dot_shape: Literal["round", "square", "ellipse"] = "round",
-        dpi: Optional[int] = None,
     ) -> np.ndarray:
         """Generate halftone as binary numpy array. Angle is now properly applied."""
         print(f"      📊 Halftone raster (LPI:{lpi}, angle:{angle}°, {dot_shape})")
@@ -113,7 +113,7 @@ class HalftoneGenerator:
         return image.copy()
 
     @staticmethod
-    def _rasterize(dots: List[HalftoneDot], shape: tuple) -> np.ndarray:
+    def _rasterize(dots: List[HalftoneDot], shape: Tuple[int, int]) -> np.ndarray:
         """Render dot list onto binary image — no anti-aliasing."""
         h, w = shape
         out = np.zeros((h, w), dtype=np.uint8)

@@ -20,11 +20,13 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
   Future<ProcessResult> processImage({
     required String imagePath,
     required ProcessingSettings settings,
+    String? outputDir,
     void Function(double, String)? onProgress,
   }) async {
     return await _processor.processImage(
       imagePath: imagePath,
       settings: settings,
+      outputDir: outputDir,
       onProgress: onProgress,
     );
   }
