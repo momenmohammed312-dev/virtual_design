@@ -68,6 +68,7 @@
         "/^cd python; python main\\.py --input \"G:\\\\Designs\\\\For Clothes\\\\sample 5\\.png\" --output \"output_pdf_valid\"$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "git checkout": true
     }
 }
