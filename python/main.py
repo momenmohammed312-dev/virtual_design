@@ -31,6 +31,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.color_separator import ColorSeparator
+from core.image_loader import load_image_safely
 from core.mask_generator import MaskGenerator
 from core.edge_cleaner import EdgeCleaner
 
@@ -123,52 +124,15 @@ def step1_load_image(input_path: str) -> np.ndarray:
     
     logger.info(f"Attempting to load: {input_path}")
     
-    # Try OpenCV first
-    image = cv2.imread(input_path)
-    if image is not None:
-        logger.info(f"Loaded with OpenCV: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
-        # Convert CMYK to RGB if needed (OpenCV reads CMYK as 4 channels: B,G,R,Key)
-        if len(image.shape) > 2 and image.shape[2] == 4:
-            logger.info("Converting CMYK (4 channels) to RGB (3 channels)")
-            # OpenCV reads CMYK as BGRA, but it's actually CMYK in wrong order
-            # Better to use PIL for proper CMYK conversion
-            try:
-                from PIL import Image
-                pil_img = Image.open(input_path)
-                if pil_img.mode == 'CMYK':
-                    logger.info("Using PIL to convert CMYK to RGB")
-                    pil_img = pil_img.convert('RGB')
-                    image = np.array(pil_img)
-                    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                else:
-                    # Fallback: simple channel slicing
-                    image = image[:, :, :3]
-            except Exception as e:
-                logger.warning(f"PIL CMYK conversion failed: {e}, using simple channel slicing")
-                image = image[:, :, :3]
-        return image
-    
-    # If OpenCV fails, try PIL (supports more formats)
+    # Use robust image loader (no extension reliance)
     try:
-        from PIL import Image
-        pil_img = Image.open(input_path)
-        logger.info(f"PIL info: format={pil_img.format}, mode={pil_img.mode}, size={pil_img.size}")
-        
-        # Convert to RGB if needed (handle CMYK, RGBA, grayscale, etc.)
-        if pil_img.mode == 'CMYK':
-            logger.info("Converting CMYK to RGB")
-            pil_img = pil_img.convert('RGB')
-        elif pil_img.mode != 'RGB':
-            logger.info(f"Converting from {pil_img.mode} to RGB")
-            pil_img = pil_img.convert('RGB')
-        
-        image = np.array(pil_img)
-        # PIL gives RGB, OpenCV expects BGR
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        logger.info(f"Loaded with PIL: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        image = load_image_safely(input_path)
+        logger.info(f"Loaded image via robust loader: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        if image.shape[2] == 4:
+            image = image[:, :, :3]
         return image
     except Exception as e:
-        logger.error(f"PIL failed: {e}")
+        logger.error(f"Robust image loader failed: {e}")
         raise ValueError(f"Cannot read image {input_path}: {e}")
 
 

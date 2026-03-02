@@ -118,16 +118,24 @@ class PythonProcessor {
               onProgress(current / total, 'Step $current/$total: $stepName');
             }
           },
-          onDone: () => stdoutCompleter.complete(),
-          onError: (_) => stdoutCompleter.complete(),
+        onDone: () {
+          if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
+        },
+        onError: (_) {
+          if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
+        },
         );
 
     process.stderr
         .transform(utf8.decoder)
         .listen(
           (chunk) => stderrBuffer.write(chunk),
-          onDone: () => stderrCompleter.complete(),
-          onError: (_) => stderrCompleter.complete(),
+        onDone: () {
+          if (!stderrCompleter.isCompleted) stderrCompleter.complete();
+        },
+        onError: (_) {
+          if (!stderrCompleter.isCompleted) stderrCompleter.complete();
+        },
         );
 
     // انتظار انتهاء العملية

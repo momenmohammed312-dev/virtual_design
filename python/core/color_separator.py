@@ -192,9 +192,9 @@ class ColorSeparator:
         # CRITICAL FIX: Vectorized label_map building (was Python loop)
         # ════════════════════════════════════════════════════════════
         centers_np = centers_cluster.astype(np.float32)  # shape: (K, 3)
-        # all_pixels: (N, 3) where N = h*w
+        # Pixels: (N, 3) where N = h*w
         # diff: (N, K, 3) via broadcasting
-        diff = all_pixels[:, np.newaxis, :] - centers_np[np.newaxis, :, :]
+        diff = pixels[:, np.newaxis, :] - centers_np[np.newaxis, :, :]
         dists_sq = np.sum(diff ** 2, axis=2)  # (N, K) — squared distance
         label_map = np.argmin(dists_sq, axis=1).reshape(h, w).astype(np.int32)
         # ════════════════════════════════════════════════════════════
