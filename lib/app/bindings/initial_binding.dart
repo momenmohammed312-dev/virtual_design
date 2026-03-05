@@ -22,7 +22,7 @@ class InitialBinding extends Bindings {
 
     // Initialize Hive and Python on app startup, then register PythonProcessor
     Get.putAsync(() async {
-      final initResult = await pythonConfig.initialize();
+      await pythonConfig.initialize();
 
       final hive = HiveService.instance;
       await hive.init();

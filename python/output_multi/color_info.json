@@ -1,0 +1,53 @@
+{
+  "num_colors": 4,
+  "colors": [
+    {
+      "index": 0,
+      "name": "color_01",
+      "rgb": [
+        27,
+        34,
+        44
+      ],
+      "hex": "#1B222C",
+      "pixel_count": 54698,
+      "percentage": 74.6
+    },
+    {
+      "index": 3,
+      "name": "color_04",
+      "rgb": [
+        248,
+        125,
+        240
+      ],
+      "hex": "#F87DF0",
+      "pixel_count": 14764,
+      "percentage": 20.1
+    },
+    {
+      "index": 1,
+      "name": "color_02",
+      "rgb": [
+        71,
+        35,
+        77
+      ],
+      "hex": "#47234D",
+      "pixel_count": 2480,
+      "percentage": 3.4
+    },
+    {
+      "index": 2,
+      "name": "color_03",
+      "rgb": [
+        161,
+        90,
+        157
+      ],
+      "hex": "#A15A9D",
+      "pixel_count": 1384,
+      "percentage": 1.9
+    }
+  ]
+}

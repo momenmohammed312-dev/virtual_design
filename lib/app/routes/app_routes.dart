@@ -6,6 +6,8 @@ abstract class AppRoutes {
   static const upload = '/upload';
   static const setup = '/setup';
   static const preview = '/preview';
+  static const selectPrintType = '/select-print-type';
+  static const export = '/export';
   static const settings = '/settings';
   static const users = '/users';
   static const files = '/files';

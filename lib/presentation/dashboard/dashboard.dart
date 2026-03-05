@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../presentation/upload/upload_page.dart';
+import '../../presentation/upload/upload_controller.dart';
 import '../dashboard/dashboard_controller.dart';
 import '../../domain/entities/print_project.dart';
 
@@ -347,8 +347,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             width: MediaQuery.of(context).size.width * 0.17,
                             height: MediaQuery.of(context).size.height * 0.19,
                             color: Colors.white,
-                            onTap: () {
-                              Get.to(() => const UploadPage());
+                            onTap: () async {
+                              // Get UploadController and directly pick file
+                              final uploadController = Get.put(UploadController());
+                              await uploadController.pickFile();
                             },
                             child: Padding(
                               padding: const EdgeInsets.all(16.0),
@@ -442,11 +444,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       const SizedBox(height: 8),
                                       ElevatedButton.icon(
                                         onPressed: () => Get.toNamed('/upload'),
-                                        icon: const Icon(Icons.add),
+                                        icon: const Icon(Icons.add_circle_outline),
                                         label: const Text('Start New Project'),
                                         style: ElevatedButton.styleFrom(
-                                          backgroundColor: primaryBlue,
-                                          foregroundColor: Colors.white,
+                                          backgroundColor: const Color(0xFF6C63FF),
+                                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                                         ),
                                       ),
                                     ],
@@ -459,41 +462,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   color: Colors.white,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: ListView.separated(
+                                child: GridView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                                    maxCrossAxisExtent: 280,
+                                    mainAxisSpacing: 20,
+                                    crossAxisSpacing: 20,
+                                    childAspectRatio: 0.75,
+                                  ),
                                   itemCount: controller.recentProjects.length,
-                                  separatorBuilder: (_, __) => const Divider(),
                                   itemBuilder: (context, index) {
                                     final project = controller.recentProjects[index];
-                                    return ListTile(
-                                      leading: const Icon(Icons.print),
-                                      title: Text(project.name),
-                                      subtitle: Text(
-                                        '${project.createdAt.toString().split(' ')[0]} • ${project.filmPaths.length} films',
-                                      ),
-                                      trailing: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: project.status == ProjectStatus.completed
-                                              ? Colors.green.withAlpha((0.1 * 255).round())
-                                              : Colors.orange.withAlpha((0.1 * 255).round()),
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Text(
-                                          project.status == ProjectStatus.completed
-                                              ? 'Complete'
-                                              : 'Processing',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: project.status == ProjectStatus.completed
-                                                ? Colors.green
-                                                : Colors.orange,
-                                          ),
-                                        ),
-                                      ),
-                                    );
+                                    return _buildRecentProjectCard(project);
                                   },
                                 ),
                               );
@@ -639,6 +620,94 @@ class _DashboardScreenState extends State<DashboardScreen> {
       default:
         return '';
     }
+  }
+
+  // ================= Recent Project Card (16:9) =================
+  Widget _buildRecentProjectCard(PrintProject project) {
+    final statusColor = project.status == ProjectStatus.completed
+        ? Colors.green
+        : project.status == ProjectStatus.processing
+            ? Colors.blue
+            : Colors.red;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Thumbnail with 16:9 aspect ratio
+          ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Container(
+                color: const Color(0xFFF0F0F0),
+                child: const Center(
+                  child: Icon(Icons.image, size: 48, color: Colors.grey),
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  project.name,
+                  style: const TextStyle(
+                    fontFamily: 'Inter',
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        project.createdAt.toString().split(' ')[0],
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: statusColor.withAlpha((0.15 * 255).round()),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        project.status == ProjectStatus.completed
+                            ? 'Complete'
+                            : project.status == ProjectStatus.processing
+                                ? 'Processing'
+                                : 'Failed',
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 10,
+                          color: statusColor,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ================= Top Bar =================

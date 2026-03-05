@@ -3,6 +3,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../app/routes/app_routes.dart';
 import 'preview_controller.dart';
 
 class PreviewPage extends StatelessWidget {
@@ -451,6 +452,17 @@ class PreviewPage extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          OutlinedButton.icon(
+            onPressed: () => Get.toNamed(AppRoutes.selectPrintType),
+            icon: const Icon(Icons.tune, size: 18),
+            label: const Text('Print Type'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: primaryBlue,
+              side: const BorderSide(color: primaryBlue),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+            ),
+          ),
+          const SizedBox(width: 15),
           OutlinedButton.icon(
             onPressed: controller.exportAll,
             icon: const Icon(Icons.download, size: 18),

@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'files_controller.dart';
 
 class FilesPage extends StatefulWidget {
   const FilesPage({super.key});
@@ -12,87 +13,17 @@ class FilesPage extends StatefulWidget {
 
 class _FilesPageState extends State<FilesPage> {
   static const Color primaryBlue = Color(0xFF1564A5);
-
-  // Sample in-memory project data
-  final List<Map<String, dynamic>> _projects = [
-    {
-      'id': 1,
-      'name': 'Company Logo Tee',
-      'type': 'Screen Printing',
-      'filmCount': 4,
-      'size': '2.4 MB',
-      'date': '2025-02-18',
-      'status': 'Complete',
-    },
-    {
-      'id': 2,
-      'name': 'Event Banner',
-      'type': 'DTF',
-      'filmCount': 1,
-      'size': '1.1 MB',
-      'date': '2025-02-17',
-      'status': 'Complete',
-    },
-    {
-      'id': 3,
-      'name': 'Team Jerseys',
-      'type': 'Sublimation',
-      'filmCount': 6,
-      'size': '3.8 MB',
-      'date': '2025-02-16',
-      'status': 'Processing',
-    },
-    {
-      'id': 4,
-      'name': 'Promo Stickers',
-      'type': 'Flex/Vinyl',
-      'filmCount': 2,
-      'size': '890 KB',
-      'date': '2025-02-15',
-      'status': 'Complete',
-    },
-    {
-      'id': 5,
-      'name': 'Hoodie Design',
-      'type': 'DTG',
-      'filmCount': 5,
-      'size': '4.2 MB',
-      'date': '2025-02-14',
-      'status': 'Error',
-    },
-    {
-      'id': 6,
-      'name': 'Trade Show Graphics',
-      'type': 'Screen Printing',
-      'filmCount': 3,
-      'size': '2.1 MB',
-      'date': '2025-02-13',
-      'status': 'Complete',
-    },
-  ];
+  final FilesController controller = Get.put(FilesController());
 
   String _searchQuery = '';
   String _statusFilter = 'All';
 
-  List<Map<String, dynamic>> get _filteredProjects {
-    return _projects.where((project) {
-      final matchesSearch = project['name'].toLowerCase().contains(_searchQuery.toLowerCase());
-      final matchesStatus = _statusFilter == 'All' || project['status'] == _statusFilter;
-      return matchesSearch && matchesStatus;
+  List<Map<String, dynamic>> get _filteredFolders {
+    return controller.userFolders.where((folder) {
+      final matchesSearch = folder['name'].toLowerCase().contains(_searchQuery.toLowerCase());
+      // For folders, we don't filter by status - show all
+      return matchesSearch;
     }).toList();
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'Complete':
-        return Colors.green;
-      case 'Processing':
-        return Colors.blue;
-      case 'Error':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
   }
 
   @override
@@ -128,7 +59,7 @@ class _FilesPageState extends State<FilesPage> {
                         _buildFilterBar(),
                         const SizedBox(height: 20),
 
-                        _buildProjectsGrid(),
+                        _buildFoldersGrid(),
                       ],
                     ),
                   ),
@@ -306,27 +237,23 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Widget _buildStatsCards() {
-    final totalProjects = _projects.length;
-    final completeProjects = _projects.where((p) => p['status'] == 'Complete').length;
-    final processingProjects = _projects.where((p) => p['status'] == 'Processing').length;
-    final totalFilms = _projects.fold<int>(0, (sum, p) => sum + (p['filmCount'] as int));
+    final folders = controller.userFolders;
+    final totalFolders = folders.length;
+    // For folders, we don't have status - just show count
+    final totalItems = folders.fold<int>(0, (sum, f) => sum + (f['itemCount'] as int));
 
     return Row(
       children: [
         Expanded(
-          child: _buildStatCard('Total Projects', totalProjects.toString(), Colors.blue),
+          child: _buildStatCard('Total Folders', totalFolders.toString(), Colors.blue),
         ),
         const SizedBox(width: 15),
         Expanded(
-          child: _buildStatCard('Complete', completeProjects.toString(), Colors.green),
+          child: _buildStatCard('Total Items', totalItems.toString(), Colors.green),
         ),
         const SizedBox(width: 15),
         Expanded(
-          child: _buildStatCard('Processing', processingProjects.toString(), Colors.orange),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: _buildStatCard('Total Films', totalFilms.toString(), Colors.purple),
+          child: _buildStatCard('My Files', totalItems.toString(), Colors.orange),
         ),
       ],
     );
@@ -440,32 +367,69 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
-  Widget _buildProjectsGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 280,
-        mainAxisSpacing: 20,
-        crossAxisSpacing: 20,
-        childAspectRatio: 0.85,
-      ),
-      itemCount: _filteredProjects.length,
-      itemBuilder: (context, index) {
-        final project = _filteredProjects[index];
-        return _buildProjectCard(project);
-      },
-    );
+  Widget _buildFoldersGrid() {
+    return Obx(() {
+      if (controller.isLoading.value) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      
+      if (controller.errorMessage.isNotEmpty) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 64, color: Colors.grey[400]),
+              const SizedBox(height: 16),
+              Text(
+                controller.errorMessage.value,
+                style: const TextStyle(color: Colors.red),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => controller.refreshFolders(),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        );
+      }
+      
+      if (_filteredFolders.isEmpty) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.folder_open, size: 64, color: Colors.grey[400]),
+              const SizedBox(height: 16),
+              const Text(
+                'No folders found',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
+        );
+      }
+
+      return GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 280,
+          mainAxisSpacing: 20,
+          crossAxisSpacing: 20,
+          childAspectRatio: 0.85,
+        ),
+        itemCount: _filteredFolders.length,
+        itemBuilder: (context, index) {
+          final folder = _filteredFolders[index];
+          return _buildFolderCard(folder);
+        },
+      );
+    });
   }
 
-  Widget _buildProjectCard(Map<String, dynamic> project) {
-    final statusColor = _getStatusColor(project['status']);
-    final typeIcon = project['type'] == 'Screen Printing' ? Icons.print :
-                     project['type'] == 'DTF' ? Icons.photo_size_select_large :
-                     project['type'] == 'Sublimation' ? Icons.auto_awesome :
-                     project['type'] == 'Flex/Vinyl' ? Icons.content_cut :
-                     project['type'] == 'DTG' ? Icons.brush : Icons.folder;
-
+  Widget _buildFolderCard(Map<String, dynamic> folder) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -475,14 +439,21 @@ class _FilesPageState extends State<FilesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Colored top bar
+          // Folder icon header
           Container(
-            height: 6,
+            height: 120,
             decoration: BoxDecoration(
-              color: statusColor,
+              color: const Color(0xFFE3F2FD),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(12),
                 topRight: Radius.circular(12),
+              ),
+            ),
+            child: Center(
+              child: Icon(
+                Icons.folder,
+                size: 64,
+                color: const Color(0xFF1564A5).withAlpha((0.8 * 255).round()),
               ),
             ),
           ),
@@ -491,33 +462,8 @@ class _FilesPageState extends State<FilesPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: statusColor.withAlpha((0.1 * 255).round()),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(typeIcon, size: 24, color: statusColor),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: statusColor.withAlpha((0.1 * 255).round()),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        project['status'],
-                        style: TextStyle(fontSize: 11, color: statusColor, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
                 Text(
-                  project['name'],
+                  folder['name'],
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -527,34 +473,18 @@ class _FilesPageState extends State<FilesPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  project['type'],
-                  style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                  folder['path'],
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    const Icon(Icons.movie, size: 14, color: Color(0xFF6B7280)),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${project['filmCount']} films',
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-                    ),
-                    const SizedBox(width: 16),
                     const Icon(Icons.insert_drive_file, size: 14, color: Color(0xFF6B7280)),
                     const SizedBox(width: 4),
                     Text(
-                      project['size'],
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(Icons.calendar_today, size: 14, color: Color(0xFF6B7280)),
-                    const SizedBox(width: 4),
-                    Text(
-                      project['date'],
+                      '${folder['itemCount']} items',
                       style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
                     ),
                   ],

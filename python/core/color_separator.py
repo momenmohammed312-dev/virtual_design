@@ -18,6 +18,78 @@ class ColorSeparator:
     يستخدم KMEANS_PP_CENTERS لنتائج أفضل من RANDOM_CENTERS.
     """
 
+    def auto_detect_color_count(
+        self,
+        image: np.ndarray,
+        max_colors: int = 8,
+        white_threshold: int = 240,
+    ) -> int:
+        """
+        اكتشاف تلقائي لعدد الألوان في الصورة.
+        يستخدم inertia curve (elbow method) لتحديد K الأمثل.
+        
+        Returns: العدد المقترح (2-8)
+        """
+        logger.info("[ColorSeparator] Auto-detecting color count...")
+        
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # استثناء الخلفية البيضاء
+        _, fg_mask = cv2.threshold(gray, white_threshold, 255, cv2.THRESH_BINARY_INV)
+        img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        pixels = img_lab.reshape(-1, 3).astype(np.float32)
+        fg_flat = fg_mask.reshape(-1)
+        fg_pixels = pixels[fg_flat > 128]
+        
+        if len(fg_pixels) < 100:
+            logger.warning("Too few foreground pixels, defaulting to 2")
+            return 2
+        
+        # Sample للسرعة
+        if len(fg_pixels) > 10000:
+            indices = np.random.choice(len(fg_pixels), 10000, replace=False)
+            fg_pixels = fg_pixels[indices]
+        
+        # حساب inertia لكل K
+        inertias = []
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.5)
+        
+        for k in range(2, max_colors + 1):
+            try:
+                _, labels, centers = cv2.kmeans(
+                    fg_pixels, k, None, criteria, 5, cv2.KMEANS_PP_CENTERS
+                )
+                # حساب inertia = مجموع المسافات المربعة من كل نقطة لمركزها
+                inertia = 0.0
+                for i in range(k):
+                    cluster_pts = fg_pixels[labels.flatten() == i]
+                    if len(cluster_pts) > 0:
+                        inertia += np.sum((cluster_pts - centers[i]) ** 2)
+                inertias.append(inertia)
+            except Exception:
+                inertias.append(float('inf'))
+        
+        # Elbow method: ابحث عن أكبر انخفاض نسبي
+        if len(inertias) < 2:
+            return 2
+        
+        best_k = 2
+        best_drop = 0
+        for i in range(1, len(inertias)):
+            if inertias[i - 1] > 0:
+                drop = (inertias[i - 1] - inertias[i]) / inertias[i - 1]
+                if drop > best_drop:
+                    best_drop = drop
+                    best_k = i + 2  # i=0 → K=2
+        
+        # لو الصورة بسيطة (drop صغير جدًا) → K=2
+        if best_drop < 0.15:
+            best_k = 2
+        
+        logger.info(f"[ColorSeparator] Auto-detected {best_k} colors")
+        return best_k
+
     def separate(
         self,
         image: np.ndarray,
@@ -28,6 +100,7 @@ class ColorSeparator:
         white_threshold: int = 240,
         remove_white_bg: bool = True,
         use_lab: bool = True,
+        auto_detect: bool = False,
     ) -> Dict:
         """
         فصل الصورة إلى num_colors طبقة (محسّن للـ LAB color space).
@@ -45,6 +118,9 @@ class ColorSeparator:
         Returns:
             Dict يحتوي على البيانات المطلوبة
         """
+        if auto_detect:
+            num_colors = self.auto_detect_color_count(image, white_threshold=white_threshold)
+        
         logger.info(f"[ColorSeparator] Starting: {num_colors} colors, LAB={use_lab}, image={image.shape}")
 
         # تحويل BGR → RGB
@@ -112,13 +188,16 @@ class ColorSeparator:
         centers = centers[sorted_indices]
         centers_cluster = centers_cluster[sorted_indices]
 
-        # بناء label_map
-        label_map = np.zeros((h, w), dtype=np.int32)
-        all_pixels = clustering_image.reshape(-1, 3).astype(np.float32)
-
-        for i in range(len(all_pixels)):
-            dists = np.linalg.norm(centers_cluster.astype(np.float32) - all_pixels[i], axis=1)
-            label_map.flat[i] = np.argmin(dists)
+        # ════════════════════════════════════════════════════════════
+        # CRITICAL FIX: Vectorized label_map building (was Python loop)
+        # ════════════════════════════════════════════════════════════
+        centers_np = centers_cluster.astype(np.float32)  # shape: (K, 3)
+        # Pixels: (N, 3) where N = h*w
+        # diff: (N, K, 3) via broadcasting
+        diff = pixels[:, np.newaxis, :] - centers_np[np.newaxis, :, :]
+        dists_sq = np.sum(diff ** 2, axis=2)  # (N, K) — squared distance
+        label_map = np.argmin(dists_sq, axis=1).reshape(h, w).astype(np.int32)
+        # ════════════════════════════════════════════════════════════
 
         # تحديد الخلفية
         if bg_mask is not None:

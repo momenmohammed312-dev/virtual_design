@@ -1,0 +1,29 @@
+{
+  "num_colors": 2,
+  "colors": [
+    {
+      "index": 0,
+      "name": "color_01",
+      "rgb": [
+        29,
+        34,
+        45
+      ],
+      "hex": "#1D222D",
+      "pixel_count": 57450,
+      "percentage": 78.3
+    },
+    {
+      "index": 1,
+      "name": "color_02",
+      "rgb": [
+        243,
+        124,
+        235
+      ],
+      "hex": "#F37CEB",
+      "pixel_count": 15876,
+      "percentage": 21.7
+    }
+  ]
+}

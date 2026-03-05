@@ -11,6 +11,7 @@ abstract class ProcessingRepository {
   Future<ProcessResult> processImage({
     required String imagePath,
     required ProcessingSettings settings,
+    String? outputDir,
     void Function(double progress, String message)? onProgress,
   });
 

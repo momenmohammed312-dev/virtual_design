@@ -1,199 +1,130 @@
-"""
-Halftone Generator
-Generate halftone patterns for gradients and photographs
-"""
-
 import cv2
+import math
 import numpy as np
-from typing import Literal
+from typing import List, Literal, Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class HalftoneDot:
+    cx: float
+    cy: float
+    radius: float
+    shape: str  # 'circle' | 'square'
+
 
 class HalftoneGenerator:
     """Generate halftone patterns for screen printing"""
-    
+
     def __init__(self, dpi: int = 300):
-        """
-        Initialize halftone generator
-        
-        Args:
-            dpi: Output DPI
-        """
+        """Initialize halftone generator"""
         self.dpi = dpi
-    
-    def generate(self,
-                 image: np.ndarray,
-                 lpi: int = 55,
-                 angle: float = 45.0,
-                 dot_shape: Literal['round', 'square', 'ellipse'] = 'round') -> np.ndarray:
+
+    # ─── VECTOR OUTPUT ───────────────────────────────────────────────────────
+
+    def generate_vector_dots(
+        self,
+        image: np.ndarray,
+        lpi: int = 55,
+        angle: float = 45.0,
+        dot_shape: str = "circle",
+    ) -> List[HalftoneDot]:
+        """Generate halftone as list of HalftoneDot objects.
+        NO raster intermediate — feed directly to PDFDocumentBuilder.
+        Angle is ACTUALLY APPLIED via rotation matrix (was broken before).
         """
-        Generate halftone pattern
-        
-        Args:
-            image: Grayscale image
-            lpi: Lines per inch (screen frequency)
-            angle: Screen angle in degrees
-            dot_shape: Shape of halftone dots
-            
-        Returns:
-            Binary halftone image
-        """
-        print(f"      📊 Generating halftone (LPI: {lpi}, angle: {angle}°, shape: {dot_shape})...")
-        
-        # Ensure grayscale
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image.copy()
-        
-        # Calculate dot spacing in pixels
+        gray = self._to_gray(image)
+        h, w = gray.shape
         dot_spacing = int(self.dpi / lpi)
-        
-        # Create halftone
-        if dot_shape == 'round':
-            halftone = self._generate_round_halftone(gray, dot_spacing, angle)
-        elif dot_shape == 'square':
-            halftone = self._generate_square_halftone(gray, dot_spacing, angle)
-        elif dot_shape == 'ellipse':
-            halftone = self._generate_ellipse_halftone(gray, dot_spacing, angle)
-        else:
-            raise ValueError(f"Unknown dot shape: {dot_shape}")
-        
-        print(f"         ✅ Halftone generated")
-        return halftone
-    
-    def _generate_round_halftone(self, 
-                                  gray: np.ndarray, 
-                                  dot_spacing: int,
-                                  angle: float) -> np.ndarray:
-        """Generate round dot halftone"""
-        h, w = gray.shape
-        halftone = np.zeros((h, w), dtype=np.uint8)
-        
-        # Rotate coordinates
-        angle_rad = np.radians(angle)
-        cos_a = np.cos(angle_rad)
-        sin_a = np.sin(angle_rad)
-        
-        # Generate dots
-        for y in range(0, h, dot_spacing):
-            for x in range(0, w, dot_spacing):
-                # Get average intensity in this cell
-                y_end = min(y + dot_spacing, h)
-                x_end = min(x + dot_spacing, w)
-                cell = gray[y:y_end, x:x_end]
-                intensity = np.mean(cell)
-                
-                # Calculate dot radius (inverse: darker = bigger dot)
-                radius = int((1 - intensity / 255) * (dot_spacing / 2))
-                
-                if radius > 0:
-                    # Draw circle
-                    center_x = x + dot_spacing // 2
-                    center_y = y + dot_spacing // 2
-                    cv2.circle(halftone, (center_x, center_y), radius, 255, -1)
-        
-        return halftone
-    
-    def _generate_square_halftone(self,
-                                   gray: np.ndarray,
-                                   dot_spacing: int,
-                                   angle: float) -> np.ndarray:
-        """Generate square dot halftone"""
-        h, w = gray.shape
-        halftone = np.zeros((h, w), dtype=np.uint8)
-        
-        for y in range(0, h, dot_spacing):
-            for x in range(0, w, dot_spacing):
-                y_end = min(y + dot_spacing, h)
-                x_end = min(x + dot_spacing, w)
-                cell = gray[y:y_end, x:x_end]
-                intensity = np.mean(cell)
-                
-                # Calculate square size
-                size = int((1 - intensity / 255) * dot_spacing)
-                
-                if size > 0:
-                    center_x = x + dot_spacing // 2
-                    center_y = y + dot_spacing // 2
-                    half_size = size // 2
-                    
-                    cv2.rectangle(
-                        halftone,
-                        (center_x - half_size, center_y - half_size),
-                        (center_x + half_size, center_y + half_size),
-                        255,
-                        -1
-                    )
-        
-        return halftone
-    
-    def _generate_ellipse_halftone(self,
-                                    gray: np.ndarray,
-                                    dot_spacing: int,
-                                    angle: float) -> np.ndarray:
-        """Generate ellipse dot halftone"""
-        h, w = gray.shape
-        halftone = np.zeros((h, w), dtype=np.uint8)
-        
-        for y in range(0, h, dot_spacing):
-            for x in range(0, w, dot_spacing):
-                y_end = min(y + dot_spacing, h)
-                x_end = min(x + dot_spacing, w)
-                cell = gray[y:y_end, x:x_end]
-                intensity = np.mean(cell)
-                
-                # Calculate ellipse size
-                axis_size = int((1 - intensity / 255) * (dot_spacing / 2))
-                
-                if axis_size > 0:
-                    center_x = x + dot_spacing // 2
-                    center_y = y + dot_spacing // 2
-                    
-                    cv2.ellipse(
-                        halftone,
-                        (center_x, center_y),
-                        (axis_size, int(axis_size * 0.7)),  # Ellipse ratio
-                        angle,
-                        0,
-                        360,
-                        255,
-                        -1
-                    )
-        
-        return halftone
-    
+        angle_rad = math.radians(angle)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        cx0, cy0 = w / 2.0, h / 2.0
+
+        diag = math.ceil(math.sqrt(w * w + h * h))
+        n = int(math.ceil(diag / dot_spacing)) + 2
+
+        dots: List[HalftoneDot] = []
+        for row in range(-n, n + 1):
+            for col in range(-n, n + 1):
+                gx = col * dot_spacing
+                gy = row * dot_spacing
+                px = cx0 + gx * cos_a - gy * sin_a
+                py = cy0 + gx * sin_a + gy * cos_a
+
+                if px < 0 or px >= w or py < 0 or py >= h:
+                    continue
+
+                ix = int(max(0, min(w - 1, round(px))))
+                iy = int(max(0, min(h - 1, round(py))))
+                intensity = gray[iy, ix] / 255.0
+                radius = (1.0 - intensity) * (dot_spacing / 2.0) * 0.95
+                if radius < 0.5:
+                    continue
+
+                dots.append(HalftoneDot(cx=px, cy=py, radius=radius, shape=dot_shape))
+
+        return dots
+
+    # ─── RASTER OUTPUT (backwards compat / PNG preview) ──────────────────────
+
+    def generate(
+        self,
+        image: np.ndarray,
+        lpi: int = 55,
+        angle: float = 45.0,
+        dot_shape: Literal["round", "square", "ellipse"] = "round",
+        dpi: Optional[int] = None,
+    ) -> np.ndarray:
+        """Generate halftone as binary numpy array. Angle is now properly applied."""
+        print(f"      📊 Halftone raster (LPI:{lpi}, angle:{angle}°, {dot_shape})")
+        gray = self._to_gray(image)
+        shape_map = {"round": "circle", "square": "square", "ellipse": "circle"}
+        dots = self.generate_vector_dots(gray, lpi=lpi, angle=angle,
+                                         dot_shape=shape_map.get(dot_shape, "circle"))
+        return self._rasterize(dots, gray.shape)
+
     def floyd_steinberg_dithering(self, gray: np.ndarray) -> np.ndarray:
-        """
-        Apply Floyd-Steinberg error diffusion dithering
-        
-        Args:
-            gray: Grayscale image
-            
-        Returns:
-            Binary dithered image
-        """
-        print(f"      📊 Applying Floyd-Steinberg dithering...")
-        
-        # Work on a copy as float
-        img = gray.astype(float)
+        """Apply Floyd-Steinberg error diffusion dithering."""
+        img = gray.astype(np.float32)
         h, w = img.shape
-        
         for y in range(h):
             for x in range(w):
-                old_pixel = img[y, x]
-                new_pixel = 255 if old_pixel > 127 else 0
-                img[y, x] = new_pixel
-                
-                error = old_pixel - new_pixel
-                
-                # Distribute error to neighbors
+                old = img[y, x]
+                new = 255.0 if old > 127.0 else 0.0
+                img[y, x] = new
+                err = old - new
                 if x + 1 < w:
-                    img[y, x + 1] += error * 7/16
+                    img[y, x + 1] += err * 7 / 16
                 if y + 1 < h:
                     if x > 0:
-                        img[y + 1, x - 1] += error * 3/16
-                    img[y + 1, x] += error * 5/16
+                        img[y + 1, x - 1] += err * 3 / 16
+                    img[y + 1, x] += err * 5 / 16
                     if x + 1 < w:
-                        img[y + 1, x + 1] += error * 1/16
-        
-        print(f"         ✅ Dithering complete")
+                        img[y + 1, x + 1] += err * 1 / 16
         return img.astype(np.uint8)
+
+    # ─── HELPERS ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _to_gray(image: np.ndarray) -> np.ndarray:
+        if len(image.shape) == 3:
+            return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return image.copy()
+
+    @staticmethod
+    def _rasterize(dots: List[HalftoneDot], shape: tuple) -> np.ndarray:
+        """Render dot list onto binary image — no anti-aliasing."""
+        h, w = shape
+        out = np.zeros((h, w), dtype=np.uint8)
+        for dot in dots:
+            cx = int(round(dot.cx))
+            cy = int(round(dot.cy))
+            r = max(1, int(round(dot.radius)))
+            if dot.shape == "square":
+                x1, y1 = max(0, cx - r), max(0, cy - r)
+                x2, y2 = min(w - 1, cx + r), min(h - 1, cy + r)
+                out[y1:y2 + 1, x1:x2 + 1] = 255
+            else:
+                cv2.circle(out, (cx, cy), r, 255, -1, lineType=cv2.LINE_8)
+        return out

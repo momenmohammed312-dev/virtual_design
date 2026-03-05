@@ -6,6 +6,7 @@ import '../../presentation/dashboard/dashboard.dart';
 import '../../presentation/upload/upload_page.dart';
 import '../../presentation/setup/setup_page.dart';
 import '../../presentation/preview/preview_page.dart';
+import '../../presentation/print_type/select_print_type_screen.dart';
 import '../../presentation/settings/settings_page.dart';
 import '../../presentation/users/users_page.dart';
 import '../../presentation/files/files_page.dart';
@@ -46,6 +47,11 @@ class AppPages {
       name: AppRoutes.preview,
       page: () => const PreviewPage(),
       binding: PreviewBinding(),
+      transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: AppRoutes.selectPrintType,
+      page: () => const SelectPrintTypeScreen(),
       transition: Transition.rightToLeft,
     ),
     GetPage(

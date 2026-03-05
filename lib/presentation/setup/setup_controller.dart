@@ -1,6 +1,7 @@
 // lib/presentation/setup/setup_controller.dart
 
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
@@ -19,8 +20,11 @@ class SetupController extends GetxController {
   final RxDouble strokeWidth = 0.5.obs; // mm
   final Rx<ps.DetailLevel> selectedDetail = ps.DetailLevel.medium.obs;
   final Rx<ps.PrintFinish> selectedFinish = ps.PrintFinish.solid.obs;
-  final RxBool removeBackground = true.obs;
-  final RxBool autoUpscale = true.obs;
+  final RxBool removeBackground = false.obs;
+  final RxBool autoUpscale = false.obs;
+  
+  // Output directory selection
+  final RxString outputDir = ''.obs;
 
   final RxBool isProcessing = false.obs;
   final RxDouble progress = 0.0.obs;
@@ -98,10 +102,13 @@ class SetupController extends GetxController {
       await _repository.saveSettings(settings);
 
       Get.log('🔄 Starting image processing...');
-      // Process
+      // Process with output directory if selected
+      final outputDir = this.outputDir.value.isNotEmpty ? this.outputDir.value : null;
+      
       final result = await _repository.processImage(
         imagePath: imagePath.value,
         settings: settings,
+        outputDir: outputDir,
         onProgress: (p, msg) {
           progress.value = p;
           progressMessage.value = msg;
@@ -147,5 +154,23 @@ class SetupController extends GetxController {
       isProcessing.value = false;
       Get.log('=== startProcessing() finished ===');
     }
+  }
+
+  Future<void> selectOutputDirectory() async {
+    final String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'اختر مجلد حفظ الأفلام',
+    );
+    
+    if (selectedDirectory != null) {
+      outputDir.value = selectedDirectory;
+    }
+  }
+
+  String getOutputDirectory() {
+    if (outputDir.value.isNotEmpty) {
+      return outputDir.value;
+    }
+    // Default: empty string means Python will use its own default
+    return '';
   }
 }

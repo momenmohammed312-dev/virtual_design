@@ -11,8 +11,19 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # ── Localization ──────────────────────────────────────
+  flutter_localizations:
+    sdk: flutter
+
   # ── State Management ──────────────────────────────────
   get: ^4.6.6                        # Moved from dev_dependencies
+
+  # ── Local Storage ─────────────────────────────────────
+  shared_preferences: ^2.2.2        # Key-value storage for settings
+  flutter_secure_storage: ^9.0.0    # Secure storage for sensitive data
+
+  # ── Image Processing ─────────────────────────────────
+  image: ^4.1.4                     # Image decoding/encoding library
 
   # ── File Handling ─────────────────────────────────────
   file_picker: ^8.0.0                # Pick image files
@@ -42,6 +53,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
   # assets:
   #   - assets/images/
   #   - assets/icons/

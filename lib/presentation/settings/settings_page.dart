@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../app/providers/settings_provider.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -12,16 +13,19 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   static const Color primaryBlue = Color(0xFF1564A5);
+  final SettingsProvider settingsProvider = Get.put(SettingsProvider());
 
-  // Settings state (in-memory only for now)
-  bool darkMode = false;
+  // Settings state from provider
+  bool get darkMode => settingsProvider.darkMode.value;
+  bool get highQualityPreview => settingsProvider.highQualityPreview.value;
+  String get language => settingsProvider.language.value;
+  String get developerName => settingsProvider.developerName.value;
+
+  // Local UI state (not persisted)
   bool notifications = true;
   bool autoSave = true;
-  bool highQualityPreview = false;
-
   String outputFormat = 'PNG';
   String dpi = '300';
-  String language = 'English';
 
   @override
   Widget build(BuildContext context) {
@@ -265,13 +269,13 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
           const SizedBox(height: 25),
-          _buildSwitchOption('Dark Mode', darkMode, (val) => setState(() => darkMode = val)),
+          _buildSwitchOption('Dark Mode', darkMode, (val) => settingsProvider.setDarkMode(val)),
           const Divider(),
           _buildSwitchOption('Notifications', notifications, (val) => setState(() => notifications = val)),
           const Divider(),
           _buildSwitchOption('Auto Save', autoSave, (val) => setState(() => autoSave = val)),
           const Divider(),
-          _buildSwitchOption('High Quality Preview', highQualityPreview, (val) => setState(() => highQualityPreview = val)),
+          _buildSwitchOption('High Quality Preview', highQualityPreview, (val) => settingsProvider.setHighQualityPreview(val)),
         ],
       ),
     );
@@ -310,7 +314,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const Divider(),
           _buildDropdownOption('DPI', dpi, ['150', '300', '450', '600'], (val) => setState(() => dpi = val)),
           const Divider(),
-          _buildDropdownOption('Language', language, ['English', 'Spanish', 'French', 'German'], (val) => setState(() => language = val)),
+          _buildDropdownOption('Language', language, ['English', 'Spanish', 'French', 'German'], (val) => settingsProvider.setLanguage(val)),
         ],
       ),
     );
@@ -421,7 +425,10 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 20),
           const Text('Developer', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          const Text('Silk Screen Studio', style: TextStyle(fontSize: 13, color: Colors.grey)),
+          Obx(() => Text(
+                developerName,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              )),
           const SizedBox(height: 20),
           const Text('License', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
@@ -524,16 +531,15 @@ class _SettingsPageState extends State<SettingsPage> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Get.back();
+              await settingsProvider.resetToDefaults();
+              // Update local UI state
               setState(() {
-                darkMode = false;
                 notifications = true;
                 autoSave = true;
-                highQualityPreview = false;
                 outputFormat = 'PNG';
                 dpi = '300';
-                language = 'English';
               });
               Get.snackbar(
                 'Settings Reset',

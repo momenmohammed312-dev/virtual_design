@@ -4,19 +4,29 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:open_file/open_file.dart';
+import '../../core/enums/app_enums.dart';
 
 class PreviewController extends GetxController {
   final RxString outputDirectory = ''.obs;
   final RxList<String> filmPaths = <String>[].obs;
   final RxBool isLoading = true.obs;
   final RxInt selectedFilmIndex = 0.obs;
+  final Rx<PrintType> selectedPrintType = PrintType.screenPrinting.obs;
 
   @override
   void onInit() {
     super.onInit();
     final args = Get.arguments;
-    if (args != null && args is String) {
-      outputDirectory.value = args;
+    if (args != null) {
+      if (args is String) {
+        outputDirectory.value = args;
+      } else if (args is Map) {
+        outputDirectory.value = args['outputDirectory'] as String? ?? '';
+        final printType = args['printType'];
+        if (printType is PrintType) {
+          selectedPrintType.value = printType;
+        }
+      }
       _loadFilms();
     } else {
       // No crash — just show empty state
@@ -55,6 +65,10 @@ class PreviewController extends GetxController {
     if (index >= 0 && index < filmPaths.length) {
       selectedFilmIndex.value = index;
     }
+  }
+
+  void setPrintType(PrintType type) {
+    selectedPrintType.value = type;
   }
 
   Future<void> exportAll() async {

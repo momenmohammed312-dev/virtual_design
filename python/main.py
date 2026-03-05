@@ -8,6 +8,7 @@ FIXES applied:
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -16,13 +17,21 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
+
+# ─── Optional imports with graceful fallback ─────────────────────────────────
+try:
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    print("[WARNING] reportlab not installed. PDF export will use PNG fallback.", flush=True)
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.color_separator import ColorSeparator
+from core.image_loader import load_image_safely
 from core.mask_generator import MaskGenerator
 from core.edge_cleaner import EdgeCleaner
 
@@ -46,10 +55,15 @@ except ImportError:
     HAS_STROKE_VALIDATOR = False
 
 try:
-    from core.registration_marks import RegistrationMarks
+    from core.registration_marks import (
+        RegistrationMarksGenerator,
+        RegistrationConfig,
+        MarkStyle,
+    )
     HAS_REG_MARKS = True
-except ImportError:
+except ImportError as e:
     HAS_REG_MARKS = False
+    print(f"[WARNING] Registration marks not available: {e}", flush=True)
 
 try:
     from core.exporter import Exporter
@@ -110,71 +124,42 @@ def step1_load_image(input_path: str) -> np.ndarray:
     
     logger.info(f"Attempting to load: {input_path}")
     
-    # Try OpenCV first
-    image = cv2.imread(input_path)
-    if image is not None:
-        logger.info(f"Loaded with OpenCV: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
-        # Convert CMYK to RGB if needed (OpenCV reads CMYK as 4 channels: B,G,R,Key)
-        if len(image.shape) > 2 and image.shape[2] == 4:
-            logger.info("Converting CMYK (4 channels) to RGB (3 channels)")
-            # OpenCV reads CMYK as BGRA, but it's actually CMYK in wrong order
-            # Better to use PIL for proper CMYK conversion
-            try:
-                from PIL import Image
-                pil_img = Image.open(input_path)
-                if pil_img.mode == 'CMYK':
-                    logger.info("Using PIL to convert CMYK to RGB")
-                    pil_img = pil_img.convert('RGB')
-                    image = np.array(pil_img)
-                    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                else:
-                    # Fallback: simple channel slicing
-                    image = image[:, :, :3]
-            except Exception as e:
-                logger.warning(f"PIL CMYK conversion failed: {e}, using simple channel slicing")
-                image = image[:, :, :3]
-        return image
-    
-    # If OpenCV fails, try PIL (supports more formats)
+    # Use robust image loader (no extension reliance)
     try:
-        from PIL import Image
-        pil_img = Image.open(input_path)
-        logger.info(f"PIL info: format={pil_img.format}, mode={pil_img.mode}, size={pil_img.size}")
-        
-        # Convert to RGB if needed (handle CMYK, RGBA, grayscale, etc.)
-        if pil_img.mode == 'CMYK':
-            logger.info("Converting CMYK to RGB")
-            pil_img = pil_img.convert('RGB')
-        elif pil_img.mode != 'RGB':
-            logger.info(f"Converting from {pil_img.mode} to RGB")
-            pil_img = pil_img.convert('RGB')
-        
-        image = np.array(pil_img)
-        # PIL gives RGB, OpenCV expects BGR
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        logger.info(f"Loaded with PIL: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        image = load_image_safely(input_path)
+        logger.info(f"Loaded image via robust loader: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
+        if image.shape[2] == 4:
+            image = image[:, :, :3]
         return image
     except Exception as e:
-        logger.error(f"PIL failed: {e}")
+        logger.error(f"Robust image loader failed: {e}")
         raise ValueError(f"Cannot read image {input_path}: {e}")
 
 
-def step2_separate_colors(image: np.ndarray, num_colors: int) -> dict:
-    _step(2, f"Separating {num_colors} colors")
+def step2_separate_colors(image: np.ndarray, num_colors: int, auto_detect: bool = False) -> dict:
+    _step(2, f"Color separation {'(auto-detect)' if auto_detect else f'{num_colors} colors'}")
     separator = ColorSeparator()
-    # If separator supports internal progress, it could emit callbacks.
-    # Fallback: emit coarse progress markers before/after operation.
-    _progress((2 - 1) / TOTAL_STEPS + 0.15, 'K-means starting')
-    result = separator.separate(image, num_colors=num_colors)
-    _progress((2 - 1) / TOTAL_STEPS + 0.9, 'K-means complete')
-    logger.info(f"Colors: {[result['colors'][i] for i in range(num_colors)]}")
+    _progress((2 - 1) / TOTAL_STEPS + 0.1, 'K-means starting')
+    
+    result = separator.separate(
+        image,
+        num_colors=max(num_colors, 2) if not auto_detect else 4,
+        auto_detect=auto_detect,
+    )
+    _progress((2 - 1) / TOTAL_STEPS + 0.9, f'K-means complete: {result["num_colors"]} colors')
     return result
 
 
-def step3_generate_masks(image: np.ndarray, separation_result: dict) -> list:
+def step3_generate_masks(image: np.ndarray, separation_result: dict, halftone_mode: bool = False) -> list:
     _step(3, "Generating color masks")
     generator = MaskGenerator()
-    masks = generator.generate_masks(image, separation_result)
+    # For halftone mode, generate grayscale intensity masks instead of binary
+    masks = generator.generate_masks(
+        image, 
+        separation_result,
+        grayscale_output=halftone_mode,
+        apply_cleanup=not halftone_mode  # Skip cleanup for grayscale to preserve intensities
+    )
     stats = generator.get_mask_stats(masks)
     total = max(1, len(masks))
     for i, s in enumerate(stats):
@@ -249,13 +234,42 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
 def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
     _step(8, "Adding registration marks")
     if not HAS_REG_MARKS:
+        logger.warning("Skipping registration marks (module not found)")
         return masks
-    reg = RegistrationMarks()
-    result = []
-    for mask in masks:
-        marked = reg.add_marks(mask, dpi=args.dpi)
-        result.append(marked)
-    return result
+    
+    config = RegistrationConfig(
+        add_border=True,
+        border_size=120,
+        mark_type='full',
+        dpi=args.dpi,
+        style=MarkStyle(
+            mark_size=60,
+            line_thickness=2,
+            show_circle=True,
+            show_cross=True,
+            show_corner_marks=True,
+            show_crop_marks=True,
+            show_color_label=True,
+            show_color_bar=(len(masks) > 1),
+        )
+    )
+    
+    generator = RegistrationMarksGenerator(dpi=args.dpi)
+    result_masks = []
+    
+    for idx, mask in enumerate(masks):
+        marked = generator.add_marks(
+            image=mask,
+            color_name=f"Film_{idx+1}",
+            color_index=idx + 1,
+            total_colors=len(masks),
+            color_rgb=(0, 0, 0),
+            config=config,
+        )
+        result_masks.append(marked)
+        _progress(((8-1) + (idx+1)/len(masks)) / TOTAL_STEPS, f"Marks {idx+1}/{len(masks)}")
+    
+    return result_masks
 
 
 def step9_export(
@@ -275,62 +289,22 @@ def step9_export(
             masks=masks,
             colors=separation_result["colors"],
             color_names=separation_result["color_names"],
+            combine_pdf=getattr(args, 'combine_pdf', True),
         )
         exported_paths = [str(p) for p in paths]
     else:
-        # Fallback: when exporter not available.
-        # If halftone is disabled, export vector SVG paths for each mask.
+        # Fallback: when exporter not available, use simple PNG export
+        print("⚠️  Exporter not available — using simple PNG export")
         generator = MaskGenerator()
         total = max(1, len(masks))
 
-        def _export_mask_png(i, mask):
+        for i, mask in enumerate(masks):
             film = generator.generate_film_image(mask)
             name = separation_result["color_names"][i]
             path = os.path.join(output_dir, f"{name}.png")
             cv2.imwrite(path, film)
             exported_paths.append(path)
             logger.info(f"  Saved: {path}")
-
-        def _export_mask_pdf(i, mask):
-            # Export mask contours as a vector PDF (filled shape).
-            name = separation_result["color_names"][i]
-            pdf_path = os.path.join(output_dir, f"{name}.pdf")
-            h, w = mask.shape[:2]
-            # Ensure binary image
-            _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-            contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            try:
-                c = canvas.Canvas(pdf_path, pagesize=(w, h))
-                c.setFillColorRGB(0, 0, 0)
-                for cnt in contours:
-                    if cnt is None or len(cnt) == 0:
-                        continue
-                    pts = cnt.reshape(-1, 2)
-                    epsilon = 0.001 * cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, epsilon, True).reshape(-1, 2)
-                    if len(approx) < 3:
-                        continue
-                    path = c.beginPath()
-                    x0, y0 = approx[0]
-                    path.moveTo(x0, h - y0)  # flip Y for PDF coordinate system
-                    for (x, y) in approx[1:]:
-                        path.lineTo(x, h - y)
-                    path.close()
-                    c.drawPath(path, fill=1, stroke=0)
-                c.showPage()
-                c.save()
-                exported_paths.append(pdf_path)
-                logger.info(f"  Saved PDF: {pdf_path}")
-            except Exception as e:
-                logger.error(f"Failed to write PDF {pdf_path}: {e}")
-                _export_mask_png(i, mask)
-
-        for i, mask in enumerate(masks):
-            if not args.halftone:
-                _export_mask_pdf(i, mask)
-            else:
-                _export_mask_png(i, mask)
-
             _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
 
         # حفظ preview مجمّع (raster preview remains useful)
@@ -341,19 +315,27 @@ def step9_export(
         cv2.imwrite(preview_path, preview)
         logger.info(f"  Saved preview: {preview_path}")
 
-    # حفظ color info JSON
-    _save_color_info(separation_result, output_dir)
+    # حفظ color info JSON with metadata
+    img = separation_result.get('image')
+    width = img.shape[1] if img is not None else 0
+    height = img.shape[0] if img is not None else 0
+    
+    _save_color_info(separation_result, output_dir, {
+        'dpi': args.dpi,
+        'width': width,
+        'height': height,
+        'print_method': 'Screen Printing',
+        'halftone': args.halftone,
+        'lpi': args.lpi if args.halftone else 0,
+    })
 
     # Emit final progress 100% before returning
     _progress(1.0, 'Finished')
 
-    # NOTE: OUTPUT_DIR signal is sent in main() after pipeline completes
-    # Do NOT send it here to avoid "Future already completed" error
-
     return exported_paths
 
 
-def _save_color_info(separation_result: dict, output_dir: str) -> None:
+def _save_color_info(separation_result: dict, output_dir: str, metadata: dict = None) -> None:
     """حفظ معلومات الألوان كـ JSON — يقرأها الـ PreviewController."""
     import json
     from core.color_separator import ColorSeparator
@@ -363,15 +345,21 @@ def _save_color_info(separation_result: dict, output_dir: str) -> None:
 
     info_path = os.path.join(output_dir, "color_info.json")
     with open(info_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "num_colors": separation_result["num_colors"],
-                "colors": color_info,
-            },
-            f,
-            indent=2,
-            ensure_ascii=False,
-        )
+        data = {
+            "num_colors": separation_result["num_colors"],
+            "colors": color_info,
+        }
+        if metadata:
+            data["metadata"] = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "dpi": metadata.get('dpi', 300),
+                "width": metadata.get('width', 0),
+                "height": metadata.get('height', 0),
+                "print_method": metadata.get('print_method', 'Screen Printing'),
+                "halftone": metadata.get('halftone', False),
+                "lpi": metadata.get('lpi', 65),
+            }
+        json.dump(data, f, indent=2, ensure_ascii=False)
     logger.info(f"  Saved color info: {info_path}")
 
 
@@ -383,7 +371,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input", required=True, help="Path to input image")
     parser.add_argument("--output", required=True, help="Output directory path")
-    parser.add_argument("--colors", type=int, default=2, help="Number of colors (1-10)")
+    parser.add_argument(
+        '--colors', type=int, default=0,
+        help='Number of colors (0 = auto-detect)'
+    )
+    parser.add_argument(
+        '--auto-colors', action='store_true',
+        help='Auto-detect optimal color count'
+    )
     parser.add_argument("--dpi", type=int, default=300, help="Output DPI")
     parser.add_argument("--halftone", action="store_true", help="Enable halftone mode")
     parser.add_argument("--lpi", type=int, default=65, help="Halftone LPI (lines per inch)")
@@ -392,6 +387,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validate-strokes", action="store_true", help="Validate stroke widths")
     parser.add_argument("--min-stroke", type=float, default=0.3, help="Min stroke width in mm")
     parser.add_argument("--edge-enhance", choices=["none", "light", "strong"], default="light")
+    parser.add_argument(
+        '--combine-pdf', action='store_true', default=True,
+        help='Combine all films into one PDF (default: True)'
+    )
+    parser.add_argument(
+        '--separate-pdfs', dest='combine_pdf', action='store_false',
+        help='Export each film as a separate PDF'
+    )
     return parser.parse_args()
 
 
@@ -414,21 +417,25 @@ def main() -> int:
         image = step1_load_image(args.input)
 
         # Step 2 — Color Separation
-        separation_result = step2_separate_colors(image, args.colors)
+        separation_result = step2_separate_colors(
+            image,
+            args.colors if args.colors > 0 else 4,
+            auto_detect=(args.colors == 0) or args.auto_colors
+        )
 
-        # Step 3 — Mask Generation
-        masks = step3_generate_masks(image, separation_result)
+        # Step 3 — Mask Generation (with grayscale if halftone enabled)
+        masks = step3_generate_masks(image, separation_result, halftone_mode=args.halftone)
 
-        # Step 4 — Edge Cleaning
-        if args.clean:
+        # Step 4 — Edge Cleaning (skip if halftone, cleanup already done in mask gen)
+        if args.clean and not args.halftone:
             masks = step4_clean_edges(masks)
         else:
             _step(4, "Edge cleaning (skipped)")
 
-        # Step 5 — Halftone
+        # Step 5 — Halftone (applied to grayscale masks)
         masks = step5_halftone(masks, args)
 
-        # Step 6 — Binarize
+        # Step 6 — Binarize (after halftone if enabled)
         masks = step6_binarize(masks, args)
 
         # Step 7 — Stroke Validation
