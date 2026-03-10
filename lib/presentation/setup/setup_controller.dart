@@ -16,12 +16,15 @@ class SetupController extends GetxController {
   final RxString imagePath = ''.obs;
 
   // Settings State
-  final RxInt selectedColors = 4.obs;
+  final RxInt selectedColors = 0.obs;
   final RxDouble strokeWidth = 0.5.obs; // mm
   final Rx<ps.DetailLevel> selectedDetail = ps.DetailLevel.medium.obs;
   final Rx<ps.PrintFinish> selectedFinish = ps.PrintFinish.solid.obs;
   final RxBool removeBackground = false.obs;
   final RxBool autoUpscale = false.obs;
+  // Paper size (cm) inputs
+  final RxDouble paperWidthCm = 21.0.obs;
+  final RxDouble paperHeightCm = 29.7.obs;
   
   // Output directory selection
   final RxString outputDir = ''.obs;
@@ -95,6 +98,8 @@ class SetupController extends GetxController {
         meshCount: 160,
         edgeEnhancement: ps.EdgeEnhancement.light,
         halftoneSettings: halftone,
+        paperWidthCm: paperWidthCm.value,
+        paperHeightCm: paperHeightCm.value,
       );
 
       Get.log('✅ Settings built, saving...');

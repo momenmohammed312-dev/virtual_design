@@ -26,8 +26,13 @@ class ImageProcessor {
   static Future<String> normalizeImage(String filePath) async {
     if (!isSupported(filePath)) {
       final ext = filePath.split('.').last.toLowerCase();
-      throw Exception('Unsupported image format: .$ext');
+      if (ext=='png') {
+        return filePath;
+      };
+     if (!isSupported(filePath)){
+       throw Exception('Unsupported image format: .$ext');
     }
+     };
 
     final bytes = await File(filePath).readAsBytes();
     img.Image? decoded;

@@ -1,0 +1,11 @@
+[
+  {"arabic": "أحمر", "english": "Red", "plate": "plate_Red.svg", "color_hex": "#FF0000"},
+  {"arabic": "أزرق", "english": "Blue", "plate": "plate_Blue.svg", "color_hex": "#0000FF"},
+  {"arabic": "أخضر", "english": "Green", "plate": "plate_Green.svg", "color_hex": "#00FF00"},
+  {"arabic": "أصفر", "english": "Yellow", "plate": "plate_Yellow.svg", "color_hex": "#FFFF00"},
+  {"arabic": "بنفسجي", "english": "Purple", "plate": "plate_Purple.svg", "color_hex": "#800080"},
+  {"arabic": "برتقالي", "english": "Orange", "plate": "plate_Orange.svg", "color_hex": "#FFA500"},
+  {"arabic": "سماوي", "english": "Cyan", "plate": "plate_Cyan.svg", "color_hex": "#00FFFF"},
+  {"arabic": "ماجنتا", "english": "Magenta", "plate": "plate_Magenta.svg", "color_hex": "#FF00FF"},
+  {"arabic": "فيروزي", "english": "Teal", "plate": "plate_Teal.svg", "color_hex": "#008080"}
+]

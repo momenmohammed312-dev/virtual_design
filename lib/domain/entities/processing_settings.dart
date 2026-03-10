@@ -55,6 +55,8 @@ class ProcessingSettings {
   final int meshCount;           // عدد خيوط الشبكة (thread/inch)
   final EdgeEnhancement edgeEnhancement;
   final HalftoneSettings? halftoneSettings;
+  final double paperWidthCm;
+  final double paperHeightCm;
 
   const ProcessingSettings({
     this.colorCount = 2,
@@ -65,6 +67,8 @@ class ProcessingSettings {
     this.meshCount = 160,          // 160 mesh شائع للطباعة العادية
     this.edgeEnhancement = EdgeEnhancement.light,
     this.halftoneSettings,
+    this.paperWidthCm = 21.0,
+    this.paperHeightCm = 29.7,
   });
 
   // ─── Mesh Count Calculations (MED #6 FIX) ──────────────────────────────
@@ -143,7 +147,8 @@ class ProcessingSettings {
 
   List<String> validate() {
     final errors = <String>[];
-    if (colorCount < 1 || colorCount > 10) {
+    // Allow 0 to denote automatic color counting
+    if (colorCount != 0 && (colorCount < 1 || colorCount > 10)) {
       errors.add('Color count must be between 1 and 10.');
     }
     if (dpi < 72 || dpi > 1200) {
@@ -171,6 +176,8 @@ class ProcessingSettings {
     int? meshCount,
     EdgeEnhancement? edgeEnhancement,
     HalftoneSettings? halftoneSettings,
+    double? paperWidthCm,
+    double? paperHeightCm,
   }) =>
       ProcessingSettings(
         colorCount: colorCount ?? this.colorCount,
@@ -181,6 +188,8 @@ class ProcessingSettings {
         meshCount: meshCount ?? this.meshCount,
         edgeEnhancement: edgeEnhancement ?? this.edgeEnhancement,
         halftoneSettings: halftoneSettings ?? this.halftoneSettings,
+        paperWidthCm: (paperWidthCm ?? this.paperWidthCm),
+        paperHeightCm: (paperHeightCm ?? this.paperHeightCm),
       );
 
   Map<String, dynamic> toJson() => {
@@ -192,6 +201,8 @@ class ProcessingSettings {
         'meshCount': meshCount,
         'edgeEnhancement': edgeEnhancement.name,
         'halftoneSettings': halftoneSettings?.toJson(),
+        'paperWidthCm': paperWidthCm,
+        'paperHeightCm': paperHeightCm,
       };
 
   factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
@@ -216,5 +227,7 @@ class ProcessingSettings {
             ? HalftoneSettings.fromJson(
                 json['halftoneSettings'] as Map<String, dynamic>)
             : null,
+        paperWidthCm: (json['paperWidthCm'] as num?)?.toDouble() ?? 21.0,
+        paperHeightCm: (json['paperHeightCm'] as num?)?.toDouble() ?? 29.7,
       );
 }

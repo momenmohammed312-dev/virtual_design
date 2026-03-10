@@ -32,27 +32,32 @@ class ProcessingError {
 
   /// اكتشاف نوع الخطأ من رسالة الـ stderr
   factory ProcessingError.fromMessage(String message) {
-    if (message.contains('Python غير مثبّت') ||
-        message.contains('not found') && message.contains('python')) {
+    final lower = message.toLowerCase();
+    if (lower.contains('python not found') ||
+        (lower.contains('not found') && lower.contains('python'))) {
       return ProcessingError(
           type: ProcessingErrorType.pythonNotFound, rawMessage: message);
     }
-    if (message.contains('pip install') ||
-        message.contains('Missing Python package') ||
-        message.contains('ModuleNotFoundError')) {
+    if (lower.contains('pip install') ||
+        lower.contains('missing python package') ||
+        lower.contains('modulenotfounderror')) {
       return ProcessingError(
           type: ProcessingErrorType.missingDependencies, rawMessage: message);
     }
-    if (message.contains('Image file not found')) {
+    if (lower.contains('image file not found') || lower.contains('file not found')) {
       return ProcessingError(
           type: ProcessingErrorType.imageNotFound, rawMessage: message);
     }
-    if (message.contains('MemoryError') || message.contains('too large')) {
+    if (lower.contains('memoryerror') || lower.contains('too large')) {
       return ProcessingError(
           type: ProcessingErrorType.imageTooBig, rawMessage: message);
     }
-    if (message.contains('Invalid image format') ||
-        message.contains('cannot read')) {
+    if (lower.contains('invalid image format') ||
+        lower.contains('cannot read') ||
+        lower.contains('invalid format') ||
+        lower.contains('cannot decode') ||
+        lower.contains('decode error') ||
+        lower.contains('unsupported image format')) {
       return ProcessingError(
           type: ProcessingErrorType.unsupportedFormat, rawMessage: message);
     }

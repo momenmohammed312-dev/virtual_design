@@ -18,7 +18,7 @@ class _SetupPageState extends State<SetupPage> {
   
   // State variables
   PrintType selectedPrintType = PrintType.screenPrinting;
-  int selectedColorCount = 4;
+  int selectedColorCount = 0;
   DetailLevel selectedDetailLevel = DetailLevel.medium;
   PrintFinish selectedPrintFinish = PrintFinish.solid;
   
@@ -26,6 +26,10 @@ class _SetupPageState extends State<SetupPage> {
   bool showHalftoneSettings = false;
   int lpi = 55;
   DotShape selectedDotShape = DotShape.round;
+  // Custom paper size (cm) support in the UI
+  bool isCustomPaper = false;
+  double customPaperWidthCm = 21.0;
+  double customPaperHeightCm = 29.7;
   
   // Specifications
   double strokeWidth = 0.5;
@@ -263,7 +267,11 @@ class _SetupPageState extends State<SetupPage> {
     bool isSelected = selectedColorCount == 0;
     
     return InkWell(
-      onTap: () => setState(() => selectedColorCount = 0),
+      onTap: () {
+        setState(() => selectedColorCount = 0);
+        // Sync with controller so downstream processing picks Auto colors
+        Get.find<SetupController>().selectedColors.value = 0;
+      },
       child: Container(
         width: 130,
         height: 100,
@@ -315,7 +323,11 @@ class _SetupPageState extends State<SetupPage> {
     final colorIndex = [1, 2, 4, 8, 16].indexOf(count);
     
     return InkWell(
-      onTap: () => setState(() => selectedColorCount = count),
+      onTap: () {
+        setState(() => selectedColorCount = count);
+        // Propagate to SetupController for processing
+        Get.find<SetupController>().selectedColors.value = count;
+      },
       child: Container(
         width: 130,
         height: 100,
@@ -931,6 +943,8 @@ class _SetupPageState extends State<SetupPage> {
                           'A4 (210 × 297 mm)',
                           'A3 (297 × 420 mm)',
                           'Letter (216 × 279 mm)',
+                          // Custom cm-based size
+                          'Custom (cm)',
                         ].map((String value) {
                           return DropdownMenuItem<String>(
                             value: value,
@@ -939,11 +953,50 @@ class _SetupPageState extends State<SetupPage> {
                         }).toList(),
                         onChanged: (String? newValue) {
                           if (newValue != null) {
-                            setState(() => selectedPaperSize = newValue);
+                            setState(() {
+                              selectedPaperSize = newValue;
+                              // If Custom (cm) selected, show inputs
+                              isCustomPaper = newValue == 'Custom (cm)';
+                            });
+                            // Sync with controller if needed
+                            if (newValue == 'Custom (cm)') {
+                              // ensure the controller knows current custom values
+                              Get.find<SetupController>().paperWidthCm.value = customPaperWidthCm;
+                              Get.find<SetupController>().paperHeightCm.value = customPaperHeightCm;
+                            }
                           }
                         },
                       ),
                     ),
+                    if (isCustomPaper) ...[  const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: const InputDecoration(labelText: 'Width (cm)', border: OutlineInputBorder()),
+                              onChanged: (text) {
+                                final v = double.tryParse(text) ?? customPaperWidthCm;
+                                setState(() => customPaperWidthCm = v);
+                                Get.find<SetupController>().paperWidthCm.value = v;
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: const InputDecoration(labelText: 'Height (cm)', border: OutlineInputBorder()),
+                              onChanged: (text) {
+                                final v = double.tryParse(text) ?? customPaperHeightCm;
+                                setState(() => customPaperHeightCm = v);
+                                Get.find<SetupController>().paperHeightCm.value = v;
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

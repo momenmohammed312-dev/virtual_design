@@ -660,7 +660,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Text(
                   project.name,
                   style: const TextStyle(
-                    fontFamily: 'Inter',
                     fontWeight: FontWeight.w600,
                     fontSize: 14,
                   ),
@@ -674,7 +673,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Text(
                         project.createdAt.toString().split(' ')[0],
                         style: const TextStyle(
-                          fontFamily: 'Inter',
                           color: Colors.white54,
                           fontSize: 11,
                         ),
@@ -693,7 +691,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ? 'Processing'
                                 : 'Failed',
                         style: TextStyle(
-                          fontFamily: 'Inter',
                           fontSize: 10,
                           color: statusColor,
                           fontWeight: FontWeight.w500,
