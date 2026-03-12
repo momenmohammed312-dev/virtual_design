@@ -13,6 +13,11 @@ class PreviewController extends GetxController {
   final RxInt selectedFilmIndex = 0.obs;
   final Rx<PrintType> selectedPrintType = PrintType.screenPrinting.obs;
 
+  // Zoom functionality
+  final TransformationController transformationController =
+      TransformationController();
+  final RxDouble zoomLevel = 1.0.obs;
+
   @override
   void onInit() {
     super.onInit();
@@ -37,25 +42,37 @@ class PreviewController extends GetxController {
   Future<void> _loadFilms() async {
     try {
       isLoading.value = true;
+      Get.log('🗂️ Loading films from directory: ${outputDirectory.value}');
+
       final dir = Directory(outputDirectory.value);
-      if (await dir.exists()) {
-        final files = dir
-            .listSync()
-            .whereType<File>()
-            .where((f) =>
-                f.path.toLowerCase().endsWith('.png') ||
-                f.path.toLowerCase().endsWith('.pdf'))
-            .map((f) => f.path)
-            .toList()
-          ..sort();
+      final exists = await dir.exists();
+      Get.log('📁 Directory exists: $exists');
+
+      if (exists) {
+        final files =
+            dir
+                .listSync()
+                .whereType<File>()
+                .where(
+                  (f) =>
+                      f.path.toLowerCase().endsWith('.png') ||
+                      f.path.toLowerCase().endsWith('.pdf'),
+                )
+                .map((f) => f.path)
+                .toList()
+              ..sort();
+
+        Get.log('📄 Found ${files.length} film files: $files');
 
         filmPaths.value = files;
         if (filmPaths.isNotEmpty) {
           selectedFilmIndex.value = 0;
         }
+      } else {
+        Get.log('❌ Directory does not exist: ${outputDirectory.value}');
       }
     } catch (e) {
-      Get.log('Error loading films: $e');
+      Get.log('❌ Error loading films: $e');
     } finally {
       isLoading.value = false;
     }
@@ -71,9 +88,33 @@ class PreviewController extends GetxController {
     selectedPrintType.value = type;
   }
 
+  // Zoom methods
+  void zoomIn() {
+    zoomLevel.value = (zoomLevel.value * 1.2).clamp(0.5, 5.0);
+    _applyZoom(zoomLevel.value);
+  }
+
+  void zoomOut() {
+    zoomLevel.value = (zoomLevel.value / 1.2).clamp(0.5, 5.0);
+    _applyZoom(zoomLevel.value);
+  }
+
+  void fitToScreen() {
+    zoomLevel.value = 1.0;
+    transformationController.value = Matrix4.identity();
+  }
+
+  void _applyZoom(double scale) {
+    transformationController.value = Matrix4.identity()..scale(scale);
+  }
+
   Future<void> exportAll() async {
     if (filmPaths.isEmpty) {
-      Get.snackbar('No Films', 'No films to export.', snackPosition: SnackPosition.BOTTOM);
+      Get.snackbar(
+        'No Films',
+        'No films to export.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
       return;
     }
 

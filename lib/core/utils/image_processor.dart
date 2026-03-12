@@ -9,7 +9,13 @@ import 'package:image/image.dart' as img;
 class ImageProcessor {
   /// Supported file extensions
   static const List<String> supported = [
-    'png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp'
+    'png',
+    'jpg',
+    'jpeg',
+    'tiff',
+    'tif',
+    'bmp',
+    'webp',
   ];
 
   /// Check if a file path has a supported extension
@@ -21,18 +27,18 @@ class ImageProcessor {
   /// Normalize any supported image format to PNG.
   /// This decodes the image using the appropriate decoder and re-encodes as PNG.
   /// Returns the path to the temporary normalized PNG file.
-  /// 
+  ///
   /// Throws [Exception] if the image cannot be decoded.
   static Future<String> normalizeImage(String filePath) async {
     if (!isSupported(filePath)) {
       final ext = filePath.split('.').last.toLowerCase();
-      if (ext=='png') {
+      if (ext == 'png') {
         return filePath;
-      };
-     if (!isSupported(filePath)){
-       throw Exception('Unsupported image format: .$ext');
+      }
+      if (!isSupported(filePath)) {
+        throw Exception('Unsupported image format: .$ext');
+      }
     }
-     };
 
     final bytes = await File(filePath).readAsBytes();
     img.Image? decoded;
@@ -43,7 +49,7 @@ class ImageProcessor {
     // If generic decoder fails, try format-specific decoders
     if (decoded == null) {
       final ext = filePath.split('.').last.toLowerCase();
-      
+
       if (ext == 'tiff' || ext == 'tif') {
         decoded = img.decodeTiff(bytes);
       } else if (ext == 'bmp') {
@@ -63,14 +69,40 @@ class ImageProcessor {
       throw Exception('Could not decode image: $filePath');
     }
 
+    print(
+      'Original image channels: ${decoded.numChannels}, width: ${decoded.width}, height: ${decoded.height}',
+    );
+
+    // Convert to RGB to remove alpha channel for better compatibility
+    img.Image rgbImage = decoded;
+    if (decoded.numChannels > 3) {
+      print('Converting to RGB...');
+      rgbImage = img.Image(width: decoded.width, height: decoded.height);
+      for (int y = 0; y < decoded.height; y++) {
+        for (int x = 0; x < decoded.width; x++) {
+          final pixel = decoded.getPixel(x, y);
+          final a = pixel.a;
+          final r = a == 0 ? 0 : (pixel.r * 255) ~/ a;
+          final g = a == 0 ? 0 : (pixel.g * 255) ~/ a;
+          final b = a == 0 ? 0 : (pixel.b * 255) ~/ a;
+          rgbImage.setPixel(x, y, img.ColorRgb8(r, g, b));
+        }
+      }
+      print('Converted to RGB, channels: ${rgbImage.numChannels}');
+    }
+
     // Create temporary PNG file
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final tmpPath = '${Directory.systemTemp.path}/vd_normalized_$timestamp.png';
     final tmpFile = File(tmpPath);
-    
+
     // Encode as PNG (lossless, widely supported)
-    final pngBytes = img.encodePng(decoded);
+    final pngBytes = img.encodePng(rgbImage);
     await tmpFile.writeAsBytes(pngBytes);
+
+    print(
+      'Normalized image saved to: $tmpPath, size: ${pngBytes.length} bytes',
+    );
 
     return tmpPath;
   }

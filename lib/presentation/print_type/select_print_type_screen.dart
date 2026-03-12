@@ -36,7 +36,10 @@ class SelectPrintTypeScreen extends StatelessWidget {
                         const SizedBox(height: 10),
                         const Text(
                           'Choose the printing method that best suits your project.',
-                          style: TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Color(0xFF6B7280),
+                          ),
                         ),
                         const SizedBox(height: 30),
                         _buildPrintTypeGrid(controller),
@@ -61,8 +64,16 @@ class SelectPrintTypeScreen extends StatelessWidget {
           _buildLogo(),
           const Divider(),
           const SizedBox(height: 10),
-          _sideButton(Icons.dashboard, 'Dashboard', () => Get.toNamed('/dashboard')),
-          _sideButton(Icons.folder_open, 'My Folders', () => Get.toNamed('/files')),
+          _sideButton(
+            Icons.dashboard,
+            'Dashboard',
+            () => Get.toNamed('/dashboard'),
+          ),
+          _sideButton(
+            Icons.folder_open,
+            'My Folders',
+            () => Get.toNamed('/files'),
+          ),
           const Spacer(),
           const Divider(),
           _systemSection(),
@@ -113,7 +124,11 @@ class SelectPrintTypeScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        _sideButton(Icons.person_2_rounded, 'Users', () => Get.toNamed('/users')),
+        _sideButton(
+          Icons.person_2_rounded,
+          'Users',
+          () => Get.toNamed('/users'),
+        ),
         _sideButton(Icons.settings, 'Settings', () => Get.toNamed('/settings')),
       ],
     );
@@ -146,7 +161,10 @@ class SelectPrintTypeScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: ElevatedButton.icon(
         onPressed: onTap,
-        icon: Icon(icon, color: isActive ? Colors.white : const Color(0xFF1564A5)),
+        icon: Icon(
+          icon,
+          color: isActive ? Colors.white : const Color(0xFF1564A5),
+        ),
         label: Text(
           text,
           style: TextStyle(
@@ -218,7 +236,7 @@ class SelectPrintTypeScreen extends StatelessWidget {
 
   Widget _buildPrintTypeGrid(PreviewController controller) {
     final printTypes = PrintType.values;
-    
+
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -232,7 +250,7 @@ class SelectPrintTypeScreen extends StatelessWidget {
       itemBuilder: (context, index) {
         final type = printTypes[index];
         final isSelected = controller.selectedPrintType.value == type;
-        
+
         return GestureDetector(
           onTap: () {
             controller.setPrintType(type);
@@ -243,7 +261,9 @@ class SelectPrintTypeScreen extends StatelessWidget {
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: isSelected ? const Color(0xFF6C63FF) : const Color(0xFFE5E7EB),
+                color: isSelected
+                    ? const Color(0xFF6C63FF)
+                    : const Color(0xFFE5E7EB),
                 width: isSelected ? 2 : 1,
               ),
             ),
@@ -254,7 +274,7 @@ class SelectPrintTypeScreen extends StatelessWidget {
                   width: 60,
                   height: 60,
                   decoration: BoxDecoration(
-                    color: isSelected 
+                    color: isSelected
                         ? const Color(0xFF6C63FF).withAlpha((0.1 * 255).round())
                         : const Color(0xFFF3F4F6),
                     borderRadius: BorderRadius.circular(30),
@@ -262,7 +282,9 @@ class SelectPrintTypeScreen extends StatelessWidget {
                   child: Icon(
                     _getPrintTypeIcon(type),
                     size: 30,
-                    color: isSelected ? const Color(0xFF6C63FF) : const Color(0xFF6B7280),
+                    color: isSelected
+                        ? const Color(0xFF6C63FF)
+                        : const Color(0xFF6B7280),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -270,8 +292,12 @@ class SelectPrintTypeScreen extends StatelessWidget {
                   _getPrintTypeName(type),
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                    color: isSelected ? const Color(0xFF6C63FF) : Colors.black87,
+                    fontWeight: isSelected
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    color: isSelected
+                        ? const Color(0xFF6C63FF)
+                        : Colors.black87,
                   ),
                   textAlign: TextAlign.center,
                 ),

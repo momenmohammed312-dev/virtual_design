@@ -59,7 +59,7 @@ class HalftoneGenerator:
                 iy = int(max(0, min(h - 1, round(py))))
                 intensity = gray[iy, ix] / 255.0
                 radius = (1.0 - intensity) * (dot_spacing / 2.0) * 0.95
-                if radius < 0.5:
+                if radius < 0.2:
                     continue
 
                 dots.append(HalftoneDot(cx=px, cy=py, radius=radius, shape=dot_shape))

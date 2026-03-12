@@ -7,7 +7,6 @@ import 'package:file_picker/file_picker.dart';
 import '../../core/permissions/permission_service.dart';
 import '../../core/utils/image_processor.dart';
 
-
 class UploadController extends GetxController {
   final PermissionService permissionService = Get.find<PermissionService>();
   final RxBool isDragging = false.obs;
@@ -57,7 +56,7 @@ class UploadController extends GetxController {
     if (result != null && result.files.single.path != null) {
       final file = result.files.single;
       final ext = file.extension?.toLowerCase() ?? '';
-      
+
       final supported = ['png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp'];
       if (!supported.contains(ext)) {
         Get.snackbar(
@@ -69,7 +68,7 @@ class UploadController extends GetxController {
         );
         return;
       }
-      
+
       _proceedToSetup(file.path!);
     }
   }
@@ -88,18 +87,18 @@ class UploadController extends GetxController {
         barrierDismissible: false,
       );
 
-      // Normalize the image to PNG format
+      // Normalize the image to JPG format
       final normalizedPath = await ImageProcessor.normalizeImage(rawImagePath);
-      
+
       // Close loading indicator
       if (Get.isDialogOpen!) Get.back();
-      
+
       // Navigate to setup with normalized image
       Get.toNamed('/setup', arguments: normalizedPath);
     } catch (e) {
       // Close loading indicator if open
       if (Get.isDialogOpen!) Get.back();
-      
+
       Get.snackbar(
         'Image Processing Error',
         'Failed to process image: $e',

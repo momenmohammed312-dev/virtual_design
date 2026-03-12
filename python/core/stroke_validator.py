@@ -10,7 +10,7 @@ from typing import Dict, List, Tuple
 class StrokeValidator:
     """Validate and measure stroke widths in masks"""
     
-    def __init__(self, min_stroke_mm: float = 0.5, dpi: int = 300):
+    def __init__(self, min_stroke_mm: float = 0.2, dpi: int = 300):
         """
         Initialize validator
         

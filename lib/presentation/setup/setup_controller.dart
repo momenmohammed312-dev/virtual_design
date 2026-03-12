@@ -25,7 +25,7 @@ class SetupController extends GetxController {
   // Paper size (cm) inputs
   final RxDouble paperWidthCm = 21.0.obs;
   final RxDouble paperHeightCm = 29.7.obs;
-  
+
   // Output directory selection
   final RxString outputDir = ''.obs;
 
@@ -108,8 +108,10 @@ class SetupController extends GetxController {
 
       Get.log('🔄 Starting image processing...');
       // Process with output directory if selected
-      final outputDir = this.outputDir.value.isNotEmpty ? this.outputDir.value : null;
-      
+      final outputDir = this.outputDir.value.isNotEmpty
+          ? this.outputDir.value
+          : null;
+
       final result = await _repository.processImage(
         imagePath: imagePath.value,
         settings: settings,
@@ -123,7 +125,11 @@ class SetupController extends GetxController {
 
       Get.log('Processing result: ${result.success}');
       if (result.success) {
-        Get.log('✅ Success! Navigating to preview with: ${result.outputDirectory}');
+        Get.log(
+          '✅ Success! Navigating to preview with: ${result.outputDirectory}',
+        );
+        // Add a small delay to ensure all files are fully written to disk
+        await Future.delayed(const Duration(milliseconds: 500));
         Get.offNamed('/preview', arguments: result.outputDirectory);
       } else {
         Get.log('❌ Processing failed: ${result.errorMessage}');
@@ -146,7 +152,7 @@ class SetupController extends GetxController {
     } catch (e, stackTrace) {
       Get.log('🔥 EXCEPTION in startProcessing: $e');
       Get.log('Stack trace: $stackTrace');
-      
+
       Get.snackbar(
         'Processing Error',
         'An unexpected error occurred: $e',
@@ -162,10 +168,9 @@ class SetupController extends GetxController {
   }
 
   Future<void> selectOutputDirectory() async {
-    final String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'اختر مجلد حفظ الأفلام',
-    );
-    
+    final String? selectedDirectory = await FilePicker.platform
+        .getDirectoryPath(dialogTitle: 'اختر مجلد حفظ الأفلام');
+
     if (selectedDirectory != null) {
       outputDir.value = selectedDirectory;
     }
