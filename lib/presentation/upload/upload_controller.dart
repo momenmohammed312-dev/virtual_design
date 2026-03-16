@@ -94,7 +94,10 @@ class UploadController extends GetxController {
       if (Get.isDialogOpen!) Get.back();
 
       // Navigate to setup with normalized image
-      Get.toNamed('/setup', arguments: normalizedPath);
+      Get.toNamed('/setup', arguments: {
+        'imagePath': normalizedPath,
+        'originalPath': rawImagePath,
+      });
     } catch (e) {
       // Close loading indicator if open
       if (Get.isDialogOpen!) Get.back();

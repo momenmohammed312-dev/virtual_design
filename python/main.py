@@ -71,6 +71,12 @@ try:
 except ImportError:
     HAS_EXPORTER = False
 
+try:
+    from core.pantone_library import PantoneLibrary
+    HAS_PANTONE = True
+except ImportError:
+    HAS_PANTONE = False
+
 # ─── Logging ────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -114,6 +120,92 @@ def _progress(overall_fraction: float, message: str = '') -> None:
     if frac > 1:
         frac = 1.0
     print(f"PROGRESS:{frac:.4f}:{message}", flush=True)
+
+
+def step2_5_underbase_creation(separation_result: Dict, args: argparse.Namespace) -> Dict:
+    """
+    Automatic underbase creation for dark colors.
+    Adds white underbase layer that prints under all dark colors to improve print quality.
+    """
+    _step(2.5, "Underbase creation (automatic)")
+    
+    try:
+        pantone_lib = PantoneLibrary()
+        colors = separation_result["colors"]
+        label_map = separation_result["label_map"]
+        image = separation_result["image"]
+        
+        # Check which colors are dark and need underbase
+        dark_color_indices = []
+        for i, color_rgb in enumerate(colors):
+            # Find nearest Pantone
+            pantone_match = pantone_lib.find_nearest_pantone(color_rgb)
+            
+            # Check if color is dark (needs underbase)
+            brightness = sum(color_rgb) / 3.0
+            
+            dark_pantone_codes = [
+                'Black', 'Process Black', 'Black 6', 'Black 7',
+                'Navy Blue', 'Reflex Blue', 'Process Blue',
+                'Rhodamine Red', 'Rubine Red', 'Warm Red',
+                'Purple', 'Violet', 'Medium Purple'
+            ]
+            
+            is_dark = (
+                brightness < 128 or
+                any(code in pantone_match.name for code in dark_pantone_codes) or
+                pantone_match.name.startswith(('Black', 'Dark', 'Navy'))
+            )
+            
+            if is_dark:
+                dark_color_indices.append(i)
+                logger.info(f"Dark color detected {i+1}: {pantone_match.name} (brightness: {brightness:.1f})")
+        
+        if not dark_color_indices:
+            logger.info("No dark colors found, skipping underbase")
+            return separation_result
+        
+        # Add white underbase layer at the beginning
+        white_rgb = (255, 255, 255)
+        
+        # Create new color list with white first
+        new_colors = [white_rgb] + colors
+        
+        # Create new label map with underbase
+        h, w = label_map.shape
+        new_label_map = np.full((h, w), -1, dtype=np.int32)  # Start with all background
+        
+        # For each pixel, determine the layers needed
+        for y in range(h):
+            for x in range(w):
+                old_label = label_map[y, x]
+                if old_label == -1:  # Background
+                    continue
+                
+                # If this pixel has a dark color, add underbase
+                if old_label in dark_color_indices:
+                    new_label_map[y, x] = 0  # White underbase
+                
+                # Shift the original color up by 1
+                new_label_map[y, x] = old_label + 1
+        
+        # Update color names
+        new_color_names = ["underbase_white"] + separation_result["color_names"]
+        
+        # Update separation result
+        updated_result = separation_result.copy()
+        updated_result["colors"] = new_colors
+        updated_result["color_names"] = new_color_names
+        updated_result["label_map"] = new_label_map
+        updated_result["num_colors"] = len(new_colors)
+        
+        logger.info(f"Added underbase for {len(dark_color_indices)} dark colors. Total layers: {len(new_colors)}")
+        return updated_result
+        
+    except Exception as e:
+        logger.warning(f"Underbase creation failed, continuing without underbase: {e}")
+        return separation_result
+
 
 # ─── Pipeline Steps ──────────────────────────────────────────────────────────
 
@@ -190,18 +282,30 @@ def step4_clean_edges(masks: list) -> list:
 
 
 def step5_halftone(masks: list, args: argparse.Namespace) -> list:
-    _step(5, "Halftone generation" if args.halftone else "Halftone (skipped)")
-    if not args.halftone or not HAS_HALFTONE:
+    _step(5, "Halftone generation" if args.halftone and not getattr(args, 'skip_halftone', False) else "Halftone (skipped)")
+    if not args.halftone or not HAS_HALFTONE or getattr(args, 'skip_halftone', False):
         return masks
-    generator = HalftoneGenerator()
-    result = []
-    total = max(1, len(masks))
-    for i, mask in enumerate(masks):
-        ht = generator.generate(mask, lpi=args.lpi, dpi=args.dpi)
-        result.append(ht)
-        overall = ((5 - 1) + (i + 1) / total) / TOTAL_STEPS
-        _progress(overall, f"Halftone {i+1}/{total}")
-    return result
+    
+    # Standard CMYK angles for best results (avoid moiré patterns)
+    # Cyan: 15°, Magenta: 75°, Yellow: 0°, Black: 45°
+    cmyk_angles = [15.0, 75.0, 0.0, 45.0]
+    
+    try:
+        generator = HalftoneGenerator()
+        result = []
+        total = max(1, len(masks))
+        for i, mask in enumerate(masks):
+            # Use CMYK angle for this color index, fallback to default
+            angle = cmyk_angles[i] if i < len(cmyk_angles) else args.angle
+            ht = generator.generate(mask, lpi=args.lpi, angle=angle, dot_shape=args.dot_shape, dpi=args.dpi)
+            result.append(ht)
+            overall = ((5 - 1) + (i + 1) / total) / TOTAL_STEPS
+            _progress(overall, f"Halftone {i+1}/{total} (angle: {angle}°)")
+        return result
+    except Exception as e:
+        logger.warning(f"Halftone generation failed, skipping: {e}")
+        _step(5, "Halftone (skipped due to error)")
+        return masks
 
 
 def step6_binarize(masks: list, args: argparse.Namespace) -> list:
@@ -230,6 +334,39 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
     # TODO: Re-enable with improved validation logic
     logger.info("  Stroke validation temporarily disabled")
     return masks
+
+
+def step3_5_trapping(masks: List, separation_result: Dict, args: argparse.Namespace) -> List:
+    _step(3.5, "Trapping (automatic)")
+    try:
+        if len(masks) < 2:
+            logger.info("Only one color layer, skipping trapping")
+            return masks
+        
+        trapping_pixels = max(1, int(args.dpi * 0.1 / 25.4))
+        logger.info(f"Applying trapping with {trapping_pixels} pixel overlap")
+        
+        kernel_size = trapping_pixels * 2 + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        trapped_masks = []
+        
+        for i, mask in enumerate(masks):
+            trapped = mask.copy()
+            for j, other_mask in enumerate(masks):
+                if i == j:
+                    continue
+                overlap = cv2.bitwise_and(mask, other_mask)
+                if np.any(overlap > 127):
+                    dilated_overlap = cv2.dilate(overlap, kernel, iterations=1)
+                    trapped = cv2.bitwise_or(trapped, dilated_overlap)
+                    logger.info(f"Added trapping between color {i+1} and {j+1}")
+            trapped_masks.append(trapped)
+        
+        logger.info(f"Trapping applied to {len(trapped_masks)} layers")
+        return trapped_masks
+    except Exception as e:
+        logger.warning(f"Trapping failed, continuing without trapping: {e}")
+        return masks
 
 
 def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
@@ -279,37 +416,90 @@ def step9_export(
     output_dir: str,
     args: argparse.Namespace,
 ) -> list:
-    _step(9, "Exporting films")
+    _step(9, "Exporting films (PNG + PDF + SVG)")
     os.makedirs(output_dir, exist_ok=True)
 
     exported_paths = []
+    pdf_paths = []
 
     try:
-        # Simple direct PNG export - save each mask as film_1.png, film_2.png, etc.
         total = max(1, len(masks))
+        
+        # Import exporter for SVG functionality
+        from core.exporter import Exporter, SVGWRITE_AVAILABLE
+        
+        # Prepare PDF combined canvas if requested and available
+        combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
+        combined_pdf = canvas.Canvas(combined_pdf_path, pagesize=A4) if (args.combine_pdf and REPORTLAB_AVAILABLE) else None
+        
+        # A4 size in points
+        a4_w, a4_h = A4
+        margin = 36  # 0.5 inch margin
+        max_w = a4_w - 2 * margin
+        max_h = a4_h - 2 * margin
+
         for i, mask in enumerate(masks):
-            # Ensure mask is in correct format
             if mask.dtype != np.uint8:
                 mask = mask.astype(np.uint8)
             
-            filename = f"film_{i+1}.png"
-            filepath = os.path.join(output_dir, filename)
+            # 1. Save PNG for UI preview
+            png_filename = f"film_{i+1}.png"
+            png_filepath = os.path.join(output_dir, png_filename)
+            cv2.imwrite(png_filepath, mask)
+            exported_paths.append(png_filepath)
             
-            success = cv2.imwrite(filepath, mask)
-            if success:
-                exported_paths.append(filepath)
-                logger.info(f"  Exported {filename} ({mask.shape})")
-                _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
-            else:
-                logger.error(f"  Failed to export {filename}")
+            # 2. Save SVG for vector editing
+            if SVGWRITE_AVAILABLE:
+                svg_filename = f"film_{i+1}.svg"
+                svg_filepath = os.path.join(output_dir, svg_filename)
+                exporter = Exporter(output_dir, args.dpi)
+                exporter.export_svg(mask, svg_filename)
+                exported_paths.append(svg_filepath)
+                logger.info(f"  Exported {svg_filename} (vector)")
+            
+            # 3. Save individual PDF
+            if REPORTLAB_AVAILABLE:
+                pdf_filename = f"film_{i+1}.pdf"
+                pdf_filepath = os.path.join(output_dir, pdf_filename)
+                
+                # Create individual PDF
+                c = canvas.Canvas(pdf_filepath, pagesize=A4)
+                
+                # Calculate scaling to fit A4
+                img_h, img_w = mask.shape[:2]
+                scale = min(max_w / img_w, max_h / img_h)
+                draw_w = img_w * scale
+                draw_h = img_h * scale
+                
+                # Center on page
+                x = margin + (max_w - draw_w) / 2
+                y = margin + (max_h - draw_h) / 2
+                
+                # Draw on individual PDF
+                c.drawImage(png_filepath, x, y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
+                c.save()
+                pdf_paths.append(pdf_filepath)
+                
+                # Draw on combined PDF
+                if combined_pdf:
+                    combined_pdf.drawImage(png_filepath, x, y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
+                    combined_pdf.showPage()  # New page for next film
+                    
+            logger.info(f"  Exported {png_filename} ({mask.shape})")
+            _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
         
-        logger.info(f"Export complete: {len(exported_paths)} films saved")
+        # Save combined PDF
+        if combined_pdf:
+            combined_pdf.save()
+            logger.info(f"  Exported combined PDF: all_films_combined.pdf")
+            exported_paths.append(combined_pdf_path)
+            
+        logger.info(f"Export complete: {len(exported_paths)} files saved")
         
     except Exception as e:
         logger.error(f"Export failed: {e}", exc_info=True)
-        # Don't raise - continue pipeline but with empty list
 
-    # حفظ color info JSON with metadata
+    # Save color info JSON with metadata
     img = separation_result.get('image')
     width = img.shape[1] if img is not None else 0
     height = img.shape[0] if img is not None else 0
@@ -323,9 +513,7 @@ def step9_export(
         'lpi': args.lpi if args.halftone else 0,
     })
 
-    # Emit final progress 100% before returning
     _progress(1.0, 'Finished')
-
     return exported_paths
 
 
@@ -376,6 +564,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=300, help="Output DPI")
     parser.add_argument("--halftone", action="store_true", help="Enable halftone mode")
     parser.add_argument("--lpi", type=int, default=65, help="Halftone LPI (lines per inch)")
+    parser.add_argument("--dot-shape", choices=["round", "square", "ellipse"], default="round", help="Halftone dot shape")
     parser.add_argument("--detail-level", choices=["high", "medium", "low"], default="medium")
     parser.add_argument("--clean", action="store_true", help="Apply edge cleaning")
     parser.add_argument("--validate-strokes", action="store_true", help="Validate stroke widths")
@@ -388,6 +577,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--separate-pdfs', dest='combine_pdf', action='store_false',
         help='Export each film as a separate PDF'
+    )
+    parser.add_argument(
+        '--skip-halftone', action='store_true',
+        help='Skip halftone generation entirely'
+    )
+    parser.add_argument(
+        '--pantone-matching', choices=['automatic', 'manual', 'disabled'], default='automatic',
+        help='Pantone color matching mode'
+    )
+    parser.add_argument(
+        '--underbase-mode', choices=['automatic', 'manual', 'disabled'], default='automatic',
+        help='Underbase creation mode'
+    )
+    parser.add_argument(
+        '--trapping-mode', choices=['automatic', 'manual', 'disabled'], default='automatic',
+        help='Color trapping mode'
+    )
+    parser.add_argument(
+        '--overprint-mode', choices=['automatic', 'manual', 'disabled'], default='automatic',
+        help='Overprint mode'
+    )
+    parser.add_argument(
+        '--gradient-mesh-mode', choices=['automatic', 'manual', 'disabled'], default='automatic',
+        help='Gradient mesh conversion mode'
+    )
+    parser.add_argument(
+        '--typography-mode', choices=['automatic', 'manual', 'disabled'], default='automatic',
+        help='Advanced typography mode'
+    )
+    parser.add_argument(
+        '--mesh-preview-mode', choices=['automatic', 'manual', 'disabled'], default='automatic',
+        help='Mesh preview and simulation mode'
     )
     return parser.parse_args()
 
@@ -420,8 +641,22 @@ def main() -> int:
             auto_detect=(args.colors == 0) or args.auto_colors
         )
 
+        # Step 2.5 — Automatic Underbase Creation
+        if args.underbase_mode == 'automatic' and HAS_PANTONE:
+            separation_result = step2_5_underbase_creation(separation_result, args)
+
         # Step 3 — Mask Generation (with grayscale if halftone enabled)
         masks = step3_generate_masks(image, separation_result, halftone_mode=args.halftone)
+        
+        # Step 3.5 — Automatic Trapping
+        if args.trapping_mode == 'automatic' and HAS_PANTONE:
+            masks = step3_5_trapping(masks, separation_result, args)
+
+        # DEBUG: Save masks after generation
+        for idx, mask in enumerate(masks):
+            debug_path = os.path.join(output_dir, f"debug_mask_{idx+1}_after_generation.png")
+            cv2.imwrite(debug_path, mask)
+            logger.info(f"DEBUG: Saved mask {idx+1} after generation: {debug_path}")
 
         # Step 4 — Edge Cleaning (skip if halftone, cleanup already done in mask gen)
         if args.clean and not args.halftone:
@@ -438,21 +673,17 @@ def main() -> int:
         # Step 7 — Stroke Validation
         masks = step7_validate_strokes(masks, args)
 
-        # BUG FIX #1: Invert masks for standard silk screen film output
-        # K-means produces design=255 (white) on background=0 (black)
-        # Standard silk screen films need design=0 (black) on background=255 (white)
-        logger.info("Inverting masks for standard film output")
-        inverted = []
-        for m in masks:
-            if len(m.shape) == 3:
-                gray = cv2.cvtColor(m, cv2.COLOR_BGR2GRAY)
-            else:
-                gray = m
-            inverted.append(cv2.bitwise_not(gray))
-        masks = inverted
+        # Masks are now correctly generated with design=black, background=white (silk screen standard)
+        # No inversion needed anymore
 
         # Step 8 — Registration Marks
         masks = step8_registration_marks(masks, output_dir, args)
+        
+        # DEBUG: Save masks after registration marks
+        for idx, mask in enumerate(masks):
+            debug_path = os.path.join(output_dir, f"debug_mask_{idx+1}_after_registration.png")
+            cv2.imwrite(debug_path, mask)
+            logger.info(f"DEBUG: Saved mask {idx+1} after registration marks: {debug_path}")
 
         # Step 9 — Export
         exported = step9_export(masks, separation_result, output_dir, args)

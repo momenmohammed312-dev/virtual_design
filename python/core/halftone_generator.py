@@ -52,8 +52,8 @@ class HalftoneGenerator:
                 px = cx0 + gx * cos_a - gy * sin_a
                 py = cy0 + gx * sin_a + gy * cos_a
 
-                if px < 0 or px >= w or py < 0 or py >= h:
-                    continue
+                px = max(0, min(w - 1, px))
+                py = max(0, min(h - 1, py))
 
                 ix = int(max(0, min(w - 1, round(px))))
                 iy = int(max(0, min(h - 1, round(py))))
@@ -77,7 +77,7 @@ class HalftoneGenerator:
         dpi: Optional[int] = None,
     ) -> np.ndarray:
         """Generate halftone as binary numpy array. Angle is now properly applied."""
-        print(f"      📊 Halftone raster (LPI:{lpi}, angle:{angle}°, {dot_shape})")
+        print(f"      [Halftone] raster (LPI:{lpi}, angle:{angle}°, {dot_shape})", flush=True)
         gray = self._to_gray(image)
         shape_map = {"round": "circle", "square": "square", "ellipse": "circle"}
         dots = self.generate_vector_dots(gray, lpi=lpi, angle=angle,

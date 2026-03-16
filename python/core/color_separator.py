@@ -208,6 +208,15 @@ class ColorSeparator:
 
         logger.info(f"[ColorSeparator] Done. Colors: {[self.get_color_hex(c) for c in colors]}")
 
+        # VALIDATION: Check for single color result (causes solid black films) — DISABLED to allow 1 color processing
+        # if num_colors <= 1:
+        #     logger.error(f"[ColorSeparator] CRITICAL: Only {num_colors} color detected! This will create solid black film.")
+        #     logger.error("This usually happens when:")
+        #     logger.error("- Image has insufficient contrast")
+        #     logger.error("- White background threshold is too low")
+        #     logger.error("- K-means clustering failed")
+        #     raise ValueError(f"Color separation failed: only {num_colors} color detected. Film would be solid black.")
+
         return {
             "colors": colors,
             "color_names": color_names,

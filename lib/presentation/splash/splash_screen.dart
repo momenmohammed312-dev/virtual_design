@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:get/get.dart';
 import '../../core/python_bridge/python_config.dart';
+import '../../core/utils/image_processor.dart';
 import 'dart:io';
 import 'package:virtual_design/core/constants/app_constants.dart';
 
@@ -57,13 +58,20 @@ class _SplashScreenState extends State<SplashScreen>
     _progressController = AnimationController(vsync: this, duration: const Duration(milliseconds: 2800));
     _progressValue = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: _progressController, curve: Curves.easeInOut));
 
-    _pulseController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500))..repeat(reverse: true);
+    _pulseController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500));
+    // HIGH #1 FIX: Start repeating after first frame to avoid layout errors
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _pulseController.repeat(reverse: true);
+    });
     _pulseScale = Tween<double>(begin: 1.0, end: 1.08).animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
 
     _devOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: _textController, curve: const Interval(0.5, 1.0, curve: Curves.easeIn)));
   }
 
   void _startSequence() async {
+    // Clean up any old temp files from previous sessions
+    ImageProcessor.cleanupOldTempFiles();
+
     await Future.delayed(const Duration(milliseconds: 200));
     _logoController.forward();
     await Future.delayed(const Duration(milliseconds: 700));

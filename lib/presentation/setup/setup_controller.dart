@@ -1,10 +1,12 @@
 // lib/presentation/setup/setup_controller.dart
+// Fixes 2, 4, 7: Real UI values, dot_shape, temp file cleanup
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
+import '../../core/utils/image_processor.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
@@ -12,34 +14,67 @@ class SetupController extends GetxController {
   SetupController({required ProcessingRepository repository})
     : _repository = repository;
 
-  // Image path passed from Upload screen
+  // ─── Image paths ─────────────────────────────────────────────────────────
   final RxString imagePath = ''.obs;
+  String _originalTempPath = ''; // for cleanup after processing
 
-  // Settings State
+  // ─── Settings State ──────────────────────────────────────────────────────
   final RxInt selectedColors = 0.obs;
   final RxDouble strokeWidth = 0.5.obs; // mm
   final Rx<ps.DetailLevel> selectedDetail = ps.DetailLevel.medium.obs;
   final Rx<ps.PrintFinish> selectedFinish = ps.PrintFinish.solid.obs;
   final RxBool removeBackground = false.obs;
   final RxBool autoUpscale = false.obs;
-  // Paper size (cm) inputs
+
+  // Paper size
   final RxDouble paperWidthCm = 21.0.obs;
   final RxDouble paperHeightCm = 29.7.obs;
+
+  // Print quality (DPI)
+  final RxDouble printQuality = 300.0.obs;
+
+  // Halftone settings
+  final RxBool isHalftone = false.obs;
+  final RxInt lpiValue = 55.obs;
+  final RxString selectedDotShape = 'round'.obs;
+
+  // Edge enhancement & color correction
+  final RxBool edgeEnhancement = false.obs;
+  final RxBool colorCorrection = false.obs;
 
   // Output directory selection
   final RxString outputDir = ''.obs;
 
+  // Processing state
   final RxBool isProcessing = false.obs;
   final RxDouble progress = 0.0.obs;
   final RxString progressMessage = ''.obs;
 
+  // ─── Computed ────────────────────────────────────────────────────────────
+
+  /// Auto-calculate mesh count based on LPI
+  int get meshCount {
+    final lpi = lpiValue.value;
+    if (lpi < 30) return 110;
+    if (lpi < 50) return 160;
+    if (lpi < 65) return 200;
+    if (lpi < 80) return 230;
+    if (lpi < 90) return 280;
+    return 355;
+  }
+
+  // ─── Lifecycle ───────────────────────────────────────────────────────────
+
   @override
   void onInit() {
     super.onInit();
-    if (Get.arguments != null && Get.arguments is String) {
-      imagePath.value = Get.arguments as String;
+    final args = Get.arguments;
+    if (args is String) {
+      imagePath.value = args;
+    } else if (args is Map) {
+      imagePath.value = (args['imagePath'] as String?) ?? '';
+      _originalTempPath = (args['originalPath'] as String?) ?? '';
     }
-    // No crash — just uses empty path if not provided
     _loadLastSettings();
   }
 
@@ -50,9 +85,35 @@ class SetupController extends GetxController {
       selectedDetail.value = settings.detailLevel;
       selectedFinish.value = settings.printFinish;
       strokeWidth.value = settings.strokeWidthMm;
-      // ... load other settings
+      printQuality.value = settings.dpi;
+      if (settings.halftoneSettings != null) {
+        lpiValue.value = settings.halftoneSettings!.lpi;
+        selectedDotShape.value = settings.halftoneSettings!.dotShape;
+      }
     }
   }
+
+  // ─── Reset ───────────────────────────────────────────────────────────────
+
+  void resetToDefaults() {
+    selectedColors.value = 0;
+    strokeWidth.value = 0.5;
+    selectedDetail.value = ps.DetailLevel.medium;
+    selectedFinish.value = ps.PrintFinish.solid;
+    removeBackground.value = false;
+    autoUpscale.value = false;
+    paperWidthCm.value = 21.0;
+    paperHeightCm.value = 29.7;
+    printQuality.value = 300.0;
+    isHalftone.value = false;
+    lpiValue.value = 55;
+    selectedDotShape.value = 'round';
+    edgeEnhancement.value = false;
+    colorCorrection.value = false;
+    update();
+  }
+
+  // ─── Processing ──────────────────────────────────────────────────────────
 
   Future<void> startProcessing() async {
     if (isProcessing.value) return;
@@ -62,8 +123,9 @@ class SetupController extends GetxController {
     Get.log('selectedColors: ${selectedColors.value}');
     Get.log('selectedDetail: ${selectedDetail.value}');
     Get.log('selectedFinish: ${selectedFinish.value}');
+    Get.log('DPI: ${printQuality.value}');
+    Get.log('Halftone: ${isHalftone.value}, LPI: ${lpiValue.value}, DotShape: ${selectedDotShape.value}');
 
-    // Guard: if no image selected, show snackbar and redirect to upload
     if (imagePath.value.isEmpty) {
       Get.log('❌ No image selected, redirecting to upload');
       Get.snackbar(
@@ -84,38 +146,43 @@ class SetupController extends GetxController {
     progressMessage.value = 'Starting...';
 
     try {
-      // Build settings object
-      final halftone = selectedFinish.value == ps.PrintFinish.halftone
-          ? ps.HalftoneSettings(lpi: 65)
+      // Build halftone settings from real UI values
+      final halftone = isHalftone.value
+          ? ps.HalftoneSettings(
+              lpi: lpiValue.value,
+              dotShape: selectedDotShape.value,
+            )
           : null;
 
+      // Determine edge enhancement from toggle
+      final edge = edgeEnhancement.value
+          ? ps.EdgeEnhancement.light
+          : ps.EdgeEnhancement.none;
+
+      // Build settings from REAL controller values
       final settings = ps.ProcessingSettings(
         colorCount: selectedColors.value,
         detailLevel: selectedDetail.value,
-        printFinish: selectedFinish.value,
+        printFinish: isHalftone.value ? ps.PrintFinish.halftone : selectedFinish.value,
         strokeWidthMm: strokeWidth.value,
-        dpi: 300,
-        meshCount: 160,
-        edgeEnhancement: ps.EdgeEnhancement.light,
+        dpi: printQuality.value,
+        meshCount: meshCount,
+        edgeEnhancement: edge,
         halftoneSettings: halftone,
         paperWidthCm: paperWidthCm.value,
         paperHeightCm: paperHeightCm.value,
       );
 
-      Get.log('✅ Settings built, saving...');
-      // Save settings for next time
+      Get.log('✅ Settings built: DPI=${settings.dpi}, mesh=${settings.meshCount}, edge=${settings.edgeEnhancement.name}');
       await _repository.saveSettings(settings);
 
       Get.log('🔄 Starting image processing...');
-      // Process with output directory if selected
-      final outputDir = this.outputDir.value.isNotEmpty
-          ? this.outputDir.value
-          : null;
+      final outputDirVal = outputDir.value.isNotEmpty ? outputDir.value : null;
 
       final result = await _repository.processImage(
         imagePath: imagePath.value,
         settings: settings,
-        outputDir: outputDir,
+        outputDir: outputDirVal,
         onProgress: (p, msg) {
           progress.value = p;
           progressMessage.value = msg;
@@ -125,22 +192,18 @@ class SetupController extends GetxController {
 
       Get.log('Processing result: ${result.success}');
       if (result.success) {
-        Get.log(
-          '✅ Success! Navigating to preview with: ${result.outputDirectory}',
-        );
-        // Add a small delay to ensure all files are fully written to disk
+        Get.log('✅ Success! Navigating to preview with: ${result.outputDirectory}');
         await Future.delayed(const Duration(milliseconds: 500));
         Get.offNamed('/preview', arguments: result.outputDirectory);
       } else {
         Get.log('❌ Processing failed: ${result.errorMessage}');
-        // Show error screen with retry option
+        isProcessing.value = false;
         Get.toNamed(
           '/error',
           arguments: {
             'processResult': result,
             'onRetry': () {
-              // Retry processing
-              Get.back(); // Close error page
+              Get.back();
               startProcessing();
             },
             'onGoBack': () {
@@ -162,7 +225,16 @@ class SetupController extends GetxController {
         duration: const Duration(seconds: 5),
       );
     } finally {
-      isProcessing.value = false;
+      // Clean up temp normalized image
+      if (imagePath.value.contains('vd_normalized_')) {
+        ImageProcessor.cleanupTempFile(imagePath.value);
+      }
+      // Clean up original temp path if provided
+      if (_originalTempPath.isNotEmpty &&
+          _originalTempPath.contains('vd_normalized_')) {
+        ImageProcessor.cleanupTempFile(_originalTempPath);
+      }
+      if (isProcessing.value) isProcessing.value = false;
       Get.log('=== startProcessing() finished ===');
     }
   }
@@ -180,7 +252,6 @@ class SetupController extends GetxController {
     if (outputDir.value.isNotEmpty) {
       return outputDir.value;
     }
-    // Default: empty string means Python will use its own default
     return '';
   }
 }

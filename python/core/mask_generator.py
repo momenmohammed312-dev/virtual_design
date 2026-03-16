@@ -60,7 +60,10 @@ class MaskGenerator:
                 # استخدام grayscale intensity من الصورة الأصلية
                 mask[label_map == i] = gray_orig[label_map == i]
             else:
-                mask[label_map == i] = 255
+                # SILK SCREEN STANDARD: design=black (0), background=white (255)
+                # Set design pixels to black (0) and background to white (255)
+                mask.fill(255)  # All white background
+                mask[label_map == i] = 0  # Design pixels are black
 
             if apply_cleanup and not grayscale_output:
                 # لا نطبق cleanup على الـ grayscale masks لأنه يغير الـ intensities
@@ -114,7 +117,7 @@ class MaskGenerator:
     def generate_film_image(
         self,
         mask: np.ndarray,
-        invert: bool = False,
+        invert: bool = True,
         add_border: bool = True,
         border_px: int = 20,
     ) -> np.ndarray:

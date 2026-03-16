@@ -66,36 +66,42 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
 
   @override
   Future<ProcessingSettings?> loadLastSettings() async {
-    final box = await _hiveService.getSettingsBox();
-    final json = box.get('last_settings');
-    if (json == null || json is! Map) return null;
+    try {
+      final box = await _hiveService.getSettingsBox();
+      final json = box.get('last_settings');
+      if (json == null || json is! Map) return null;
 
-    final halftoneData = json['halftoneSettings'] as Map<String, dynamic>?;
-    
-    return ProcessingSettings(
-      colorCount: json['colorCount'] as int,
-      detailLevel: DetailLevel.values.firstWhere(
-        (e) => e.name == json['detailLevel'] as String,
-        orElse: () => DetailLevel.medium,
-      ),
-      printFinish: PrintFinish.values.firstWhere(
-        (e) => e.name == json['printFinish'] as String,
-        orElse: () => PrintFinish.solid,
-      ),
-      strokeWidthMm: (json['strokeWidthMm'] as num).toDouble(),
-      dpi: (json['dpi'] as num).toDouble(),
-      meshCount: (json['meshCount'] as num).toInt(),
-      edgeEnhancement: EdgeEnhancement.values.firstWhere(
-        (e) => e.name == json['edgeEnhancement'] as String,
-        orElse: () => EdgeEnhancement.light,
-      ),
-      halftoneSettings: halftoneData != null
-          ? HalftoneSettings(
-              lpi: (halftoneData['lpi'] as num).toInt(),
-              dotShape: halftoneData['dotShape'] as String,
-              angle: (halftoneData['angle'] as num?)?.toDouble() ?? 45.0,
-            )
-          : null,
-    );
+      final halftoneData = json['halftoneSettings'] as Map<String, dynamic>?;
+      
+      return ProcessingSettings(
+        colorCount: json['colorCount'] as int,
+        detailLevel: DetailLevel.values.firstWhere(
+          (e) => e.name == json['detailLevel'] as String,
+          orElse: () => DetailLevel.medium,
+        ),
+        printFinish: PrintFinish.values.firstWhere(
+          (e) => e.name == json['printFinish'] as String,
+          orElse: () => PrintFinish.solid,
+        ),
+        strokeWidthMm: (json['strokeWidthMm'] as num).toDouble(),
+        dpi: (json['dpi'] as num).toDouble(),
+        meshCount: (json['meshCount'] as num).toInt(),
+        edgeEnhancement: EdgeEnhancement.values.firstWhere(
+          (e) => e.name == json['edgeEnhancement'] as String,
+          orElse: () => EdgeEnhancement.light,
+        ),
+        halftoneSettings: halftoneData != null
+            ? HalftoneSettings(
+                lpi: (halftoneData['lpi'] as num).toInt(),
+                dotShape: halftoneData['dotShape'] as String,
+                angle: (halftoneData['angle'] as num?)?.toDouble() ?? 45.0,
+              )
+            : null,
+      );
+    } catch (e) {
+      // MEDIUM #2 FIX: Handle corrupted or schema-mismatched Hive data
+      print('[ProcessingRepo] Warning: Failed to load settings (data may be corrupted): $e');
+      return null;
+    }
   }
 }

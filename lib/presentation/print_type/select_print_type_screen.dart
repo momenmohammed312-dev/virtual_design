@@ -12,6 +12,13 @@ class SelectPrintTypeScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
+      appBar: AppBar(
+        title: const Text('Select Print Type'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Get.back(),
+        ),
+      ),
       body: Row(
         children: [
           _buildSidebar(),
@@ -333,8 +340,6 @@ class SelectPrintTypeScreen extends StatelessWidget {
       case PrintType.dtg:
         return Icons.brush;
     }
-    // unreachable but required by analyzer
-    return Icons.print;
   }
 
   String _getPrintTypeName(PrintType type) {
@@ -350,8 +355,6 @@ class SelectPrintTypeScreen extends StatelessWidget {
       case PrintType.dtg:
         return 'DTG';
     }
-    // unreachable but required by analyzer
-    return 'Unknown';
   }
 
   String _getPrintTypeDescription(PrintType type) {
@@ -367,7 +370,5 @@ class SelectPrintTypeScreen extends StatelessWidget {
       case PrintType.dtg:
         return 'Direct-to-garment printing';
     }
-    // unreachable but required by analyzer
-    return '';
   }
 }

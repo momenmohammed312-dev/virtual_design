@@ -1,8 +1,8 @@
 // python_config.dart — Python Command Auto-Detection
 // Virtual Design Silk Screen Studio
 //
-// HIGH #1 FIX: بدل hardcoded 'python' يبحث عن الأمر الصح تلقائياً
-// يجرب: python3 → python → py (Windows)
+// FATAL #1 FIX: getPythonScriptsDir() walks up from exe to find python/ folder
+// HIGH #2 FIX: isPythonAvailable flag blocks processing when Python is absent
 
 import 'dart:io';
 
@@ -28,6 +28,7 @@ class PythonConfig {
   String? _resolvedCommand;
   String? _resolvedVersion;
   bool _initialized = false;
+  bool _pythonAvailable = false;
 
   /// الأمر المُحدَّد بعد الـ detection
   String? get resolvedCommand => _resolvedCommand;
@@ -36,6 +37,9 @@ class PythonConfig {
   String? get resolvedVersion => _resolvedVersion;
 
   bool get isInitialized => _initialized;
+
+  /// Whether Python is fully available (found + all dependencies present)
+  bool get isPythonAvailable => _pythonAvailable;
 
   /// البحث عن أمر Python الصحيح
   /// يُخزَّن في cache بعد أول استدعاء
@@ -74,18 +78,21 @@ class PythonConfig {
       await resolvePythonCommand();
       final missing = await _checkDependencies();
       _initialized = true;
+      _pythonAvailable = missing.isEmpty;
       return PythonInitResult(
         success: missing.isEmpty,
         pythonVersion: _resolvedVersion,
         missingPackages: missing,
       );
     } on PythonNotFoundError catch (e) {
+      _pythonAvailable = false;
       return PythonInitResult(
         success: false,
         error: e.message,
         missingPackages: [],
       );
     } catch (e) {
+      _pythonAvailable = false;
       return PythonInitResult(
         success: false,
         error: e.toString(),
@@ -141,15 +148,44 @@ print(",".join(missing))
   }
 
   /// مسار مجلد scripts البايثون
-  /// في Windows Desktop: بجانب الـ executable
-  /// في Debug: مجلد المشروع
+  /// FATAL #1 FIX: يبحث بالتدريج من مسار الـ executable للأعلى
+  /// بدل الاعتماد على Directory.current (اللي بيرجع مسار غلط في debug)
   Future<String> getPythonScriptsDir() async {
+    final sep = Platform.pathSeparator;
+
+    // Release mode: بجانب الـ exe مباشرة
     if (Platform.isWindows && !_isDebugMode()) {
       final exeDir = File(Platform.resolvedExecutable).parent.path;
-      return '$exeDir\\python';
+      final releasePath = '$exeDir${sep}python';
+      print('[PythonConfig] Release mode, checking: $releasePath');
+      return releasePath;
     }
-    // Debug mode — مجلد المشروع
-    return '${Directory.current.path}/python';
+
+    // Debug mode: walk up from exe path to find "python" folder
+    // Flutter debug exe is typically at:
+    //   build\windows\x64\runner\Debug\virtual_design.exe
+    // Project root is 5-7 levels up
+    var dir = File(Platform.resolvedExecutable).parent;
+    for (int i = 0; i < 7; i++) {
+      final candidate = Directory('${dir.path}${sep}python');
+      if (await candidate.exists()) {
+        // Verify the directory is accessible
+        try {
+          await candidate.list().first;
+          print('[PythonConfig] Found python dir: ${candidate.path}');
+          return candidate.path;
+        } catch (e) {
+          print('[PythonConfig] python dir found but inaccessible: ${candidate.path} — $e');
+          // Continue searching up
+        }
+      }
+      dir = dir.parent;
+    }
+
+    // Fallback: try Directory.current (original behavior)
+    final fallback = '${Directory.current.path}${sep}python';
+    print('[PythonConfig] WARN: using fallback path: $fallback');
+    return fallback;
   }
 
   bool _isDebugMode() {

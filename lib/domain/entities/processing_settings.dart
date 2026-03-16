@@ -13,12 +13,28 @@ enum DetailLevel { high, medium, low }
 
 enum EdgeEnhancement { none, light, strong }
 
+// ─── Professional Features ────────────────────────────────────────────────────
+
+enum PantoneMatching { automatic, manual, disabled }
+
+enum UnderbaseMode { automatic, manual, disabled }
+
+enum TrappingMode { automatic, manual, disabled }
+
+enum OverprintMode { automatic, manual, disabled }
+
+enum GradientMeshMode { automatic, manual, disabled }
+
+enum TypographyMode { automatic, manual, disabled }
+
+enum MeshPreviewMode { automatic, manual, disabled }
+
 // ─── Halftone Settings ────────────────────────────────────────────────────────
 
 class HalftoneSettings {
-  final int lpi;           // Lines Per Inch (25-85)
-  final String dotShape;  // round, square, ellipse
-  final double angle;     // rotation angle
+  final int lpi; // Lines Per Inch (25-85)
+  final String dotShape; // round, square, ellipse
+  final double angle; // rotation angle
 
   const HalftoneSettings({
     this.lpi = 65,
@@ -33,8 +49,11 @@ class HalftoneSettings {
         angle: angle ?? this.angle,
       );
 
-  Map<String, dynamic> toJson() =>
-      {'lpi': lpi, 'dotShape': dotShape, 'angle': angle};
+  Map<String, dynamic> toJson() => {
+    'lpi': lpi,
+    'dotShape': dotShape,
+    'angle': angle,
+  };
 
   factory HalftoneSettings.fromJson(Map<String, dynamic> json) =>
       HalftoneSettings(
@@ -52,11 +71,20 @@ class ProcessingSettings {
   final DetailLevel detailLevel;
   final double dpi;
   final double strokeWidthMm;
-  final int meshCount;           // عدد خيوط الشبكة (thread/inch)
+  final int meshCount; // عدد خيوط الشبكة (thread/inch)
   final EdgeEnhancement edgeEnhancement;
   final HalftoneSettings? halftoneSettings;
   final double paperWidthCm;
   final double paperHeightCm;
+
+  // Professional Features (all enabled by default)
+  final PantoneMatching pantoneMatching;
+  final UnderbaseMode underbaseMode;
+  final TrappingMode trappingMode;
+  final OverprintMode overprintMode;
+  final GradientMeshMode gradientMeshMode;
+  final TypographyMode typographyMode;
+  final MeshPreviewMode meshPreviewMode;
 
   const ProcessingSettings({
     this.colorCount = 2,
@@ -64,23 +92,31 @@ class ProcessingSettings {
     this.detailLevel = DetailLevel.medium,
     this.dpi = 300,
     this.strokeWidthMm = 0.3,
-    this.meshCount = 160,          // 160 mesh شائع للطباعة العادية
+    this.meshCount = 160, // 160 mesh شائع للطباعة العادية
     this.edgeEnhancement = EdgeEnhancement.light,
     this.halftoneSettings,
     this.paperWidthCm = 21.0,
     this.paperHeightCm = 29.7,
+    // Professional Features — all enabled automatically
+    this.pantoneMatching = PantoneMatching.automatic,
+    this.underbaseMode = UnderbaseMode.automatic,
+    this.trappingMode = TrappingMode.automatic,
+    this.overprintMode = OverprintMode.automatic,
+    this.gradientMeshMode = GradientMeshMode.automatic,
+    this.typographyMode = TypographyMode.automatic,
+    this.meshPreviewMode = MeshPreviewMode.automatic,
   });
 
   // ─── Mesh Count Calculations (MED #6 FIX) ──────────────────────────────
 
   /// قائمة المشات الشائعة في الطباعة على الحرير
   static const List<int> standardMeshCounts = [
-    110,  // مناسب للألوان العريضة والمساحات الكبيرة
-    160,  // الأكثر شيوعاً للطباعة العامة
-    200,  // للتفاصيل المتوسطة
-    230,  // للتفاصيل الدقيقة
-    280,  // للتفاصيل الدقيقة جداً
-    355,  // للطباعة عالية الدقة
+    110, // مناسب للألوان العريضة والمساحات الكبيرة
+    160, // الأكثر شيوعاً للطباعة العامة
+    200, // للتفاصيل المتوسطة
+    230, // للتفاصيل الدقيقة
+    280, // للتفاصيل الدقيقة جداً
+    355, // للطباعة عالية الدقة
   ];
 
   /// حساب LPI الأمثل بناءً على Mesh Count
@@ -96,8 +132,8 @@ class ProcessingSettings {
   /// حساب أدنى عرض خط مقبول بالـ mm بناءً على Mesh Count
   /// القاعدة: خيطان على الأقل لكل stroke
   static double calculateMinStrokeWidth(int meshCount) {
-    final threadWidthMm = 25.4 / meshCount;  // عرض خيط واحد بالـ mm
-    return (threadWidthMm * 2).clamp(0.1, 2.0);  // خيطان على الأقل
+    final threadWidthMm = 25.4 / meshCount; // عرض خيط واحد بالـ mm
+    return (threadWidthMm * 2).clamp(0.1, 2.0); // خيطان على الأقل
   }
 
   /// الـ stroke width الأدنى بناءً على الـ mesh الحالي
@@ -169,41 +205,61 @@ class ProcessingSettings {
 
   ProcessingSettings copyWith({
     int? colorCount,
-    PrintFinish? printFinish,
     DetailLevel? detailLevel,
-    double? dpi,
-    double? strokeWidthMm,
-    int? meshCount,
+    PrintFinish? printFinish,
     EdgeEnhancement? edgeEnhancement,
+    double? dpi,
+    int? meshCount,
     HalftoneSettings? halftoneSettings,
+    double? strokeWidthMm,
     double? paperWidthCm,
     double? paperHeightCm,
-  }) =>
-      ProcessingSettings(
-        colorCount: colorCount ?? this.colorCount,
-        printFinish: printFinish ?? this.printFinish,
-        detailLevel: detailLevel ?? this.detailLevel,
-        dpi: dpi ?? this.dpi,
-        strokeWidthMm: strokeWidthMm ?? this.strokeWidthMm,
-        meshCount: meshCount ?? this.meshCount,
-        edgeEnhancement: edgeEnhancement ?? this.edgeEnhancement,
-        halftoneSettings: halftoneSettings ?? this.halftoneSettings,
-        paperWidthCm: (paperWidthCm ?? this.paperWidthCm),
-        paperHeightCm: (paperHeightCm ?? this.paperHeightCm),
-      );
+    PantoneMatching? pantoneMatching,
+    UnderbaseMode? underbaseMode,
+    TrappingMode? trappingMode,
+    OverprintMode? overprintMode,
+    GradientMeshMode? gradientMeshMode,
+    TypographyMode? typographyMode,
+    MeshPreviewMode? meshPreviewMode,
+  }) => ProcessingSettings(
+    colorCount: colorCount ?? this.colorCount,
+    printFinish: printFinish ?? this.printFinish,
+    detailLevel: detailLevel ?? this.detailLevel,
+    dpi: dpi ?? this.dpi,
+    strokeWidthMm: strokeWidthMm ?? this.strokeWidthMm,
+    meshCount: meshCount ?? this.meshCount,
+    edgeEnhancement: edgeEnhancement ?? this.edgeEnhancement,
+    halftoneSettings: halftoneSettings ?? this.halftoneSettings,
+    paperWidthCm: (paperWidthCm ?? this.paperWidthCm),
+    paperHeightCm: (paperHeightCm ?? this.paperHeightCm),
+    pantoneMatching: pantoneMatching ?? this.pantoneMatching,
+    underbaseMode: underbaseMode ?? this.underbaseMode,
+    trappingMode: trappingMode ?? this.trappingMode,
+    overprintMode: overprintMode ?? this.overprintMode,
+    gradientMeshMode: gradientMeshMode ?? this.gradientMeshMode,
+    typographyMode: typographyMode ?? this.typographyMode,
+    meshPreviewMode: meshPreviewMode ?? this.meshPreviewMode,
+  );
 
   Map<String, dynamic> toJson() => {
-        'colorCount': colorCount,
-        'printFinish': printFinish.name,
-        'detailLevel': detailLevel.name,
-        'dpi': dpi,
-        'strokeWidthMm': strokeWidthMm,
-        'meshCount': meshCount,
-        'edgeEnhancement': edgeEnhancement.name,
-        'halftoneSettings': halftoneSettings?.toJson(),
-        'paperWidthCm': paperWidthCm,
-        'paperHeightCm': paperHeightCm,
-      };
+    'colorCount': colorCount,
+    'printFinish': printFinish.name,
+    'detailLevel': detailLevel.name,
+    'dpi': dpi,
+    'strokeWidthMm': strokeWidthMm,
+    'meshCount': meshCount,
+    'edgeEnhancement': edgeEnhancement.name,
+    'halftoneSettings': halftoneSettings?.toJson(),
+    'paperWidthCm': paperWidthCm,
+    'paperHeightCm': paperHeightCm,
+    'pantoneMatching': pantoneMatching.name,
+    'underbaseMode': underbaseMode.name,
+    'trappingMode': trappingMode.name,
+    'overprintMode': overprintMode.name,
+    'gradientMeshMode': gradientMeshMode.name,
+    'typographyMode': typographyMode.name,
+    'meshPreviewMode': meshPreviewMode.name,
+  };
 
   factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
       ProcessingSettings(
@@ -225,9 +281,38 @@ class ProcessingSettings {
         ),
         halftoneSettings: json['halftoneSettings'] != null
             ? HalftoneSettings.fromJson(
-                json['halftoneSettings'] as Map<String, dynamic>)
+                json['halftoneSettings'] as Map<String, dynamic>,
+              )
             : null,
         paperWidthCm: (json['paperWidthCm'] as num?)?.toDouble() ?? 21.0,
         paperHeightCm: (json['paperHeightCm'] as num?)?.toDouble() ?? 29.7,
+        pantoneMatching: PantoneMatching.values.firstWhere(
+          (e) => e.name == json['pantoneMatching'],
+          orElse: () => PantoneMatching.automatic,
+        ),
+        underbaseMode: UnderbaseMode.values.firstWhere(
+          (e) => e.name == json['underbaseMode'],
+          orElse: () => UnderbaseMode.automatic,
+        ),
+        trappingMode: TrappingMode.values.firstWhere(
+          (e) => e.name == json['trappingMode'],
+          orElse: () => TrappingMode.automatic,
+        ),
+        overprintMode: OverprintMode.values.firstWhere(
+          (e) => e.name == json['overprintMode'],
+          orElse: () => OverprintMode.automatic,
+        ),
+        gradientMeshMode: GradientMeshMode.values.firstWhere(
+          (e) => e.name == json['gradientMeshMode'],
+          orElse: () => GradientMeshMode.automatic,
+        ),
+        typographyMode: TypographyMode.values.firstWhere(
+          (e) => e.name == json['typographyMode'],
+          orElse: () => TypographyMode.automatic,
+        ),
+        meshPreviewMode: MeshPreviewMode.values.firstWhere(
+          (e) => e.name == json['meshPreviewMode'],
+          orElse: () => MeshPreviewMode.automatic,
+        ),
       );
 }

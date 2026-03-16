@@ -69,7 +69,6 @@ class _SetupPageState extends State<SetupPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: GetBuilder<SetupController>(
-        init: SetupController(repository: Get.find()),
         builder: (controller) => Stack(
           children: [
             Row(
@@ -285,7 +284,6 @@ class _SetupPageState extends State<SetupPage> {
     return InkWell(
       onTap: () {
         setState(() => selectedColorCount = 0);
-        // Sync with controller so downstream processing picks Auto colors
         Get.find<SetupController>().selectedColors.value = 0;
       },
       child: Container(
@@ -717,6 +715,8 @@ class _SetupPageState extends State<SetupPage> {
                         selectedPrintFinish = finish;
                         showHalftoneSettings = finish == PrintFinish.halftone;
                       });
+                      // Sync halftone state to controller
+                      Get.find<SetupController>().isHalftone.value = finish == PrintFinish.halftone;
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 15),
@@ -798,8 +798,10 @@ class _SetupPageState extends State<SetupPage> {
                           max: 85,
                           divisions: 40,
                           activeColor: primaryBlue,
-                          onChanged: (value) =>
-                              setState(() => lpi = value.toInt()),
+                          onChanged: (value) {
+                              setState(() => lpi = value.toInt());
+                              Get.find<SetupController>().lpiValue.value = value.toInt();
+                          },
                         ),
                       ),
                       const Text(
@@ -845,8 +847,10 @@ class _SetupPageState extends State<SetupPage> {
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: InkWell(
-                            onTap: () =>
-                                setState(() => selectedDotShape = shape),
+                            onTap: () {
+                                setState(() => selectedDotShape = shape);
+                                Get.find<SetupController>().selectedDotShape.value = shape.technicalName == 'circle' ? 'round' : shape.technicalName;
+                            },
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 10),
                               decoration: BoxDecoration(
@@ -956,8 +960,11 @@ class _SetupPageState extends State<SetupPage> {
                   activeColor: hasWarning
                       ? const Color(0xFFFBBF24)
                       : primaryBlue,
-                  onChanged: (value) => setState(() => strokeWidth = value),
-                ),
+                   onChanged: (value) {
+                     setState(() => strokeWidth = value);
+                     Get.find<SetupController>().strokeWidth.value = value;
+                   },
+                 ),
               ),
               const Text(
                 '2.0mm',
@@ -1238,8 +1245,10 @@ class _SetupPageState extends State<SetupPage> {
                       max: 600,
                       divisions: 3,
                       activeColor: primaryBlue,
-                      onChanged: (value) =>
-                          setState(() => printQuality = value),
+                      onChanged: (value) {
+                          setState(() => printQuality = value);
+                          Get.find<SetupController>().printQuality.value = value;
+                      },
                     ),
                   ),
                   const Text(
@@ -1304,7 +1313,10 @@ class _SetupPageState extends State<SetupPage> {
                   _buildAdvancedOption(
                     'Auto Upscale',
                     autoUpscale,
-                    (val) => setState(() => autoUpscale = val),
+                    (val) {
+                      setState(() => autoUpscale = val);
+                      Get.find<SetupController>().autoUpscale.value = val;
+                    },
                   ),
                   const SizedBox(height: 16),
                   _buildAdvancedOption(
@@ -1316,13 +1328,19 @@ class _SetupPageState extends State<SetupPage> {
                   _buildAdvancedOption(
                     'Edge Enhancement',
                     edgeEnhancement,
-                    (val) => setState(() => edgeEnhancement = val),
+                    (val) {
+                      setState(() => edgeEnhancement = val);
+                      Get.find<SetupController>().edgeEnhancement.value = val;
+                    },
                   ),
                   const SizedBox(height: 16),
                   _buildAdvancedOption(
                     'Color Correction',
                     colorCorrection,
-                    (val) => setState(() => colorCorrection = val),
+                    (val) {
+                      setState(() => colorCorrection = val);
+                      Get.find<SetupController>().colorCorrection.value = val;
+                    },
                   ),
                 ],
               ),
@@ -1421,7 +1439,23 @@ class _SetupPageState extends State<SetupPage> {
       child: Row(
         children: [
           TextButton(
-            onPressed: () {},
+            onPressed: () {
+              controller.resetToDefaults();
+              setState(() {
+                selectedColorCount = 0;
+                selectedDetailLevel = DetailLevel.medium;
+                selectedPrintFinish = PrintFinish.solid;
+                showHalftoneSettings = false;
+                lpi = 55;
+                selectedDotShape = DotShape.round;
+                strokeWidth = 0.5;
+                printQuality = 300;
+                autoUpscale = true;
+                removeBackground = true;
+                edgeEnhancement = false;
+                colorCorrection = false;
+              });
+            },
             child: const Text(
               'Reset to Defaults',
               style: TextStyle(

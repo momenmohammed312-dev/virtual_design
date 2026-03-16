@@ -2,9 +2,10 @@
 // Virtual Design Silk Screen Studio
 //
 // FATAL #1 FIX: يستدعي main.py بدل registration_marks.py
-// FATAL #3 FIX: يقرأ OUTPUT_DIR: من stdout
+// FATAL #3 FIX: يقرأ OUTPUT_DIR: من stdout + path quoting/escaping
 // FATAL #4 FIX: يستخدم Process.start() لـ real-time progress streaming
 // HIGH #1 FIX:  يستخدم PythonConfig لاكتشاف أمر Python تلقائياً
+// HIGH #2 FIX:  يرفض المعالجة لو Python غير متاح
 
 import 'dart:async';
 import 'dart:convert';
@@ -37,6 +38,14 @@ class PythonProcessor {
     String? outputDir,
     void Function(double progress, String message)? onProgress,
   }) async {
+    // HIGH #2: Guard — refuse processing if Python is unavailable
+    if (!config.isPythonAvailable && !config.isInitialized) {
+      return ProcessResult.failure(
+        'PYTHON_NOT_FOUND:Python is not available. '
+        'Please install Python 3.8+ from python.org and add it to PATH.',
+      );
+    }
+
     // التحقق من الصورة
     if (!File(imagePath).existsSync()) {
       return ProcessResult.failure('Image file not found: $imagePath');
@@ -56,6 +65,21 @@ class PythonProcessor {
     // مسار مجلد python scripts
     final scriptsDir = await config.getPythonScriptsDir();
     final pythonCommand = await config.resolvePythonCommand();
+
+    // Log details for debugging
+    print('[PythonProcessor] Python: $pythonCommand');
+    print('[PythonProcessor] Scripts dir: $scriptsDir');
+    print('[PythonProcessor] Input: $imagePath');
+    print('[PythonProcessor] Output: $finalOutputDir');
+    print('[PythonProcessor] Args: $args');
+
+    // Verify scripts directory exists
+    if (!await Directory(scriptsDir).exists()) {
+      return ProcessResult.failure(
+        'SCRIPTS_DIR_NOT_FOUND:Python scripts directory not found: $scriptsDir\n'
+        'Please verify the installation.',
+      );
+    }
 
     // بدء العملية مع بيئة محسّنة (بدون buffering)
     Process process;
@@ -109,8 +133,9 @@ class PythonProcessor {
             }
 
             // FATAL #4 FIX: تحديث progress من "Step X/9: ..."
-            final stepMatch =
-                RegExp(r'Step (\d+)/(\d+):\s*(.*)').firstMatch(line);
+            final stepMatch = RegExp(
+              r'Step (\d+)/(\d+):\s*(.*)',
+            ).firstMatch(line);
             if (stepMatch != null && onProgress != null) {
               final current = int.parse(stepMatch.group(1)!);
               final total = int.parse(stepMatch.group(2)!);
@@ -118,41 +143,45 @@ class PythonProcessor {
               onProgress(current / total, 'Step $current/$total: $stepName');
             }
           },
-        onDone: () {
-          if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
-        },
-        onError: (_) {
-          if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
-        },
+          onDone: () {
+            if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
+          },
+          onError: (_) {
+            if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
+          },
         );
 
     process.stderr
         .transform(utf8.decoder)
         .listen(
           (chunk) => stderrBuffer.write(chunk),
-        onDone: () {
-          if (!stderrCompleter.isCompleted) stderrCompleter.complete();
-        },
-        onError: (_) {
-          if (!stderrCompleter.isCompleted) stderrCompleter.complete();
-        },
+          onDone: () {
+            if (!stderrCompleter.isCompleted) stderrCompleter.complete();
+          },
+          onError: (_) {
+            if (!stderrCompleter.isCompleted) stderrCompleter.complete();
+          },
         );
 
     // انتظار انتهاء العملية
     final exitCode = await process.exitCode;
     await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
 
+    print('[PythonProcessor] Exit code: $exitCode');
+    print('[PythonProcessor] Output dir from IPC: $outputDirectory');
+
     if (exitCode == 0 && outputDirectory.isNotEmpty) {
       if (onProgress != null) onProgress(1.0, 'Processing complete!');
       return ProcessResult.success(outputDirectory: outputDirectory);
     }
 
-    // تحديد نوع الخطأ من exit code
+    // Process failed - parse and return the actual error
     final errorMessage = _parseError(exitCode, stderrBuffer.toString());
     return ProcessResult.failure(errorMessage);
   }
 
   /// بناء arguments لـ main.py
+  /// FATAL #3 FIX: paths are quoted to handle spaces/special chars on Windows
   List<String> _buildArgs(
     String imagePath,
     String outputDir,
@@ -160,13 +189,18 @@ class PythonProcessor {
   ) {
     final args = <String>[
       'main.py',
-      '--input', imagePath,
-      '--output', outputDir,
-      '--dpi', settings.dpi.toInt().toString(),
-      '--detail-level', settings.detailLevel.name,
+      '--input',
+      _safePath(imagePath),
+      '--output',
+      _safePath(outputDir),
+      '--dpi',
+      settings.dpi.toInt().toString(),
+      '--detail-level',
+      settings.detailLevel.name,
       '--clean',
       '--validate-strokes',
-      '--min-stroke', settings.strokeWidthMm.toString(),
+      '--min-stroke',
+      settings.strokeWidthMm.toString(),
     ];
 
     // Color count: if 0, use auto-colors flag
@@ -176,53 +210,60 @@ class PythonProcessor {
       args.addAll(['--colors', settings.colorCount.toString()]);
     }
 
-    // Halftone mode
+    // Halftone Settings - only add --halftone if explicitly set to halftone finish
     if (settings.printFinish == PrintFinish.halftone) {
       args.add('--halftone');
-      final lpi = settings.halftoneSettings?.lpi ?? 65;
-      args.addAll(['--lpi', lpi.toString()]);
+      if (settings.halftoneSettings != null) {
+        args.add('--lpi');
+        args.add(settings.halftoneSettings!.lpi.toString());
+        args.add('--dot-shape');
+        args.add(settings.halftoneSettings!.dotShape);
+      }
+    } else {
+      // Skip halftone for non-halftone finishes
+      args.add('--skip-halftone');
     }
 
-    // Edge enhancement
-    if (settings.edgeEnhancement != EdgeEnhancement.none) {
-      args.addAll(['--edge-enhance', settings.edgeEnhancement.name]);
-    }
-
-    // PDF export: combine by default
-    args.add('--combine-pdf');
+    // Professional Features — all enabled by default as automatic
+    args.addAll(['--pantone-matching', settings.pantoneMatching.name]);
+    args.addAll(['--underbase-mode', settings.underbaseMode.name]);
+    args.addAll(['--trapping-mode', settings.trappingMode.name]);
+    args.addAll(['--overprint-mode', settings.overprintMode.name]);
+    args.addAll(['--gradient-mesh-mode', settings.gradientMeshMode.name]);
+    args.addAll(['--typography-mode', settings.typographyMode.name]);
+    args.addAll(['--mesh-preview-mode', settings.meshPreviewMode.name]);
 
     return args;
   }
 
-  /// تحويل exit code لرسالة خطأ مفهومة
+  /// Parse error from exit code and stderr output
   String _parseError(int exitCode, String stderr) {
     switch (exitCode) {
       case 2:
-        return 'FILE_NOT_FOUND:Image file not found. Please re-select the image.';
+        return 'File not found error: $stderr';
       case 3:
-        return 'INVALID_FORMAT:Invalid image format. Use PNG, JPG, or TIFF.';
+        return 'Invalid input error: $stderr';
       case 1:
-        // البحث في stderr عن تفاصيل
-        if (stderr.contains('ModuleNotFoundError') ||
-            stderr.contains('ImportError')) {
-          final missing = _extractMissingModule(stderr);
-          return 'MISSING_DEPENDENCY:Missing Python package: $missing\n'
-              'Run: pip install -r requirements.txt';
-        }
-        if (stderr.contains('MemoryError')) {
-          return 'MEMORY_ERROR:Image is too large. Try reducing resolution or file size.';
-        }
-        if (stderr.contains('cv2.error')) {
-          return 'PROCESSING_FAILED:Image processing error. Check image format.';
-        }
-        return 'PROCESSING_FAILED:Processing failed (exit code $exitCode).\n$stderr';
       default:
-        return 'UNKNOWN_ERROR:Unknown error (exit code $exitCode).';
+        return 'Processing failed (exit code $exitCode): $stderr';
     }
   }
 
-  String _extractMissingModule(String stderr) {
-    final match = RegExp(r"No module named '([^']+)'").firstMatch(stderr);
-    return match?.group(1) ?? 'unknown module';
+  /// Make path safe for Windows command line.
+  /// Escapes internal double-quotes and wraps in quotes if needed.
+  String _safePath(String path) {
+    if (Platform.isWindows) {
+      // Escape any existing double quotes inside the path
+      final escaped = path.replaceAll('"', r'\"');
+      // Wrap in quotes if path contains spaces or special characters
+      if (escaped.contains(' ') ||
+          escaped.contains('&') ||
+          escaped.contains('(') ||
+          escaped.contains(')')) {
+        return '"$escaped"';
+      }
+      return escaped;
+    }
+    return path;
   }
 }
