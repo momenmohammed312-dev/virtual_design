@@ -333,54 +333,94 @@ class Exporter:
                    filename: str,
                    color: Optional[List[int]] = None) -> Optional[Path]:
         """
-        Export mask as SVG (simplified/vectorized)
-        
+        Export mask as SVG with Bezier curves for true vector quality
+
         Args:
             mask: Binary mask
             filename: Output filename
             color: Optional RGB color
-            
+
         Returns:
             Path to SVG file or None if failed
         """
         if not SVGWRITE_AVAILABLE:
             print("⚠️  SVG export requires svgwrite: pip install svgwrite")
             return None
-        
+
         filepath = self.output_dir / filename
-        
-        # Find contours
+
+        # Find contours with better approximation
         contours, _ = cv2.findContours(
             mask,
             cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE
+            cv2.CHAIN_APPROX_TC89_KCOS  # Better curve approximation
         )
-        
+
         # Create SVG
         h, w = mask.shape
         dwg = svgwrite.Drawing(str(filepath), size=(w, h))
-        
-        # Add each contour as a path
+
+        # Add each contour as a smooth Bezier path
         fill_color = 'black' if color is None else f'rgb({color[0]},{color[1]},{color[2]})'
-        
+
         for contour in contours:
             if len(contour) < 3:
                 continue
-            
-            # Convert contour to SVG path
-            points = contour.reshape(-1, 2)
-            path_data = f"M {points[0][0]},{points[0][1]}"
-            
-            for point in points[1:]:
-                path_data += f" L {point[0]},{point[1]}"
-            
-            path_data += " Z"
-            
-            dwg.add(dwg.path(d=path_data, fill=fill_color))
-        
+
+            # Simplify contour to reduce points while preserving shape
+            epsilon = 0.5  # pixels - smaller = more accurate but more complex
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+
+            if len(approx) < 3:
+                continue
+
+            # Convert to Bezier curve approximation
+            path_data = self._contour_to_bezier_path(approx)
+            if path_data:
+                dwg.add(dwg.path(d=path_data, fill=fill_color, stroke='none'))
+
         dwg.save()
-        
         return filepath
+
+    def _contour_to_bezier_path(self, contour: np.ndarray, smooth_factor: float = 0.3) -> str:
+        """
+        Convert contour points to SVG Bezier curve path data
+
+        Args:
+            contour: Contour points array
+            smooth_factor: Smoothing factor (0.0-0.5)
+
+        Returns:
+            SVG path data string with Bezier curves
+        """
+        pts = contour.reshape(-1, 2).astype(float)
+        n = len(pts)
+
+        if n < 3:
+            return ""
+
+        # Start path
+        path_parts = [f"M {pts[0][0]:.2f},{pts[0][1]:.2f}"]
+
+        for i in range(n):
+            p0 = pts[(i - 1) % n]
+            p1 = pts[i]
+            p2 = pts[(i + 1) % n]
+            p3 = pts[(i + 2) % n]
+
+            # Catmull-Rom to Bezier conversion for smooth curves
+            cp1x = p1[0] + (p2[0] - p0[0]) * smooth_factor
+            cp1y = p1[1] + (p2[1] - p0[1]) * smooth_factor
+            cp2x = p2[0] - (p3[0] - p1[0]) * smooth_factor
+            cp2y = p2[1] - (p3[1] - p1[1]) * smooth_factor
+
+            # Add cubic Bezier curve command
+            path_parts.append(f"C {cp1x:.2f},{cp1y:.2f} {cp2x:.2f},{cp2y:.2f} {p2[0]:.2f},{p2[1]:.2f}")
+
+        # Close path
+        path_parts.append("Z")
+
+        return " ".join(path_parts)
     
     def export_all_films_with_marks(
         self,

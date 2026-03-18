@@ -141,10 +141,9 @@ def export_vector_pdf(
         
         # ═══ رسم الـ vector paths ═══
         _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        # Invert for screen printing: find contours of black design areas
-        bw_inverted = cv2.bitwise_not(bw)
+        # For screen printing masks: find contours of white design areas (no inversion needed)
         contours, hierarchy = cv2.findContours(
-            bw_inverted, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
+            bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
         )
         
         c.setFillColor(black)

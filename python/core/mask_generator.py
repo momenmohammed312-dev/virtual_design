@@ -60,10 +60,10 @@ class MaskGenerator:
                 # استخدام grayscale intensity من الصورة الأصلية
                 mask[label_map == i] = gray_orig[label_map == i]
             else:
-                # SILK SCREEN STANDARD: design=black (0), background=white (255)
-                # Set design pixels to black (0) and background to white (255)
-                mask.fill(255)  # All white background
-                mask[label_map == i] = 0  # Design pixels are black
+                # SILK SCREEN STANDARD: design=white (255, transparent), background=black (0, opaque)
+                # Set design pixels to white (transparent) and background to black (opaque)
+                mask.fill(0)  # All black background (opaque)
+                mask[label_map == i] = 255  # Design pixels are white (transparent)
 
             if apply_cleanup and not grayscale_output:
                 # لا نطبق cleanup على الـ grayscale masks لأنه يغير الـ intensities

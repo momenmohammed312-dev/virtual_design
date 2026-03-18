@@ -127,7 +127,8 @@ class ColorSeparator:
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         h, w = img_rgb.shape[:2]
 
-        # إنشاء mask للخلفية البيضاء
+        # إنشاء mask للخلفية البيضاء - استخدم threshold أعلى لتجنب حذف الألوان الفاتحة
+        white_threshold = 245  # زيادة من 240 إلى 245 لتجنب حذف الألوان الفاتحة
         bg_mask = None
         if remove_white_bg:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -153,51 +154,69 @@ class ColorSeparator:
         else:
             foreground_pixels = pixels
 
-        # K-Means clustering
-        criteria = (
-            cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-            max_iter,
-            epsilon,
-        )
+        # تحسين فصل الألوان للصور متعددة الألوان
+        # استخدام threshold أعلى لاستبعاد الخلفية البيضاء
+        white_threshold = 245  # زيادة من 240 لتجنب حذف الألوان الفاتحة
 
-        try:
-            _, labels_fg, centers_cluster = cv2.kmeans(
-                foreground_pixels,
+        # إنشاء mask للخلفية البيضاء مع تحسين
+        bg_mask = np.all(clustering_image > white_threshold, axis=2)
+        pixels = clustering_image[~bg_mask].reshape(-1, 3)
+
+        # إذا كان عدد البكسلات قليل جداً، نقوم بتقليل الـ threshold
+        if len(pixels) < 1000:
+            white_threshold = 220
+            bg_mask = np.all(clustering_image > white_threshold, axis=2)
+            pixels = clustering_image[~bg_mask].reshape(-1, 3)
+            logger.info(f"Reduced white threshold to {white_threshold} for better color detection")
+
+        if len(pixels) == 0:
+            # صورة بيضاء تماماً - ننشئ لون أسود واحد
+            logger.warning("No non-white pixels found, creating single black color")
+            centers = np.array([[0, 0, 0]], dtype=np.uint8)
+            label_map = np.zeros((h, w), dtype=np.int32)
+            bg_mask = np.ones((h, w), dtype=bool)
+        else:
+            # تحسين K-means للصور متعددة الألوان
+            # زيادة عدد التكرارات والمحاولات حسب عدد الألوان
+            max_iter = 200 if num_colors <= 4 else 300  # أكثر تكرارات للألوان الكثيرة
+            epsilon = 0.1 if num_colors <= 4 else 0.05  # دقة أعلى للألوان الكثيرة
+            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, max_iter, epsilon)
+            flags = cv2.KMEANS_PP_CENTERS  # استخدام PP centers لنتائج أفضل
+
+            attempts = 10 if num_colors <= 4 else 20  # محاولات أكثر للألوان الكثيرة
+
+            compactness, labels, centers = cv2.kmeans(
+                pixels.astype(np.float32),
                 num_colors,
                 None,
                 criteria,
-                attempts,
-                cv2.KMEANS_PP_CENTERS,
+                10,  # زيادة عدد المحاولات
+                flags
             )
-        except cv2.error as e:
-            logger.error(f"[ColorSeparator] cv2.kmeans failed: {e}")
-            raise RuntimeError(f"Color separation failed: {e}")
 
-        # تحويل centers إلى RGB للعرض والتخزين
-        if use_lab:
-            centers_lab = np.uint8(centers_cluster)
-            # تحويل LAB centers إلى RGB للعرض
-            centers_rgb = cv2.cvtColor(centers_lab.reshape(1, -1, 3), cv2.COLOR_LAB2RGB)
-            centers = centers_rgb.reshape(-1, 3)
-        else:
-            centers = np.uint8(centers_cluster)
-
-        # ترتيب من الأغمق للأفتح
-        brightness = [int(np.mean(cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_RGB2GRAY))) for c in centers]
-        sorted_indices = np.argsort(brightness)
-        centers = centers[sorted_indices]
-        centers_cluster = centers_cluster[sorted_indices]
+            centers = np.uint8(centers)
 
         # ════════════════════════════════════════════════════════════
         # CRITICAL FIX: Vectorized label_map building (was Python loop)
         # ════════════════════════════════════════════════════════════
-        centers_np = centers_cluster.astype(np.float32)  # shape: (K, 3)
+        centers_np = centers.astype(np.float32)  # shape: (K, 3)
         # Pixels: (N, 3) where N = h*w
         # diff: (N, K, 3) via broadcasting
         diff = pixels[:, np.newaxis, :] - centers_np[np.newaxis, :, :]
         dists_sq = np.sum(diff ** 2, axis=2)  # (N, K) — squared distance
         label_map = np.argmin(dists_sq, axis=1).reshape(h, w).astype(np.int32)
         # ════════════════════════════════════════════════════════════
+
+        # ترتيب من الأغمق للأفتح
+        brightness = [int(np.mean(cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_RGB2GRAY))) for c in centers]
+        sorted_indices = np.argsort(brightness)
+        centers = centers[sorted_indices]
+
+        # Remap label_map to match sorted centers
+        new_label_map = np.full_like(label_map, -1)
+        for new_idx, old_idx in enumerate(sorted_indices):
+            new_label_map[label_map == old_idx] = new_idx
+        label_map = new_label_map
 
         # تحديد الخلفية
         if bg_mask is not None:
@@ -254,6 +273,7 @@ class ColorSeparator:
                 }
             )
 
-        # ترتيب من الأكثر مساحةً للأقل
+        # ترتيب من الأكثر مساحةً للأقل وإزالة الألوان الفارغة
+        info = [x for x in info if x["pixel_count"] > 0]
         info.sort(key=lambda x: x["pixel_count"], reverse=True)
         return info

@@ -132,12 +132,11 @@ def step2_5_underbase_creation(separation_result: Dict, args: argparse.Namespace
     try:
         pantone_lib = PantoneLibrary()
         colors = separation_result["colors"]
-        label_map = separation_result["label_map"]
-        image = separation_result["image"]
         
-        # Check which colors are dark and need underbase
+        # Calculate dark color indices based on original colors before sorting
+        original_colors = colors.copy()  # Save original colors
         dark_color_indices = []
-        for i, color_rgb in enumerate(colors):
+        for i, color_rgb in enumerate(original_colors):
             # Find nearest Pantone
             pantone_match = pantone_lib.find_nearest_pantone(color_rgb)
             
@@ -157,40 +156,33 @@ def step2_5_underbase_creation(separation_result: Dict, args: argparse.Namespace
                 pantone_match.name.startswith(('Black', 'Dark', 'Navy'))
             )
             
-            if is_dark:
+            if is_dark and color_rgb != (255, 255, 255):  # Exclude white underbase if already added
                 dark_color_indices.append(i)
                 logger.info(f"Dark color detected {i+1}: {pantone_match.name} (brightness: {brightness:.1f})")
         
-        if not dark_color_indices:
-            logger.info("No dark colors found, skipping underbase")
+        if not dark_color_indices or len(colors) <= 1:
+            logger.info("No dark colors found or single color design, skipping underbase")
             return separation_result
         
         # Add white underbase layer at the beginning
         white_rgb = (255, 255, 255)
         
+        # Store original label_map before shifting
+        original_label_map = label_map.copy()
+        
+        # Shift all labels by 1 to make room for underbase
+        new_label_map = label_map + 1
+        new_label_map[label_map == -1] = -1  # keep background as -1
+        
+        # Set underbase (label 0) where original dark colors were
+        for i in dark_color_indices:
+            new_label_map[original_label_map == i] = 0
+        
         # Create new color list with white first
         new_colors = [white_rgb] + colors
         
-        # Create new label map with underbase
-        h, w = label_map.shape
-        new_label_map = np.full((h, w), -1, dtype=np.int32)  # Start with all background
-        
-        # For each pixel, determine the layers needed
-        for y in range(h):
-            for x in range(w):
-                old_label = label_map[y, x]
-                if old_label == -1:  # Background
-                    continue
-                
-                # If this pixel has a dark color, add underbase
-                if old_label in dark_color_indices:
-                    new_label_map[y, x] = 0  # White underbase
-                
-                # Shift the original color up by 1
-                new_label_map[y, x] = old_label + 1
-        
         # Update color names
-        new_color_names = ["underbase_white"] + separation_result["color_names"]
+        new_color_names = ["underbase_white"] + color_names
         
         # Update separation result
         updated_result = separation_result.copy()
@@ -295,12 +287,24 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
         result = []
         total = max(1, len(masks))
         for i, mask in enumerate(masks):
-            # Use CMYK angle for this color index, fallback to default
-            angle = cmyk_angles[i] if i < len(cmyk_angles) else args.angle
-            ht = generator.generate(mask, lpi=args.lpi, angle=angle, dot_shape=args.dot_shape, dpi=args.dpi)
-            result.append(ht)
+            # Check if mask is mostly solid (should not be halftoned)
+            total_pixels = mask.size
+            black_pixels = np.sum(mask < 128)  # Count black pixels
+            solid_percentage = (black_pixels / total_pixels) * 100
+            
+            # If mask is mostly solid (>80% black), skip halftoning to keep it solid
+            if solid_percentage > 80.0:
+                logger.info(f"  Skipping halftone for mask {i+1} ({solid_percentage:.1f}% solid) - keeping solid")
+                result.append(mask)
+            else:
+                # Use CMYK angle for this color index, fallback to default
+                angle = cmyk_angles[i] if i < len(cmyk_angles) else args.angle
+                ht = generator.generate(mask, lpi=args.lpi, angle=angle, dot_shape=args.dot_shape, dpi=args.dpi)
+                result.append(ht)
+                logger.info(f"  Halftoned mask {i+1} ({solid_percentage:.1f}% coverage) with angle {angle}°")
+            
             overall = ((5 - 1) + (i + 1) / total) / TOTAL_STEPS
-            _progress(overall, f"Halftone {i+1}/{total} (angle: {angle}°)")
+            _progress(overall, f"Processed {i+1}/{total} (solid: {solid_percentage:.1f}%)")
         return result
     except Exception as e:
         logger.warning(f"Halftone generation failed, skipping: {e}")
@@ -336,7 +340,32 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
     return masks
 
 
-def step3_5_trapping(masks: List, separation_result: Dict, args: argparse.Namespace) -> List:
+def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
+    """
+    Apply strict binarization to ensure all masks are pure black (0) and white (255).
+    This prevents false halftoning of what should be solid colors.
+    """
+    _step(7.5, "Strict binarization (pre-film)")
+    result = []
+    total = max(1, len(masks))
+    for i, mask in enumerate(masks):
+        # Ensure mask is uint8
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
+        
+        # Apply strict binary threshold
+        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # Optional: Apply slight Gaussian blur then re-threshold to smooth stair-stepping
+        if args.clean:  # Only if edge cleaning is enabled
+            blurred = cv2.GaussianBlur(binary_mask, (3, 3), 0.5)
+            _, binary_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
+        
+        result.append(binary_mask)
+        _progress(((7.5 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Binarized {i+1}/{total}")
+        logger.info(f"  Strict binarization applied to mask {i+1}")
+    
+    return result
     _step(3.5, "Trapping (automatic)")
     try:
         if len(masks) < 2:
@@ -442,10 +471,20 @@ def step9_export(
             if mask.dtype != np.uint8:
                 mask = mask.astype(np.uint8)
             
+            # Skip masks with no design pixels (all black)
+            if np.sum(mask > 0) == 0:
+                logger.info(f"  Skipping empty mask {i+1}")
+                continue
+
             # 1. Save PNG for UI preview
             png_filename = f"film_{i+1}.png"
             png_filepath = os.path.join(output_dir, png_filename)
-            cv2.imwrite(png_filepath, mask)
+            # For single color designs, invert to show black design on white background
+            if len(masks) == 1:
+                preview_mask = cv2.bitwise_not(mask)  # Invert: white design on black background → black design on white background
+            else:
+                preview_mask = cv2.bitwise_not(mask)  # Invert for multi-color: white design on black background
+            cv2.imwrite(png_filepath, preview_mask)
             exported_paths.append(png_filepath)
             
             # 2. Save SVG for vector editing
@@ -561,14 +600,14 @@ def parse_args() -> argparse.Namespace:
         '--auto-colors', action='store_true',
         help='Auto-detect optimal color count'
     )
-    parser.add_argument("--dpi", type=int, default=300, help="Output DPI")
+    parser.add_argument("--dpi", type=int, default=600, help="Output DPI (higher = smoother edges)")
     parser.add_argument("--halftone", action="store_true", help="Enable halftone mode")
     parser.add_argument("--lpi", type=int, default=65, help="Halftone LPI (lines per inch)")
     parser.add_argument("--dot-shape", choices=["round", "square", "ellipse"], default="round", help="Halftone dot shape")
     parser.add_argument("--detail-level", choices=["high", "medium", "low"], default="medium")
     parser.add_argument("--clean", action="store_true", help="Apply edge cleaning")
     parser.add_argument("--validate-strokes", action="store_true", help="Validate stroke widths")
-    parser.add_argument("--min-stroke", type=float, default=0.3, help="Min stroke width in mm")
+    parser.add_argument("--min-stroke", type=float, default=0.0, help="Min stroke width in mm (disabled)")
     parser.add_argument("--edge-enhance", choices=["none", "light", "strong"], default="light")
     parser.add_argument(
         '--combine-pdf', action='store_true', default=True,
@@ -652,11 +691,11 @@ def main() -> int:
         if args.trapping_mode == 'automatic' and HAS_PANTONE:
             masks = step3_5_trapping(masks, separation_result, args)
 
-        # DEBUG: Save masks after generation
-        for idx, mask in enumerate(masks):
-            debug_path = os.path.join(output_dir, f"debug_mask_{idx+1}_after_generation.png")
-            cv2.imwrite(debug_path, mask)
-            logger.info(f"DEBUG: Saved mask {idx+1} after generation: {debug_path}")
+        # DEBUG: Save masks after generation (only in debug mode)
+        # for idx, mask in enumerate(masks):
+        #     debug_path = os.path.join(output_dir, f"debug_mask_{idx+1}_after_generation.png")
+        #     cv2.imwrite(debug_path, mask)
+        #     logger.info(f"DEBUG: Saved mask {idx+1} after generation: {debug_path}")
 
         # Step 4 — Edge Cleaning (skip if halftone, cleanup already done in mask gen)
         if args.clean and not args.halftone:
@@ -668,7 +707,10 @@ def main() -> int:
         masks = step5_halftone(masks, args)
 
         # Step 6 — Binarize (after halftone if enabled)
-        masks = step6_binarize(masks, args)
+        if args.halftone:
+            masks = step6_binarize(masks, args)
+        else:
+            _step(6, "Binarizing (skipped - masks already binary)")
 
         # Step 7 — Stroke Validation
         masks = step7_validate_strokes(masks, args)
