@@ -17,6 +17,7 @@ class SetupBinding extends Bindings {
     // Controller
     Get.lazyPut(
       () => SetupController(repository: Get.find<ProcessingRepository>()),
+      fenix: true,
     );
   }
 }

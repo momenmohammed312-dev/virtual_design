@@ -45,6 +45,15 @@ class ColorSeparator:
         if len(fg_pixels) < 100:
             logger.warning("Too few foreground pixels, defaulting to 2")
             return 2
+            
+        # 1. Quick Grayscale check: If image is pure BW/Grayscale, it only needs 1 ink + 1 bg
+        b, g, r = cv2.split(image)
+        # Check if max difference between channels is extremely small
+        diff_bg = cv2.absdiff(b, g)
+        diff_gr = cv2.absdiff(g, r)
+        if np.max(diff_bg) <= 5 and np.max(diff_gr) <= 5:
+            logger.info("[ColorSeparator] Image is effectively grayscale/B&W. Auto-detecting 2 colors.")
+            return 2
         
         # Sample للسرعة
         if len(fg_pixels) > 10000:

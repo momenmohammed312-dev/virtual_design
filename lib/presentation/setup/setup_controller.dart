@@ -6,7 +6,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
-import '../../core/utils/image_processor.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
@@ -31,7 +30,7 @@ class SetupController extends GetxController {
   final RxDouble paperHeightCm = 29.7.obs;
 
   // Print quality (DPI)
-  final RxDouble printQuality = 300.0.obs;
+  final RxDouble printQuality = 150.0.obs;
 
   // Halftone settings
   final RxBool isHalftone = false.obs;
@@ -104,7 +103,7 @@ class SetupController extends GetxController {
     autoUpscale.value = false;
     paperWidthCm.value = 21.0;
     paperHeightCm.value = 29.7;
-    printQuality.value = 300.0;
+    printQuality.value = 150.0;
     isHalftone.value = false;
     lpiValue.value = 55;
     selectedDotShape.value = 'round';
@@ -194,7 +193,12 @@ class SetupController extends GetxController {
       if (result.success) {
         Get.log('✅ Success! Navigating to preview with: ${result.outputDirectory}');
         await Future.delayed(const Duration(milliseconds: 500));
-        Get.offNamed('/preview', arguments: result.outputDirectory);
+        Get.offNamed('/preview', arguments: {
+          'outputDirectory': result.outputDirectory,
+          'imagePath': imagePath.value,
+          'originalPath': _originalTempPath,
+          'settings': settings,
+        });
       } else {
         Get.log('❌ Processing failed: ${result.errorMessage}');
         isProcessing.value = false;
@@ -225,15 +229,16 @@ class SetupController extends GetxController {
         duration: const Duration(seconds: 5),
       );
     } finally {
-      // Clean up temp normalized image
+      // NOTE: Cleanup deferred to PreviewController.onClose() to allow Regenerate feature.
+      /*
       if (imagePath.value.contains('vd_normalized_')) {
         ImageProcessor.cleanupTempFile(imagePath.value);
       }
-      // Clean up original temp path if provided
       if (_originalTempPath.isNotEmpty &&
           _originalTempPath.contains('vd_normalized_')) {
         ImageProcessor.cleanupTempFile(_originalTempPath);
       }
+      */
       if (isProcessing.value) isProcessing.value = false;
       Get.log('=== startProcessing() finished ===');
     }

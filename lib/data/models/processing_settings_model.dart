@@ -1,8 +1,9 @@
 // lib/data/models/processing_settings_model.dart
 
 import 'package:hive/hive.dart';
-import 'package:virtual_design/domain/entities/processing_settings.dart'
-    as ps;
+import 'package:virtual_design/domain/entities/processing_settings.dart' as ps;
+
+part 'processing_settings_model.g.dart';
 
 @HiveType(typeId: 0)
 class ProcessingSettingsModel {

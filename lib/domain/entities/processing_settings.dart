@@ -77,6 +77,14 @@ class ProcessingSettings {
   final double paperWidthCm;
   final double paperHeightCm;
 
+  // Advanced Tuning (Phase 8 Senior Optimizations)
+  final double globalThreshold;
+  final double smoothingFactor;
+  final double cornerThreshold;
+  final int noiseRemoval;
+  final bool autoCrop;
+  final bool forceHalftone;
+
   // Professional Features (all enabled by default)
   final PantoneMatching pantoneMatching;
   final UnderbaseMode underbaseMode;
@@ -97,6 +105,13 @@ class ProcessingSettings {
     this.halftoneSettings,
     this.paperWidthCm = 21.0,
     this.paperHeightCm = 29.7,
+    // Advanced Tuning Defaults
+    this.globalThreshold = 127.0,
+    this.smoothingFactor = 0.25,
+    this.cornerThreshold = 45.0,
+    this.noiseRemoval = 10,
+    this.autoCrop = false,
+    this.forceHalftone = false,
     // Professional Features — all enabled automatically
     this.pantoneMatching = PantoneMatching.automatic,
     this.underbaseMode = UnderbaseMode.automatic,
@@ -221,6 +236,12 @@ class ProcessingSettings {
     GradientMeshMode? gradientMeshMode,
     TypographyMode? typographyMode,
     MeshPreviewMode? meshPreviewMode,
+    double? globalThreshold,
+    double? smoothingFactor,
+    double? cornerThreshold,
+    int? noiseRemoval,
+    bool? autoCrop,
+    bool? forceHalftone,
   }) => ProcessingSettings(
     colorCount: colorCount ?? this.colorCount,
     printFinish: printFinish ?? this.printFinish,
@@ -230,8 +251,8 @@ class ProcessingSettings {
     meshCount: meshCount ?? this.meshCount,
     edgeEnhancement: edgeEnhancement ?? this.edgeEnhancement,
     halftoneSettings: halftoneSettings ?? this.halftoneSettings,
-    paperWidthCm: (paperWidthCm ?? this.paperWidthCm),
-    paperHeightCm: (paperHeightCm ?? this.paperHeightCm),
+    paperWidthCm: paperWidthCm ?? this.paperWidthCm,
+    paperHeightCm: paperHeightCm ?? this.paperHeightCm,
     pantoneMatching: pantoneMatching ?? this.pantoneMatching,
     underbaseMode: underbaseMode ?? this.underbaseMode,
     trappingMode: trappingMode ?? this.trappingMode,
@@ -239,6 +260,12 @@ class ProcessingSettings {
     gradientMeshMode: gradientMeshMode ?? this.gradientMeshMode,
     typographyMode: typographyMode ?? this.typographyMode,
     meshPreviewMode: meshPreviewMode ?? this.meshPreviewMode,
+    globalThreshold: globalThreshold ?? this.globalThreshold,
+    smoothingFactor: smoothingFactor ?? this.smoothingFactor,
+    cornerThreshold: cornerThreshold ?? this.cornerThreshold,
+    noiseRemoval: noiseRemoval ?? this.noiseRemoval,
+    autoCrop: autoCrop ?? this.autoCrop,
+    forceHalftone: forceHalftone ?? this.forceHalftone,
   );
 
   Map<String, dynamic> toJson() => {
@@ -259,6 +286,7 @@ class ProcessingSettings {
     'gradientMeshMode': gradientMeshMode.name,
     'typographyMode': typographyMode.name,
     'meshPreviewMode': meshPreviewMode.name,
+    'forceHalftone': forceHalftone,
   };
 
   factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
@@ -314,5 +342,11 @@ class ProcessingSettings {
           (e) => e.name == json['meshPreviewMode'],
           orElse: () => MeshPreviewMode.automatic,
         ),
+        globalThreshold: (json['globalThreshold'] as num?)?.toDouble() ?? 127.0,
+        smoothingFactor: (json['smoothingFactor'] as num?)?.toDouble() ?? 0.25,
+        cornerThreshold: (json['cornerThreshold'] as num?)?.toDouble() ?? 45.0,
+        noiseRemoval: (json['noiseRemoval'] as int?) ?? 10,
+        autoCrop: (json['autoCrop'] as bool?) ?? false,
+        forceHalftone: (json['forceHalftone'] as bool?) ?? false,
       );
 }

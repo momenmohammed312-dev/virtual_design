@@ -64,10 +64,10 @@ class PreviewPage extends StatelessWidget {
                               ),
                               const SizedBox(width: 20),
 
-                              // Sidebar with layers
+                              // Sidebar with Tabs (Layers / Fine-Tune)
                               SizedBox(
-                                width: 300,
-                                child: _buildLayersPanel(controller),
+                                width: 320,
+                                child: _buildRightPanel(controller),
                               ),
                             ],
                           ),
@@ -212,7 +212,7 @@ class PreviewPage extends StatelessWidget {
                               );
                             }
                             final path = controller.previewPaths[idx];
-                            return _buildFilmPreview(controller, path);
+                            return _buildFilmPreview(controller, path, idx);
                           }),
                         ),
                         const SizedBox(height: 16),
@@ -267,7 +267,7 @@ class PreviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildFilmPreview(PreviewController controller, String path) {
+  Widget _buildFilmPreview(PreviewController controller, String path, int index) {
     if (!File(path).existsSync()) {
       return Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -279,33 +279,57 @@ class PreviewPage extends StatelessWidget {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: InteractiveViewer(
-            transformationController: controller.transformationController,
-            minScale: 0.5,
-            maxScale: 5.0,
-            boundaryMargin: const EdgeInsets.all(100),
-            child: Image.file(
-              File(path),
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) {
-                return Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Icon(Icons.broken_image, size: 64, color: Colors.grey),
-                    SizedBox(height: 10),
-                    Text('Invalid image file', style: TextStyle(color: Colors.grey)),
-                  ],
-                );
-              },
-            ),
+    return Obx(() {
+      final isInverted = controller.isLayerInverted.length > index ? controller.isLayerInverted[index] : false;
+      final tShirtCol = controller.tshirtColor.value;
+      final showSim = controller.showTshirtSimulation.value;
+
+      // matrix to invert colors: output = 255 - input
+      const invertMatrix = <double>[
+        -1,  0,  0, 0, 255,
+         0, -1,  0, 0, 255,
+         0,  0, -1, 0, 255,
+         0,  0,  0, 1,   0,
+      ];
+
+      Widget image = Image.file(
+        File(path),
+        key: ValueKey('${path}_${controller.lastUpdateTimestamp.value}'), // Cache Busting (Phase 10)
+        fit: BoxFit.contain,
+        gaplessPlayback: true, // Smoother transitions (Phase 11)
+        errorBuilder: (context, error, stackTrace) => const Icon(Icons.error),
+      );
+
+      // 1. Apply Fast Inversion Simulation
+      if (isInverted) {
+        image = ColorFiltered(
+          colorFilter: const ColorFilter.matrix(invertMatrix),
+          child: image,
+        );
+      }
+
+      // 2. Apply T-Shirt Simulation (Multiply design on top of color)
+      if (showSim) {
+        image = Container(
+          color: tShirtCol,
+          child: ColorFiltered(
+            colorFilter: ColorFilter.mode(tShirtCol, BlendMode.multiply),
+            child: image,
           ),
         );
-      },
-    );
+      }
+
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: InteractiveViewer(
+          transformationController: controller.transformationController,
+          minScale: 0.5,
+          maxScale: 5.0,
+          boundaryMargin: const EdgeInsets.all(100),
+          child: image,
+        ),
+      );
+    });
   }
 
   Widget _buildLayersPanel(PreviewController controller) {
@@ -757,6 +781,7 @@ class PreviewPage extends StatelessWidget {
     
     // Fallback: show thumbnail
     return Container(
+      key: ValueKey('${path}_${controller.lastUpdateTimestamp.value}'), // Cache Busting (Phase 10)
       decoration: BoxDecoration(
         color: Colors.grey.shade300,
         borderRadius: BorderRadius.circular(5),
@@ -814,5 +839,236 @@ class PreviewPage extends StatelessWidget {
     if (hexString.length == 6 || hexString.length == 7) buffer.write('ff');
     buffer.write(hexString.replaceFirst('#', ''));
     return Color(int.parse(buffer.toString(), radix: 16));
+  }
+
+  Widget _buildRightPanel(PreviewController controller) {
+    return DefaultTabController(
+      length: 2,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Column(
+          children: [
+            const TabBar(
+              labelColor: primaryBlue,
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: primaryBlue,
+              tabs: [
+                Tab(text: 'Layers', icon: Icon(Icons.layers, size: 18)),
+                Tab(text: 'Fine-Tune', icon: Icon(Icons.tune, size: 18)),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _buildLayersPanel(controller),
+                  _buildFineTunePanel(controller),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFineTunePanel(PreviewController controller) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Advanced Adjustments',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 5),
+          const Text(
+            'Fine-tune the output quality before final export.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
+          const Divider(height: 30),
+          
+          _buildTuningSlider(
+            label: 'Global Threshold',
+            value: controller.globalThreshold,
+            min: 0,
+            max: 255,
+            description: 'Higher values make design thinner/sharper.',
+          ),
+          
+          _buildTuningSlider(
+            label: 'Path Smoothing',
+            value: controller.smoothingFactor,
+            min: 0,
+            max: 1.0,
+            divisions: 20,
+            description: 'Reduces pixelation jagged edges.',
+          ),
+
+          _buildTuningSlider(
+            label: 'Corner Preservation',
+            value: controller.cornerThreshold,
+            min: 0,
+            max: 90,
+            description: 'Angles sharper than this will not be smoothed.',
+          ),
+
+          const Divider(height: 30),
+
+          const Text(
+            'Layer Overrides',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          Obx(() {
+            final idx = controller.selectedFilmIndex.value;
+            if (controller.isLayerInverted.isEmpty) return const SizedBox();
+            
+            return Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Invert Image', style: TextStyle(fontSize: 13)),
+                  subtitle: const Text('Black to White / White to Black', style: TextStyle(fontSize: 11)),
+                  value: controller.isLayerInverted[idx],
+                  onChanged: (val) => controller.isLayerInverted[idx] = val,
+                  activeThumbColor: primaryBlue,
+                  dense: true,
+                ),
+                SwitchListTile(
+                  title: const Text('Force Solid', style: TextStyle(fontSize: 13)),
+                  subtitle: const Text('Ignore halftones for this layer', style: TextStyle(fontSize: 11)),
+                  value: controller.isLayerSolid[idx],
+                  onChanged: (val) => controller.isLayerSolid[idx] = val,
+                  activeThumbColor: primaryBlue,
+                  dense: true,
+                ),
+                Obx(() => SwitchListTile(
+                  title: const Text('Force Halftone', style: TextStyle(fontSize: 13)),
+                  subtitle: const Text('Convert everything to dots (Halftone)', style: TextStyle(fontSize: 11)),
+                  value: controller.forceHalftone.value,
+                  onChanged: (val) => controller.forceHalftone.value = val,
+                  activeThumbColor: primaryBlue,
+                  dense: true,
+                )),
+              ],
+            );
+          }),
+
+          const Divider(height: 30),
+
+          const Text(
+            'Simulation (T-Shirt)',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          Obx(() => SwitchListTile(
+            title: const Text('Show Simulation', style: TextStyle(fontSize: 13)),
+            value: controller.showTshirtSimulation.value,
+            onChanged: (val) => controller.showTshirtSimulation.value = val,
+            activeThumbColor: primaryBlue,
+            dense: true,
+          )),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children: [
+              _buildColorSeed(controller, Colors.white),
+              _buildColorSeed(controller, Colors.black),
+              _buildColorSeed(controller, Colors.red),
+              _buildColorSeed(controller, const Color(0xFF000080)),
+              _buildColorSeed(controller, Colors.grey),
+            ],
+          ),
+
+          const SizedBox(height: 40),
+          
+          SizedBox(
+            width: double.infinity,
+            child: Obx(() => ElevatedButton.icon(
+              onPressed: controller.isRegenerating.value ? null : controller.regenerateFilms,
+              icon: controller.isRegenerating.value 
+                  ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.refresh, size: 18),
+              label: Text(controller.isRegenerating.value ? 'Regenerating...' : 'Regenerate Films'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryBlue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+              ),
+            )),
+          ),
+          const SizedBox(height: 10),
+          const Center(
+            child: Text(
+              'Uses Python for High-Quality Vectorization',
+              style: TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTuningSlider({
+    required String label,
+    required RxDouble value,
+    required double min,
+    required double max,
+    int? divisions,
+    required String description,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              Obx(() => Text(
+                value.value.toInt() == value.value ? value.value.toInt().toString() : value.value.toStringAsFixed(2),
+                style: const TextStyle(fontSize: 13, color: primaryBlue, fontWeight: FontWeight.bold),
+              )),
+            ],
+          ),
+          Obx(() => Slider(
+            value: value.value,
+            min: min,
+            max: max,
+            divisions: divisions,
+            onChanged: (v) => value.value = v,
+            activeColor: primaryBlue,
+          )),
+          Text(description, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildColorSeed(PreviewController controller, Color color) {
+    return GestureDetector(
+      onTap: () => controller.tshirtColor.value = color,
+      child: Obx(() {
+        final isSelected = controller.tshirtColor.value == color;
+        return Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isSelected ? primaryBlue : Colors.grey.shade300,
+              width: isSelected ? 3 : 1,
+            ),
+          ),
+          child: isSelected ? const Icon(Icons.check, size: 15, color: Colors.white) : null,
+        );
+      }),
+    );
   }
 }

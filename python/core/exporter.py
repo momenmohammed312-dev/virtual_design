@@ -349,15 +349,29 @@ class Exporter:
 
         filepath = self.output_dir / filename
 
-        # Find contours with better approximation
+        # Ensure mask is 8-bit single channel (CV_8UC1)
+        if len(mask.shape) == 3:
+            mask_1c = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        else:
+            mask_1c = mask.copy()
+            
+        if mask_1c.dtype != np.uint8:
+            mask_1c = mask_1c.astype(np.uint8)
+
+        # 1. Pre-smoothing: تحويل الحواف المشرشرة لحواف منحنية ناعمة
+        # نستخدم GaussianBlur لمسح "زوايا البكسل" وبعدين نرجعها صريحة بـ Threshold
+        mask_smoothed = cv2.GaussianBlur(mask_1c, (3, 3), 0)
+        _, mask_bw = cv2.threshold(mask_smoothed, 128, 255, cv2.THRESH_BINARY)
+
+        # 2. Find contours with better approximation
         contours, _ = cv2.findContours(
-            mask,
+            mask_bw,
             cv2.RETR_EXTERNAL,
             cv2.CHAIN_APPROX_TC89_KCOS  # Better curve approximation
         )
 
         # Create SVG
-        h, w = mask.shape
+        h, w = mask.shape[:2]
         dwg = svgwrite.Drawing(str(filepath), size=(w, h))
 
         # Add each contour as a smooth Bezier path
@@ -367,8 +381,8 @@ class Exporter:
             if len(contour) < 3:
                 continue
 
-            # Simplify contour to reduce points while preserving shape
-            epsilon = 0.5  # pixels - smaller = more accurate but more complex
+            # Douglas-Peucker simplification: تنظيف النقاط غير الضرورية
+            epsilon = 0.25  # pixels - قيمة صغيرة جداً للحفاظ على التفاصيل مع التحويل لـ Bezier لاحقاً
             approx = cv2.approxPolyDP(contour, epsilon, True)
 
             if len(approx) < 3:
@@ -403,12 +417,13 @@ class Exporter:
         path_parts = [f"M {pts[0][0]:.2f},{pts[0][1]:.2f}"]
 
         for i in range(n):
+            # النقطة الحالية والتالية والاتنين اللي قبلهم وبعدهم للحساب
             p0 = pts[(i - 1) % n]
             p1 = pts[i]
             p2 = pts[(i + 1) % n]
             p3 = pts[(i + 2) % n]
 
-            # Catmull-Rom to Bezier conversion for smooth curves
+            # تحويل Catmull-Rom Control Points إلى Bezier Control Points
             cp1x = p1[0] + (p2[0] - p0[0]) * smooth_factor
             cp1y = p1[1] + (p2[1] - p0[1]) * smooth_factor
             cp2x = p2[0] - (p3[0] - p1[0]) * smooth_factor

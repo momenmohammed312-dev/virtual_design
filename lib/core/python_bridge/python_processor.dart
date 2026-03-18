@@ -210,8 +210,8 @@ class PythonProcessor {
       args.addAll(['--colors', settings.colorCount.toString()]);
     }
 
-    // Halftone Settings - only add --halftone if explicitly set to halftone finish
-    if (settings.printFinish == PrintFinish.halftone) {
+    // Halftone Settings - only add --halftone if explicitly set to halftone finish OR forced via override
+    if (settings.printFinish == PrintFinish.halftone || settings.forceHalftone) {
       args.add('--halftone');
       if (settings.halftoneSettings != null) {
         args.add('--lpi');
@@ -232,6 +232,15 @@ class PythonProcessor {
     args.addAll(['--gradient-mesh-mode', settings.gradientMeshMode.name]);
     args.addAll(['--typography-mode', settings.typographyMode.name]);
     args.addAll(['--mesh-preview-mode', settings.meshPreviewMode.name]);
+
+    // Advanced Tuning (Phase 8 Senior Optimizations)
+    args.addAll(['--global-threshold', settings.globalThreshold.toInt().toString()]);
+    args.addAll(['--smoothing-factor', settings.smoothingFactor.toString()]);
+    args.addAll(['--corner-threshold', settings.cornerThreshold.toString()]);
+    args.addAll(['--noise-removal', settings.noiseRemoval.toString()]);
+    if (settings.autoCrop) {
+      args.add('--auto-crop');
+    }
 
     return args;
   }
@@ -254,7 +263,10 @@ class PythonProcessor {
   String _safePath(String path) {
     if (Platform.isWindows) {
       // Escape any existing double quotes inside the path
-      final escaped = path.replaceAll('"', r'\"');
+      var escaped = path.replaceAll('"', r'\"');
+      // Replace backslashes with forward slashes to prevent escape issues in Python strings
+      escaped = escaped.replaceAll('\\', '/');
+      
       // Wrap in quotes if path contains spaces or special characters
       if (escaped.contains(' ') ||
           escaped.contains('&') ||

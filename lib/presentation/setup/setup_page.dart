@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:virtual_design/core/enums/app_enums.dart';
+import '../../domain/entities/processing_settings.dart' as ps;
 import 'setup_controller.dart';
 
 class SetupPage extends StatefulWidget {
@@ -715,8 +716,14 @@ class _SetupPageState extends State<SetupPage> {
                         selectedPrintFinish = finish;
                         showHalftoneSettings = finish == PrintFinish.halftone;
                       });
-                      // Sync halftone state to controller
-                      Get.find<SetupController>().isHalftone.value = finish == PrintFinish.halftone;
+                      // Sync ALL finish state to controller (both helper bool and explicit enum)
+                      final setupCtrl = Get.find<SetupController>();
+                      setupCtrl.isHalftone.value = (finish == PrintFinish.halftone);
+                      
+                      // Sync to domain enum
+                      setupCtrl.selectedFinish.value = (finish == PrintFinish.halftone) 
+                        ? ps.PrintFinish.halftone 
+                        : ps.PrintFinish.solid;
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 15),

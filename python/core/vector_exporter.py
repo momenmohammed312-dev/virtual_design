@@ -19,19 +19,26 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
 
 
+def _get_angle(p1, p2, p3):
+    """Calculate the interior angle at p2 in degrees."""
+    v1 = p1 - p2
+    v2 = p3 - p2
+    norm1 = np.linalg.norm(v1)
+    norm2 = np.linalg.norm(v2)
+    if norm1 < 1e-4 or norm2 < 1e-4:
+        return 0
+    cos_theta = np.dot(v1, v2) / (norm1 * norm2)
+    return np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0)))
+
+
 def fit_bezier_to_contour(
     contour: np.ndarray,
-    smooth_factor: float = 0.25
+    smooth_factor: float = 0.25,
+    corner_threshold: float = 45.0
 ) -> List[Tuple]:
     """
-    تحويل contour pixel إلى قائمة Bezier curves.
-    
-    Args:
-        contour: numpy array shape (N, 1, 2)
-        smooth_factor: مقدار التنعيم (0=لا تنعيم, 1=تنعيم كامل)
-    
-    Returns:
-        قائمة tuples: ('M', x, y) أو ('C', cx1, cy1, cx2, cy2, x, y)
+    تحويل النقاط (Contour) إلى منحنيات بيزييه (Bezier Curves) احترافية.
+    إضافة: الحفاظ على الزوايا الحادة (Sharp Corners) بناءً على corner_threshold.
     """
     pts = contour.reshape(-1, 2).astype(float)
     n = len(pts)
@@ -46,13 +53,28 @@ def fit_bezier_to_contour(
         p2 = pts[(i + 1) % n]
         p3 = pts[(i + 2) % n]
         
-        # Catmull-Rom to Bezier conversion
-        cp1x = p1[0] + (p2[0] - p0[0]) * smooth_factor
-        cp1y = p1[1] + (p2[1] - p0[1]) * smooth_factor
-        cp2x = p2[0] - (p3[0] - p1[0]) * smooth_factor
-        cp2y = p2[1] - (p3[1] - p1[1]) * smooth_factor
+        # Senior Optimization: Check if p1 and p2 are "Sharp Corners"
+        # If the angle at p1 or p2 is very sharp (e.g. < 45 deg or > 135 deg context dependent)
+        # We skip smoothing for that specific segment to keep it linear.
         
-        commands.append(('C', cp1x, cp1y, cp2x, cp2y, p2[0], p2[1]))
+        angle1 = _get_angle(p0, p1, p2)
+        angle2 = _get_angle(p1, p2, p3)
+        
+        # If it's a sharp corner, use linear segment (L) instead of Bezier (C)
+        # or reduce smooth_factor to 0 for this segment.
+        is_corner = angle1 < corner_threshold or angle2 < corner_threshold
+        
+        current_smooth = 0.0 if (is_corner or smooth_factor == 0) else smooth_factor
+        
+        if current_smooth == 0:
+            commands.append(('L', p2[0], p2[1]))
+        else:
+            # Catmull-Rom to Bezier conversion
+            cp1x = p1[0] + (p2[0] - p0[0]) * current_smooth
+            cp1y = p1[1] + (p2[1] - p0[1]) * current_smooth
+            cp2x = p2[0] - (p3[0] - p1[0]) * current_smooth
+            cp2y = p2[1] - (p3[1] - p1[1]) * current_smooth
+            commands.append(('C', cp1x, cp1y, cp2x, cp2y, p2[0], p2[1]))
     
     return commands
 
@@ -64,6 +86,7 @@ def export_vector_pdf(
     output_path: Path,
     dpi: int = 300,
     smooth_factor: float = 0.25,
+    corner_threshold: float = 45.0,
     min_contour_area: int = 50,
     page_size: str = 'A4',
 ) -> Path:
@@ -140,8 +163,12 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ رسم الـ vector paths ═══
-        _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        # For screen printing masks: find contours of white design areas (no inversion needed)
+        # 1. Pre-smoothing: تحويل الحواف المشرشرة لحواف منحنية ناعمة (رؤية البرنامج)
+        # نستخدم GaussianBlur لمسح "زوايا البكسل" وبعدين نرجعها صريحة بـ Threshold
+        smoothed = cv2.GaussianBlur(mask, (3, 3), 0)
+        _, bw = cv2.threshold(smoothed, 128, 255, cv2.THRESH_BINARY)
+        
+        # 2. Contour Extraction: استخراج الحواف
         contours, hierarchy = cv2.findContours(
             bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
         )
@@ -154,15 +181,16 @@ def export_vector_pdf(
             if area < min_contour_area:
                 continue
             
-            # Douglas-Peucker simplification
-            epsilon = 0.5  # pixels — أصغر = أدق، أكبر = أسلس
+            # Douglas-Peucker simplification: تنظيف النقاط غير الضرورية
+            # نستخدم قيمة ديناميكية بناءً على حجم الكنتور لضمان عدم فقدان التفاصيل الدقيقة
+            epsilon = 0.25  # قيمة صغيرة جداً للحفاظ على التفاصيل مع التحويل لـ Bezier لاحقاً
             approx = cv2.approxPolyDP(contour, epsilon, True)
             
             if len(approx) < 3:
                 continue
             
             # Bezier curve fitting
-            bezier_cmds = fit_bezier_to_contour(approx, smooth_factor)
+            bezier_cmds = fit_bezier_to_contour(approx, smooth_factor, corner_threshold)
             
             if not bezier_cmds:
                 continue

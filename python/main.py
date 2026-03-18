@@ -132,6 +132,8 @@ def step2_5_underbase_creation(separation_result: Dict, args: argparse.Namespace
     try:
         pantone_lib = PantoneLibrary()
         colors = separation_result["colors"]
+        color_names = separation_result["color_names"]
+        label_map = separation_result["label_map"]
         
         # Calculate dark color indices based on original colors before sorting
         original_colors = colors.copy()  # Save original colors
@@ -222,13 +224,40 @@ def step1_load_image(input_path: str) -> np.ndarray:
             scale_factor = min_width / w
             new_w = int(w * scale_factor)
             new_h = int(h * scale_factor)
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-            logger.info(f"Auto-upscaled small image: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f})")
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            logger.info(f"Auto-upscaled small image: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [NEAREST]")
         
         return image
     except Exception as e:
         logger.error(f"Robust image loader failed: {e}")
         raise ValueError(f"Cannot read image {input_path}: {e}")
+
+
+def step0_auto_crop(image: np.ndarray) -> np.ndarray:
+    """
+    Auto-crop the image to its non-white bounding box to improve K-means and remove artifacts.
+    """
+    _step(0.5, "Auto-cropping (Senior Opt)")
+    try:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Assuming white/near-white is background
+        _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
+        coords = cv2.findNonZero(thresh)
+        if coords is not None:
+            x, y, w, h = cv2.boundingRect(coords)
+            # Add small padding 
+            p = 15
+            x = max(0, x - p)
+            y = max(0, y - p)
+            w = min(image.shape[1] - x, w + 2 * p)
+            h = min(image.shape[0] - y, h + 2 * p)
+            cropped = image[y:y+h, x:x+w]
+            logger.info(f"  Cropped area: {w}x{h} at ({x}, {y})")
+            return cropped
+        return image
+    except Exception as e:
+        logger.warning(f"Auto-crop failed: {e}")
+        return image
 
 
 def step2_separate_colors(image: np.ndarray, num_colors: int, auto_detect: bool = False) -> dict:
@@ -267,15 +296,16 @@ def step3_generate_masks(image: np.ndarray, separation_result: dict, halftone_mo
 
 
 def step4_clean_edges(masks: list) -> list:
-    _step(4, "Cleaning edges")
-    cleaner = EdgeCleaner()
-    cleaned = cleaner.clean_all(masks, kernel_size=3, smooth=True)
-    return cleaned
+    _step(4, "Cleaning edges (disabled to preserve sharp pixels)")
+    # Morphology rounded sharp corners, making text look hand-drawn. Disabled for precision.
+    return masks
 
 
 def step5_halftone(masks: list, args: argparse.Namespace) -> list:
-    _step(5, "Halftone generation" if args.halftone and not getattr(args, 'skip_halftone', False) else "Halftone (skipped)")
-    if not args.halftone or not HAS_HALFTONE or getattr(args, 'skip_halftone', False):
+    is_halftone_enabled = args.halftone and not getattr(args, 'skip_halftone', False)
+    _step(5, "Halftone generation" if is_halftone_enabled else "Halftone (skipped)")
+    
+    if not is_halftone_enabled or not HAS_HALFTONE:
         return masks
     
     # Standard CMYK angles for best results (avoid moiré patterns)
@@ -289,22 +319,24 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
         for i, mask in enumerate(masks):
             # Check if mask is mostly solid (should not be halftoned)
             total_pixels = mask.size
-            black_pixels = np.sum(mask < 128)  # Count black pixels
-            solid_percentage = (black_pixels / total_pixels) * 100
+            design_pixels = np.sum(mask > 0)  # Masks are 255 for design, 0 for background
+            coverage_percentage = (design_pixels / total_pixels) * 100
             
-            # If mask is mostly solid (>80% black), skip halftoning to keep it solid
-            if solid_percentage > 80.0:
-                logger.info(f"  Skipping halftone for mask {i+1} ({solid_percentage:.1f}% solid) - keeping solid")
+            # If the user explicitly chose HALTONE finish, we usually want to process it
+            # But if it's already a very simple solid shape, we might skip
+            # The user's analysis suggests they want SOLID if they didn't choose halftone.
+            if coverage_percentage > 95.0:
+                logger.info(f"  Skipping halftone for mask {i+1} ({coverage_percentage:.1f}% coverage) - too dense")
                 result.append(mask)
             else:
                 # Use CMYK angle for this color index, fallback to default
                 angle = cmyk_angles[i] if i < len(cmyk_angles) else args.angle
                 ht = generator.generate(mask, lpi=args.lpi, angle=angle, dot_shape=args.dot_shape, dpi=args.dpi)
                 result.append(ht)
-                logger.info(f"  Halftoned mask {i+1} ({solid_percentage:.1f}% coverage) with angle {angle}°")
+                logger.info(f"  Halftoned mask {i+1} ({coverage_percentage:.1f}% coverage) with angle {angle}°")
             
             overall = ((5 - 1) + (i + 1) / total) / TOTAL_STEPS
-            _progress(overall, f"Processed {i+1}/{total} (solid: {solid_percentage:.1f}%)")
+            _progress(overall, f"Processed {i+1}/{total} (solid: {coverage_percentage:.1f}%)")
         return result
     except Exception as e:
         logger.warning(f"Halftone generation failed, skipping: {e}")
@@ -342,30 +374,45 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
 
 def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
     """
-    Apply strict binarization to ensure all masks are pure black (0) and white (255).
-    This prevents false halftoning of what should be solid colors.
+    Apply strict binarization and noise removal to ensure clean solid films.
     """
-    _step(7.5, "Strict binarization (pre-film)")
+    is_halftone = args.halftone and not getattr(args, 'skip_halftone', False)
+    _step(7.5, f"Strict binarization ({'halftone' if is_halftone else 'solid'} mode)")
+    
     result = []
     total = max(1, len(masks))
+    
+    # Use global-threshold if provided, fallback to 200 for solid, 127 for halftone
+    threshold_val = getattr(args, 'global_threshold', 200 if not is_halftone else 127)
+    noise_min_area = getattr(args, 'noise_removal', 10)
+    
     for i, mask in enumerate(masks):
-        # Ensure mask is uint8
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
         
-        # Apply strict binary threshold
-        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        # 1. Apply strict binary threshold
+        _, binary_mask = cv2.threshold(mask, threshold_val, 255, cv2.THRESH_BINARY)
         
-        # Optional: Apply slight Gaussian blur then re-threshold to smooth stair-stepping
-        if args.clean:  # Only if edge cleaning is enabled
-            blurred = cv2.GaussianBlur(binary_mask, (3, 3), 0.5)
-            _, binary_mask = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
+        # 2. Noise Removal (Small Area Filter) - Senior Optimization
+        if noise_min_area > 0:
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask, 8, cv2.CV_32S)
+            for j in range(1, num_labels):
+                if stats[j, cv2.CC_STAT_AREA] < noise_min_area:
+                    binary_mask[labels == j] = 0
+            logger.info(f"  Noise removal: purged components < {noise_min_area}px in mask {i+1}")
         
         result.append(binary_mask)
         _progress(((7.5 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Binarized {i+1}/{total}")
-        logger.info(f"  Strict binarization applied to mask {i+1}")
+        logger.info(f"  Strict binarization (thresh={threshold_val}) applied to mask {i+1}")
     
     return result
+
+
+def step3_5_trapping(masks: list, separation_result: dict, args: argparse.Namespace) -> list:
+    """
+    Automatic color trapping to prevent registration issues between colors.
+    Adds small overlaps between adjacent colors to ensure proper printing.
+    """
     _step(3.5, "Trapping (automatic)")
     try:
         if len(masks) < 2:
@@ -400,9 +447,14 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
 
 def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
     _step(8, "Adding registration marks")
+    
+    # 1. Convert to paper representation (White background 255, Black ink 0)
+    # Registration marks expect a white canvas to draw black marks on.
+    paper_masks = [cv2.bitwise_not(m) for m in masks]
+    
     if not HAS_REG_MARKS:
         logger.warning("Skipping registration marks (module not found)")
-        return masks
+        return paper_masks
     
     config = RegistrationConfig(
         add_border=True,
@@ -417,24 +469,24 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
             show_corner_marks=True,
             show_crop_marks=True,
             show_color_label=True,
-            show_color_bar=(len(masks) > 1),
+            show_color_bar=(len(paper_masks) > 1),
         )
     )
     
     generator = RegistrationMarksGenerator(dpi=args.dpi)
     result_masks = []
     
-    for idx, mask in enumerate(masks):
+    for idx, mask in enumerate(paper_masks):
         marked = generator.add_marks(
             image=mask,
             color_name=f"Film_{idx+1}",
             color_index=idx + 1,
-            total_colors=len(masks),
+            total_colors=len(paper_masks),
             color_rgb=(0, 0, 0),
             config=config,
         )
         result_masks.append(marked)
-        _progress(((8-1) + (idx+1)/len(masks)) / TOTAL_STEPS, f"Marks {idx+1}/{len(masks)}")
+        _progress(((8-1) + (idx+1)/len(paper_masks)) / TOTAL_STEPS, f"Marks {idx+1}/{len(paper_masks)}")
     
     return result_masks
 
@@ -454,12 +506,14 @@ def step9_export(
     try:
         total = max(1, len(masks))
         
-        # Import exporter for SVG functionality
+        # Import vector exporter
+        from core.vector_exporter import export_vector_pdf
         from core.exporter import Exporter, SVGWRITE_AVAILABLE
         
-        # Prepare PDF combined canvas if requested and available
-        combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
-        combined_pdf = canvas.Canvas(combined_pdf_path, pagesize=A4) if (args.combine_pdf and REPORTLAB_AVAILABLE) else None
+        # We collect all valid masks for the combined PDF
+        all_masks_for_pdf = []
+        all_colors_for_pdf = []
+        all_names_for_pdf = []
         
         # A4 size in points
         a4_w, a4_h = A4
@@ -471,67 +525,89 @@ def step9_export(
             if mask.dtype != np.uint8:
                 mask = mask.astype(np.uint8)
             
-            # Skip masks with no design pixels (all black)
-            if np.sum(mask > 0) == 0:
+            # Skip masks with no design pixels (all black -> now all white 255 since we inverted)
+            if len(mask.shape) == 3:
+                is_empty = np.sum(cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY) < 128) == 0
+            else:
+                is_empty = np.sum(mask < 128) == 0
+                
+            if is_empty:
                 logger.info(f"  Skipping empty mask {i+1}")
                 continue
 
-            # 1. Save PNG for UI preview
+            # Get color info for this mask from separation_result
+            color_entry = separation_result['colors'][i] if i < len(separation_result['colors']) else (0,0,0)
+            name_entry = separation_result['color_names'][i] if i < len(separation_result['color_names']) else f"Film_{i+1}"
+            
+            # 1. Save PNG for UI preview (already inverted in step 8)
             png_filename = f"film_{i+1}.png"
             png_filepath = os.path.join(output_dir, png_filename)
-            # For single color designs, invert to show black design on white background
-            if len(masks) == 1:
-                preview_mask = cv2.bitwise_not(mask)  # Invert: white design on black background → black design on white background
-            else:
-                preview_mask = cv2.bitwise_not(mask)  # Invert for multi-color: white design on black background
-            cv2.imwrite(png_filepath, preview_mask)
+            cv2.imwrite(png_filepath, mask)
             exported_paths.append(png_filepath)
             
-            # 2. Save SVG for vector editing
+            # 2. Save SVG (True Vector)
             if SVGWRITE_AVAILABLE:
+                # Exporter logic (findContours) needs design pixels as 255
+                # But our current mask has design as 0 (black ink on white paper)
+                # So we re-invert for the vector tracing
+                if len(mask.shape) == 3:
+                    ink_mask = cv2.bitwise_not(cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+                else:
+                    ink_mask = cv2.bitwise_not(mask)
+                    
                 svg_filename = f"film_{i+1}.svg"
                 svg_filepath = os.path.join(output_dir, svg_filename)
                 exporter = Exporter(output_dir, args.dpi)
-                exporter.export_svg(mask, svg_filename)
+                exporter.export_svg(ink_mask, svg_filename)
                 exported_paths.append(svg_filepath)
-                logger.info(f"  Exported {svg_filename} (vector)")
+                logger.info(f"  Exported {svg_filename} (SVG Vector)")
             
-            # 3. Save individual PDF
+            # 3. Save individual PDF (True Vector)
             if REPORTLAB_AVAILABLE:
                 pdf_filename = f"film_{i+1}.pdf"
                 pdf_filepath = os.path.join(output_dir, pdf_filename)
                 
-                # Create individual PDF
-                c = canvas.Canvas(pdf_filepath, pagesize=A4)
+                # Re-invert to get design=255 for vector_exporter
+                ink_mask_pdf = cv2.bitwise_not(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
                 
-                # Calculate scaling to fit A4
-                img_h, img_w = mask.shape[:2]
-                scale = min(max_w / img_w, max_h / img_h)
-                draw_w = img_w * scale
-                draw_h = img_h * scale
-                
-                # Center on page
-                x = margin + (max_w - draw_w) / 2
-                y = margin + (max_h - draw_h) / 2
-                
-                # Draw on individual PDF
-                c.drawImage(png_filepath, x, y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
-                c.save()
+                export_vector_pdf(
+                    masks=[ink_mask_pdf],
+                    colors=[color_entry],
+                    color_names=[name_entry],
+                    output_path=Path(pdf_filepath),
+                    dpi=args.dpi,
+                    smooth_factor=getattr(args, 'smoothing_factor', 0.25),
+                    corner_threshold=getattr(args, 'corner_threshold', 45.0)
+                )
                 pdf_paths.append(pdf_filepath)
-                
-                # Draw on combined PDF
-                if combined_pdf:
-                    combined_pdf.drawImage(png_filepath, x, y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask='auto')
-                    combined_pdf.showPage()  # New page for next film
-                    
-            logger.info(f"  Exported {png_filename} ({mask.shape})")
+                exported_paths.append(pdf_filepath)
+                logger.info(f"  Exported {pdf_filename} (PDF Vector)")
+
+            # Add to collection for combined PDF
+            all_masks_for_pdf.append(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+            all_colors_for_pdf.append(color_entry)
+            all_names_for_pdf.append(name_entry)
+
             _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
         
-        # Save combined PDF
-        if combined_pdf:
-            combined_pdf.save()
-            logger.info(f"  Exported combined PDF: all_films_combined.pdf")
+        # 4. Save combined PDF (True Vector)
+        if args.combine_pdf and REPORTLAB_AVAILABLE and all_masks_for_pdf:
+            combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
+            
+            # Re-invert all masks for vector_exporter (needs design=255)
+            ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
+            
+            export_vector_pdf(
+                masks=ink_masks_combined,
+                colors=all_colors_for_pdf,
+                color_names=all_names_for_pdf,
+                output_path=Path(combined_pdf_path),
+                dpi=args.dpi,
+                smooth_factor=getattr(args, 'smoothing_factor', 0.25),
+                corner_threshold=getattr(args, 'corner_threshold', 45.0)
+            )
             exported_paths.append(combined_pdf_path)
+            logger.info(f"  Exported all_films_combined.pdf (PDF Vector)")
             
         logger.info(f"Export complete: {len(exported_paths)} files saved")
         
@@ -649,6 +725,14 @@ def parse_args() -> argparse.Namespace:
         '--mesh-preview-mode', choices=['automatic', 'manual', 'disabled'], default='automatic',
         help='Mesh preview and simulation mode'
     )
+    
+    # Advanced Tuning (Phase 8 Senior Optimizations)
+    parser.add_argument("--global-threshold", type=int, default=127, help="Global threshold for solid masks (0-255)")
+    parser.add_argument("--smoothing-factor", type=float, default=0.25, help="Bezier smoothing factor (0-1.0)")
+    parser.add_argument("--corner-threshold", type=float, default=45.0, help="Angle threshold to preserve sharp corners (degrees)")
+    parser.add_argument("--noise-removal", type=int, default=10, help="Minimum contour area to keep (pixels)")
+    parser.add_argument("--auto-crop", action="store_true", help="Auto-crop image before processing")
+    
     return parser.parse_args()
 
 
@@ -665,13 +749,19 @@ def main() -> int:
 
     output_dir = args.output
     # Always create a timestamped subdirectory to avoid conflicts with existing files
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(output_dir, f"silk_output_{timestamp}")
-    os.makedirs(output_dir, exist_ok=True)
+    # UNLESS we are already in a silk_output_ folder (prevents nesting during regeneration)
+    if "silk_output_" not in os.path.basename(output_dir):
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        output_dir = os.path.join(output_dir, f"silk_output_{timestamp}")
+        os.makedirs(output_dir, exist_ok=True)
 
     try:
         # Step 1 — Load
         image = step1_load_image(args.input)
+        
+        # Step 1.5 — Auto Crop (Senior Optimization)
+        if args.auto_crop:
+            image = step0_auto_crop(image)
 
         # Step 2 — Color Separation
         separation_result = step2_separate_colors(
@@ -715,8 +805,8 @@ def main() -> int:
         # Step 7 — Stroke Validation
         masks = step7_validate_strokes(masks, args)
 
-        # Masks are now correctly generated with design=black, background=white (silk screen standard)
-        # No inversion needed anymore
+        # Step 7.5 — Strict Binarization (prevents false halftoning)
+        masks = step7_5_strict_binarization(masks, args)
 
         # Step 8 — Registration Marks
         masks = step8_registration_marks(masks, output_dir, args)

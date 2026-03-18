@@ -62,8 +62,9 @@ void main() {
       ],
     ));
 
-    await ctrl.startProcessing();
-    await tester.pumpAndSettle();
+    final future = ctrl.startProcessing();
+    await tester.pump(const Duration(milliseconds: 600));
+    await future;
 
     expect(repo.lastSettingsCaught, isNotNull);
     expect(repo.lastSettingsCaught!.colorCount, equals(0));
@@ -88,8 +89,9 @@ void main() {
       ],
     ));
 
-    await ctrl.startProcessing();
-    await tester.pumpAndSettle();
+    final future = ctrl.startProcessing();
+    await tester.pump(const Duration(milliseconds: 600));
+    await future;
 
     expect(repo.lastSettingsCaught, isNotNull);
     expect(repo.lastSettingsCaught!.colorCount, equals(4));

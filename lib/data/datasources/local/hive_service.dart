@@ -21,7 +21,10 @@ class HiveService {
 
     await Hive.initFlutter();
 
-    // Register adapters (only PrintProjectModel needed)
+    // Register adapters
+    if (!Hive.isAdapterRegistered(0)) {
+      Hive.registerAdapter(ProcessingSettingsModelAdapter());
+    }
     if (!Hive.isAdapterRegistered(1)) {
       Hive.registerAdapter(PrintProjectModelAdapter());
     }

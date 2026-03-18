@@ -7,9 +7,21 @@ import 'package:get/get.dart';
 import 'package:open_file/open_file.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/enums/app_enums.dart';
+import '../../core/utils/image_processor.dart';
+import '../../domain/entities/processing_settings.dart' as ps;
+import '../../domain/repositories/processing_repository.dart';
 
 class PreviewController extends GetxController {
+  final ProcessingRepository _repository;
+  
+  PreviewController({required ProcessingRepository repository})
+    : _repository = repository;
+
   final RxString outputDirectory = ''.obs;
+  final RxString imagePath = ''.obs;
+  final RxString originalPath = ''.obs;
+  final Rx<ps.ProcessingSettings?> initialSettings = Rx<ps.ProcessingSettings?>(null);
+  
   // Hold both PNGs for UI and PDFs for export
   final RxList<String> previewPaths = <String>[].obs; // PNGs
   final RxList<String> pdfPaths = <String>[].obs; // PDFs
@@ -26,6 +38,33 @@ class PreviewController extends GetxController {
   final TransformationController transformationController = TransformationController();
   final RxDouble zoomLevel = 1.0.obs;
 
+  // --- Adjustment State (Senior Perspective) ---
+  final RxDouble globalThreshold = 127.0.obs;
+  final RxDouble smoothingFactor = 0.25.obs;
+  final RxDouble cornerThreshold = 45.0.obs;
+  final RxInt noiseRemoval = 10.obs;
+  final RxBool forceHalftone = false.obs;
+  final RxDouble currentDpi = 150.0.obs; // Track current DPI
+  
+  // Cache busting
+  final RxInt lastUpdateTimestamp = 0.obs;
+  
+  // Per-layer overrides
+  final RxList<bool> isLayerInverted = <bool>[].obs;
+  final RxList<bool> isLayerSolid = <bool>[].obs;
+  
+  // Simulation Settings
+  final Rx<Color> tshirtColor = Colors.white.obs;
+  final RxBool showTshirtSimulation = false.obs;
+
+  // Processing state for regeneration
+  final RxBool isRegenerating = false.obs;
+  final RxDouble progress = 0.0.obs;
+  final RxString progressMessage = ''.obs;
+  
+  bool _needsAnotherPass = false; // Queue for overlapping adjustment requests
+  double? _queuedDpi;
+
   @override
   void onInit() {
     super.onInit();
@@ -35,6 +74,20 @@ class PreviewController extends GetxController {
         outputDirectory.value = args;
       } else if (args is Map) {
         outputDirectory.value = args['outputDirectory'] as String? ?? '';
+        imagePath.value = args['imagePath'] as String? ?? '';
+        originalPath.value = args['originalPath'] as String? ?? '';
+        
+        final settings = args['settings'];
+        if (settings is ps.ProcessingSettings) {
+          initialSettings.value = settings;
+          // Sync current adjustment state to initial values
+          globalThreshold.value = settings.globalThreshold;
+          smoothingFactor.value = settings.smoothingFactor;
+          cornerThreshold.value = settings.cornerThreshold;
+          noiseRemoval.value = settings.noiseRemoval;
+          currentDpi.value = settings.dpi;
+        }
+
         final printType = args['printType'];
         if (printType is PrintType) {
           selectedPrintType.value = printType;
@@ -49,6 +102,102 @@ class PreviewController extends GetxController {
     transformationController.addListener(() {
       zoomLevel.value = transformationController.value.getMaxScaleOnAxis();
     });
+
+    // Debounce Tuning Sliders to prevent Python flood (Phase 9 & 11)
+    debounce(globalThreshold, (_) => regenerateFilms(), time: const Duration(milliseconds: 300));
+    debounce(smoothingFactor, (_) => regenerateFilms(), time: const Duration(milliseconds: 300));
+    debounce(cornerThreshold, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
+    debounce(noiseRemoval, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
+    debounce(forceHalftone, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
+  }
+
+  @override
+  void onClose() {
+    // Final Cleanup - Only if we are NOT in a situation where we might need them again soon
+    // FATAL #7 FIX: Be conservative with cleanup to avoid "File not found" during rapid tuning
+    if (imagePath.value.contains('vd_normalized_') && !isRegenerating.value) {
+      Get.log('🧹 PreviewController.onClose: Cleaning up normalized image ${imagePath.value}');
+      ImageProcessor.cleanupTempFile(imagePath.value);
+    }
+    if (originalPath.value.contains('vd_normalized_') && !isRegenerating.value) {
+      Get.log('🧹 PreviewController.onClose: Cleaning up original raw image ${originalPath.value}');
+      ImageProcessor.cleanupTempFile(originalPath.value);
+    }
+    transformationController.dispose();
+    super.onClose();
+  }
+
+  Future<bool> regenerateFilms({double? forcedDpi}) async {
+    if (isRegenerating.value) {
+      Get.log('⏳ Already in progress, queuing another pass (Phase 9)...');
+      _needsAnotherPass = true;
+      _queuedDpi = forcedDpi;
+      return false;
+    }
+
+    if (imagePath.isEmpty || initialSettings.value == null) {
+      Get.snackbar('Error', 'Cannot regenerate: Context missing.');
+      return false;
+    }
+
+    try {
+      isRegenerating.value = true;
+      progress.value = 0.0;
+      progressMessage.value = 'Preparing regeneration...';
+      
+      // Phase 11 Refinement: Strictly cap adjustment DPI at 150 for speed
+      // Only exports/printing should use > 150 DPI
+      final targetDpi = forcedDpi ?? 150.0;
+
+      // Build updated settings
+      final updatedSettings = initialSettings.value!.copyWith(
+        globalThreshold: globalThreshold.value,
+        smoothingFactor: smoothingFactor.value,
+        cornerThreshold: cornerThreshold.value,
+        noiseRemoval: noiseRemoval.value,
+        forceHalftone: forceHalftone.value,
+        dpi: targetDpi,
+      );
+
+      Get.log('🔄 Regenerating with tuning: Threshold=${globalThreshold.value}, Smooth=${smoothingFactor.value}, DPI=$targetDpi');
+
+      final result = await _repository.processImage(
+        imagePath: imagePath.value,
+        settings: updatedSettings,
+        outputDir: outputDirectory.value, // Re-use SAME directory or parent
+        onProgress: (p, msg) {
+          progress.value = p;
+          progressMessage.value = msg;
+        },
+      );
+
+      if (result.success) {
+        outputDirectory.value = result.outputDirectory!;
+        currentDpi.value = targetDpi; // Update current DPI tracking
+        await _loadFilmsAndInfo();
+        Get.snackbar('Success', 'Films updated with new adjustments.');
+        return true;
+      } else {
+        Get.snackbar('Error', 'Regeneration failed: ${result.errorMessage}');
+        return false;
+      }
+    } catch (e) {
+      Get.log('❌ Exception in regenerateFilms: $e');
+      Get.snackbar('Error', 'An unexpected error occurred: $e');
+      return false;
+    } finally {
+      isRegenerating.value = false;
+      
+      // If a request was queued while we were busy, run it now (Phase 9)
+      if (_needsAnotherPass) {
+        Get.log('🔄 Running queued regeneration pass...');
+        final nextDpi = _queuedDpi;
+        _needsAnotherPass = false;
+        _queuedDpi = null;
+        // Schedule next pass after short delay to allow UI to breathe
+        Future.delayed(const Duration(milliseconds: 100), () => regenerateFilms(forcedDpi: nextDpi));
+      }
+    }
   }
 
   Future<void> _loadFilmsAndInfo() async {
@@ -90,7 +239,19 @@ class PreviewController extends GetxController {
 
         if (previewPaths.isNotEmpty) {
           selectedFilmIndex.value = 0;
+          
+          // Initialize layer toggles if empty
+          if (isLayerInverted.isEmpty) {
+            isLayerInverted.value = List.filled(previewPaths.length, false);
+          }
+          if (isLayerSolid.isEmpty) {
+            isLayerSolid.value = List.filled(previewPaths.length, false);
+          }
         }
+        
+        // Trigger cache bust (Phase 10) - Always update to force UI refresh
+        lastUpdateTimestamp.value = DateTime.now().millisecondsSinceEpoch;
+        Get.log('🔄 Cache bust triggered: ${lastUpdateTimestamp.value}');
       }
     } catch (e) {
       Get.log('❌ Error loading preview data: $e');
@@ -143,6 +304,13 @@ class PreviewController extends GetxController {
       return;
     }
 
+    // Hybrid DPI Logic: If current preview is low quality, generate high quality for export
+    if (currentDpi.value < 300) {
+      Get.log('🚀 Triggering high-DPI (300) pass for final export...');
+      final success = await regenerateFilms(forcedDpi: 300.0);
+      if (!success) return;
+    }
+
     // Save As dialog
     final savePath = await FilePicker.platform.saveFile(
       dialogTitle: 'Save Output Films PDF',
@@ -167,6 +335,13 @@ class PreviewController extends GetxController {
   }
   
   Future<void> sendToPrint() async {
+    // Hybrid DPI Logic: If current preview is low quality, generate high quality for printing
+    if (currentDpi.value < 300) {
+      Get.log('🚀 Triggering high-DPI (300) pass for printing...');
+      final success = await regenerateFilms(forcedDpi: 300.0);
+      if (!success) return;
+    }
+
     // Windows/Desktop check if a printer exists can be complex.
     // Standard approach: if user clicks print, open the PDF with default system handler.
     // Or save it directly if preferred.
