@@ -448,9 +448,8 @@ def step3_5_trapping(masks: list, separation_result: dict, args: argparse.Namesp
 def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
     _step(8, "Adding registration marks")
     
-    # 1. Convert to paper representation (White background 255, Black ink 0)
-    # Registration marks expect a white canvas to draw black marks on.
-    paper_masks = [cv2.bitwise_not(m) for m in masks]
+    # Masks are already in paper representation (0 ink on 255 paper), no need to invert
+    paper_masks = masks
     
     if not HAS_REG_MARKS:
         logger.warning("Skipping registration marks (module not found)")

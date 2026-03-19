@@ -17,6 +17,7 @@ dependencies:
 
   # ── State Management ──────────────────────────────────
   get: ^4.6.6                        # Moved from dev_dependencies
+  http: ^0.13.5
 
   # ── Local Storage ─────────────────────────────────────
   shared_preferences: ^2.2.2        # Key-value storage for settings

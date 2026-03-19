@@ -204,14 +204,17 @@ class PythonProcessor {
     ];
 
     // Color count: if 0, use auto-colors flag
+    // SAFE GUARD: منع colors=1 لأنه يسبب فيلم أسود فاضي دائماً
     if (settings.colorCount == 0) {
       args.add('--auto-colors');
     } else {
-      args.addAll(['--colors', settings.colorCount.toString()]);
+      final safeColorCount = settings.colorCount < 2 ? 2 : settings.colorCount;
+      args.addAll(['--colors', safeColorCount.toString()]);
     }
 
     // Halftone Settings - only add --halftone if explicitly set to halftone finish OR forced via override
-    if (settings.printFinish == PrintFinish.halftone || settings.forceHalftone) {
+    if (settings.printFinish == PrintFinish.halftone ||
+        settings.forceHalftone) {
       args.add('--halftone');
       if (settings.halftoneSettings != null) {
         args.add('--lpi');
@@ -234,7 +237,10 @@ class PythonProcessor {
     args.addAll(['--mesh-preview-mode', settings.meshPreviewMode.name]);
 
     // Advanced Tuning (Phase 8 Senior Optimizations)
-    args.addAll(['--global-threshold', settings.globalThreshold.toInt().toString()]);
+    args.addAll([
+      '--global-threshold',
+      settings.globalThreshold.toInt().toString(),
+    ]);
     args.addAll(['--smoothing-factor', settings.smoothingFactor.toString()]);
     args.addAll(['--corner-threshold', settings.cornerThreshold.toString()]);
     args.addAll(['--noise-removal', settings.noiseRemoval.toString()]);
@@ -266,7 +272,7 @@ class PythonProcessor {
       var escaped = path.replaceAll('"', r'\"');
       // Replace backslashes with forward slashes to prevent escape issues in Python strings
       escaped = escaped.replaceAll('\\', '/');
-      
+
       // Wrap in quotes if path contains spaces or special characters
       if (escaped.contains(' ') ||
           escaped.contains('&') ||

@@ -126,5 +126,5 @@ class HalftoneGenerator:
                 x2, y2 = min(w - 1, cx + r), min(h - 1, cy + r)
                 out[y1:y2 + 1, x1:x2 + 1] = 255
             else:
-                cv2.circle(out, (cx, cy), r, 255, -1, lineType=cv2.LINE_8)
+                cv2.circle(out, (cx, cy), r, 255, -1, lineType=cv2.LINE_AA)
         return out
