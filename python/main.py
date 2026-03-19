@@ -729,7 +729,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--global-threshold", type=int, default=127, help="Global threshold for solid masks (0-255)")
     parser.add_argument("--smoothing-factor", type=float, default=0.25, help="Bezier smoothing factor (0-1.0)")
     parser.add_argument("--corner-threshold", type=float, default=45.0, help="Angle threshold to preserve sharp corners (degrees)")
-    parser.add_argument("--noise-removal", type=int, default=10, help="Minimum contour area to keep (pixels)")
+    parser.add_argument("--noise-removal", type=int, default=3, help="Minimum contour area to keep (pixels)")
     parser.add_argument("--auto-crop", action="store_true", help="Auto-crop image before processing")
     
     return parser.parse_args()

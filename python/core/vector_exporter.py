@@ -165,7 +165,7 @@ def export_vector_pdf(
         # ═══ رسم الـ vector paths ═══
         # 1. Pre-smoothing: تحويل الحواف المشرشرة لحواف منحنية ناعمة (رؤية البرنامج)
         # نستخدم GaussianBlur لمسح "زوايا البكسل" وبعدين نرجعها صريحة بـ Threshold
-        smoothed = cv2.GaussianBlur(mask, (3, 3), 0)
+        smoothed = cv2.GaussianBlur(mask, (5, 5), 1.0)
         _, bw = cv2.threshold(smoothed, 128, 255, cv2.THRESH_BINARY)
         
         # 2. Contour Extraction: استخراج الحواف
@@ -173,17 +173,21 @@ def export_vector_pdf(
             bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
         )
         
-        c.setFillColor(black)
-        c.setStrokeColor(black)
+        # coordinate transform (defined once, outside the loop)
+        def px_to_pdf(px_x, px_y):
+            pt_x = draw_x + (px_x / mask_w) * draw_w
+            pt_y = draw_y + (1 - px_y / mask_h) * draw_h
+            return pt_x, pt_y
         
         for ci, contour in enumerate(contours):
             area = cv2.contourArea(contour)
             if area < min_contour_area:
                 continue
             
-            # Douglas-Peucker simplification: تنظيف النقاط غير الضرورية
-            # نستخدم قيمة ديناميكية بناءً على حجم الكنتور لضمان عدم فقدان التفاصيل الدقيقة
-            epsilon = 0.25  # قيمة صغيرة جداً للحفاظ على التفاصيل مع التحويل لـ Bezier لاحقاً
+            # FIX 1: epsilon ديناميكي حسب حجم الـ contour
+            # أكبر contour → epsilon أكبر → حواف أنعم
+            perimeter = cv2.arcLength(contour, True)
+            epsilon = max(1.5, perimeter * 0.004)
             approx = cv2.approxPolyDP(contour, epsilon, True)
             
             if len(approx) < 3:
@@ -195,12 +199,13 @@ def export_vector_pdf(
             if not bezier_cmds:
                 continue
             
-            # تحويل coordinates: pixel → PDF points
-            # PDF: y=0 في الأسفل. Pixel: y=0 في الأعلى
-            def px_to_pdf(px_x, px_y):
-                pt_x = draw_x + (px_x / mask_w) * draw_w
-                pt_y = draw_y + (1 - px_y / mask_h) * draw_h
-                return pt_x, pt_y
+            # FIX 2: hole detection — inner contours تتملى أبيض
+            is_hole = (hierarchy is not None and
+                       hierarchy[0][ci][3] != -1)
+            if is_hole:
+                c.setFillColor(white)
+            else:
+                c.setFillColor(black)
             
             path = c.beginPath()
             
@@ -213,11 +218,16 @@ def export_vector_pdf(
                     cx2, cy2 = px_to_pdf(cmd[3], cmd[4])
                     ex, ey   = px_to_pdf(cmd[5], cmd[6])
                     path.curveTo(cx1, cy1, cx2, cy2, ex, ey)
+                elif cmd[0] == 'L':
+                    # FIX 3: handle linear segments (sharp corners)
+                    px, py = px_to_pdf(cmd[1], cmd[2])
+                    path.lineTo(px, py)
             
             path.close()
             c.drawPath(path, fill=1, stroke=0)
         
-        # ═══ إطار الفيلم ═══
+        # Reset fill to black after loop
+        c.setFillColor(black)
         c.setStrokeColor(black)
         c.setLineWidth(0.5)
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=0, stroke=1)
