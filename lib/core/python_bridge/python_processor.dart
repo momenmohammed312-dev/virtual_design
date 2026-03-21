@@ -240,8 +240,13 @@ class PythonProcessor {
     args.addAll(['--mesh-preview-mode', settings.meshPreviewMode.name]);
 
     // Advanced Tuning (Phase 8 Senior Optimizations)
-    // If adaptive threshold is enabled, we pass -1 to signal Python to use Otsu
-    final effectiveThreshold = settings.adaptiveThreshold ? -1 : settings.globalThreshold.toInt();
+    // If simple mode, force threshold to 200 to keep logo sharp and clean
+    int effectiveThreshold = settings.globalThreshold.toInt();
+    if (settings.imageType == ImageType.simple) {
+      effectiveThreshold = 200;
+    } else if (settings.adaptiveThreshold) {
+      effectiveThreshold = -1;
+    }
     
     args.addAll([
       '--global-threshold',

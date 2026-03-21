@@ -111,8 +111,19 @@ class ImageProcessor {
     final tmpPath = '${Directory.systemTemp.path}/vd_normalized_$timestamp.png';
     final tmpFile = File(tmpPath);
 
-    // Encode as PNG (lossless, widely supported)
-    final pngBytes = img.encodePng(rgbImage);
+    // Senior Fix: Force RGB (3 channels) output + low compression.
+    // The 'image' library (Dart) automatically optimizes simple black & white 
+    // images into 1-channel Grayscale PNGs to save space. 
+    // This optimization confuses the Python K-Means color separator.
+    // By forcing uint8 format and 3 channels, we ensure Python reads 
+    // a consistent (H, W, 3) shape even for simple logos.
+    final rgbForced = rgbImage.convert(
+      format: img.Format.uint8,
+      numChannels: 3,
+    );
+
+    // Encode as PNG (level: 1 = Low compression, prevents extra transformations)
+    final pngBytes = img.encodePng(rgbForced, level: 1);
     await tmpFile.writeAsBytes(pngBytes);
 
     print(

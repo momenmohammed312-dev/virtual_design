@@ -111,7 +111,7 @@ class ProcessingSettings {
     this.paperWidthCm = 21.0,
     this.paperHeightCm = 29.7,
     // Advanced Tuning Defaults
-    this.globalThreshold = 60.0,
+    this.globalThreshold = 127.0,
     this.smoothingFactor = 0.25,
     this.cornerThreshold = 45.0,
     this.noiseRemoval = 10,

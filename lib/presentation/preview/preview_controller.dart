@@ -47,7 +47,7 @@ class PreviewController extends GetxController {
   final RxBool adaptiveThreshold = false.obs;
   final RxString filmLabel = "".obs;
   late final TextEditingController filmLabelController;
-  final RxDouble currentDpi = 150.0.obs; // Track current DPI
+  final RxDouble currentDpi = 300.0.obs; // Professional Standard = 300
   
   // Cache busting
   final RxInt lastUpdateTimestamp = 0.obs;
@@ -159,9 +159,8 @@ class PreviewController extends GetxController {
       progress.value = 0.0;
       progressMessage.value = 'Preparing regeneration...';
       
-      // Phase 11 Refinement: Strictly cap adjustment DPI at 150 for speed
-      // Only exports/printing should use > 150 DPI
-      final targetDpi = forcedDpi ?? 150.0;
+      // Phase 11 & 12 Refinement: Use 300 DPI as the new baseline for quality
+      final targetDpi = forcedDpi ?? 300.0;
 
       // Build updated settings
       final updatedSettings = initialSettings.value!.copyWith(

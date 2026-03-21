@@ -418,8 +418,9 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
         try:
             if actual_mode == 'simple':
                 # Fast, Sharp, Static Threshold
-                # Use a higher threshold (200) to keep it clean if it's a logo
-                clean_thresh = 200 if threshold_val == 127 else threshold_val
+                # Senior Fix: Minimum threshold 128 to prevent low default thresholds (like 60) 
+                # from turning entire masks white and causing them to "disappear" after inversion.
+                clean_thresh = max(threshold_val, 128)
                 _, binary_mask = cv2.threshold(mask, clean_thresh, 255, cv2.THRESH_BINARY)
                 logger.info(f"  [Engine:Simple] Applied clean threshold ({clean_thresh}) to mask {i+1}")
                 
@@ -542,20 +543,22 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
     
     for idx, raw_mask in enumerate(masks):
         # 1. المرحلة الأولى: معالجة التصميم فقط (Artwork Smoothing)
-        # Senior Opt: Use MORPH_CLOSE to fill tiny gaps without destroying font details
         if not args.halftone:
+            # Senior Opt: Use MORPH_CLOSE to fill tiny gaps safely
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
             clean_mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, kernel)
             
-            # Use a lighter GaussianBlur (3,3) and specific threshold
-            # Handle -1 global threshold signal from Dart
-            raw_threshold = getattr(args, 'global_threshold', 100)
-            threshold_val = 127 if raw_threshold == -1 else raw_threshold
-            
-            # Senior Fix: Artwork smoothing
+            # Senior Fix: Artwork smoothing (ONLY for artwork, BEFORE marks)
+            # This prevents the registration marks from getting blurred/jagged
             smoothed = cv2.GaussianBlur(clean_mask, (3, 3), 0)
-            _, processed_mask = cv2.threshold(smoothed, threshold_val, 255, cv2.THRESH_BINARY)
-            logger.info(f"  Applied artwork-only smoothing (morph+blur+thresh={threshold_val}) to mask {idx+1}")
+            
+            # Threshold logic with 128 minimum for Simple/Artwork mode
+            raw_threshold = getattr(args, 'global_threshold', 100)
+            target_thresh = 127 if raw_threshold == -1 else raw_threshold
+            target_thresh = max(target_thresh, 128)
+            
+            _, processed_mask = cv2.threshold(smoothed, target_thresh, 255, cv2.THRESH_BINARY)
+            logger.info(f"  Applied sharp artwork smoothing (thresh={target_thresh}) to mask {idx+1}")
         else:
             processed_mask = raw_mask.copy()
 

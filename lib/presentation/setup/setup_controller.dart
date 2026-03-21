@@ -18,7 +18,7 @@ class SetupController extends GetxController {
   String _originalTempPath = ''; // for cleanup after processing
 
   // ─── Settings State ──────────────────────────────────────────────────────
-  final RxInt selectedColors = 0.obs;
+  final RxInt selectedColors = 1.obs;
   final RxDouble strokeWidth = 0.5.obs; // mm
   final Rx<ps.DetailLevel> selectedDetail = ps.DetailLevel.medium.obs;
   final Rx<ps.PrintFinish> selectedFinish = ps.PrintFinish.solid.obs;
@@ -30,7 +30,7 @@ class SetupController extends GetxController {
   final RxDouble paperHeightCm = 29.7.obs;
 
   // Print quality (DPI)
-  final RxDouble printQuality = 150.0.obs;
+  final RxDouble printQuality = 300.0.obs;
 
   // Halftone settings
   final RxBool isHalftone = false.obs;
@@ -107,7 +107,7 @@ class SetupController extends GetxController {
     autoUpscale.value = false;
     paperWidthCm.value = 21.0;
     paperHeightCm.value = 29.7;
-    printQuality.value = 150.0;
+    printQuality.value = 300.0;
     isHalftone.value = false;
     lpiValue.value = 55;
     selectedDotShape.value = 'round';
