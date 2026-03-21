@@ -29,9 +29,21 @@ class HiveService {
       Hive.registerAdapter(PrintProjectModelAdapter());
     }
 
-    await Hive.openBox<PrintProjectModel>(_projectsBox);
-    // Open settings box as untyped for JSON storage
-    await Hive.openBox(_settingsBox);
+    try {
+      await Hive.openBox<PrintProjectModel>(_projectsBox);
+    } catch (e) {
+      print('[HiveService] Corrupt projects box, rebuilding: $e');
+      await Hive.deleteBoxFromDisk(_projectsBox);
+      await Hive.openBox<PrintProjectModel>(_projectsBox);
+    }
+
+    try {
+      await Hive.openBox(_settingsBox);
+    } catch (e) {
+      print('[HiveService] Corrupt settings box, rebuilding: $e');
+      await Hive.deleteBoxFromDisk(_settingsBox);
+      await Hive.openBox(_settingsBox);
+    }
 
     _initialized = true;
   }

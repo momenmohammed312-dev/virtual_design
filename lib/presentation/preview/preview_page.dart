@@ -918,6 +918,38 @@ class PreviewPage extends StatelessWidget {
           ),
 
           const Divider(height: 30),
+          
+          const Text(
+            'Film Label',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: controller.filmLabelController,
+            decoration: InputDecoration(
+              hintText: 'e.g. Order #505 - Client Name',
+              hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
+              filled: true,
+              fillColor: const Color(0xFFF9FAFB),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: primaryBlue),
+              ),
+            ),
+            style: const TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 5),
+          const Text(
+            'Custom text printed on each film layer.',
+            style: TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+
+          const Divider(height: 30),
 
           const Text(
             'Layer Overrides',
@@ -951,6 +983,14 @@ class PreviewPage extends StatelessWidget {
                   subtitle: const Text('Convert everything to dots (Halftone)', style: TextStyle(fontSize: 11)),
                   value: controller.forceHalftone.value,
                   onChanged: (val) => controller.forceHalftone.value = val,
+                  activeThumbColor: primaryBlue,
+                  dense: true,
+                )),
+                Obx(() => SwitchListTile(
+                  title: const Text('Auto-Adjust Threshold', style: TextStyle(fontSize: 13)),
+                  subtitle: const Text('Smart adaptive thresholding per film', style: TextStyle(fontSize: 11)),
+                  value: controller.adaptiveThreshold.value,
+                  onChanged: (val) => controller.adaptiveThreshold.value = val,
                   activeThumbColor: primaryBlue,
                   dense: true,
                 )),

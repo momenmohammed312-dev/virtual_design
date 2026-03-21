@@ -14,6 +14,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Dict, List, Tuple, Optional
 
 import cv2
 import numpy as np
@@ -385,25 +386,92 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
     # Use global-threshold if provided, fallback to 200 for solid, 127 for halftone
     threshold_val = getattr(args, 'global_threshold', 200 if not is_halftone else 127)
     noise_min_area = getattr(args, 'noise_removal', 10)
+    use_adaptive = getattr(args, 'adaptive_threshold', False)
+    
+    # Smart Engine Selection
+    image_type_mode = getattr(args, 'image_type', 'auto')
     
     for i, mask in enumerate(masks):
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
         
-        # 1. Apply strict binary threshold
-        _, binary_mask = cv2.threshold(mask, threshold_val, 255, cv2.THRESH_BINARY)
+        # New Senior Opt: Normalization
+        if not is_halftone:
+            mask = cv2.normalize(mask, None, 0, 255, cv2.NORM_MINMAX)
+
+        # 1. Smart Engine Decision (If AUTO)
+        actual_mode = image_type_mode
+        if actual_mode == 'auto':
+            # Analyze mask characteristics
+            std_dev = np.std(mask)
+            unique_vals = len(np.unique(mask))
+            contrast = np.max(mask) - np.min(mask)
+            
+            if unique_vals < 5 and contrast > 200:
+                actual_mode = 'simple'
+            elif std_dev < 35:
+                actual_mode = 'mixed'
+            else:
+                actual_mode = 'complex'
+
+        # 2. Apply chosen Binarization Logic
+        try:
+            if actual_mode == 'simple':
+                # Fast, Sharp, Static Threshold
+                # Use a higher threshold (200) to keep it clean if it's a logo
+                clean_thresh = 200 if threshold_val == 127 else threshold_val
+                _, binary_mask = cv2.threshold(mask, clean_thresh, 255, cv2.THRESH_BINARY)
+                logger.info(f"  [Engine:Simple] Applied clean threshold ({clean_thresh}) to mask {i+1}")
+                
+            elif actual_mode == 'mixed':
+                # Balanced: Adaptive Gaussian
+                # Block size 11 is standard for mixed content
+                binary_mask = cv2.adaptiveThreshold(
+                    mask, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                    cv2.THRESH_BINARY, 11, 2
+                )
+                logger.info(f"  [Engine:Mixed] Applied Adaptive Gaussian (11, 2) to mask {i+1}")
+                
+            elif actual_mode == 'complex':
+                # Advanced: Large-Block Adaptive (Close to Sauvola effect)
+                # Larger block size (31) preserves local details and handles shadows
+                binary_mask = cv2.adaptiveThreshold(
+                    mask, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                    cv2.THRESH_BINARY, 31, 2
+                )
+                logger.info(f"  [Engine:Complex] Applied Deep Adaptive (31, 2) to mask {i+1}")
+            
+            # Additional logic for specific adaptive/Otsu request override
+            if (use_adaptive or threshold_val == -1) and not is_halftone:
+                # Apply the Otsu logic from previous fix if user explicitly asked for adaptive
+                ret, otsu_mask = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                if np.mean(otsu_mask) > 127:
+                    otsu_mask = cv2.bitwise_not(otsu_mask)
+                binary_mask = otsu_mask
+                logger.info(f"  [Override:Adaptive] Forced Otsu on mask {i+1}")
+
+        except Exception as e:
+            logger.warning(f"  [Engine:Fallback] Smart engine failed ({e}), using simple threshold")
+            _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+
+        # Senior Logic: Coverage Check & Auto-Correction
+        coverage = np.sum(binary_mask > 0) / binary_mask.size
+        if coverage > 0.98 or coverage < 0.001:
+            # If extremely high or empty, try the inversion or a safe threshold
+            logger.warning(f"  [Guard] Mask {i+1} extreme coverage ({coverage*100:.1f}%). Auto-fixing...")
+            _, binary_mask = cv2.threshold(mask, 240, 255, cv2.THRESH_BINARY)
+            if np.sum(binary_mask > 0) / binary_mask.size > 0.95:
+                 binary_mask = cv2.bitwise_not(binary_mask)
         
-        # 2. Noise Removal (Small Area Filter) - Senior Optimization
+        # 3. Noise Removal
         if noise_min_area > 0:
             num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask, 8, cv2.CV_32S)
             for j in range(1, num_labels):
                 if stats[j, cv2.CC_STAT_AREA] < noise_min_area:
                     binary_mask[labels == j] = 0
-            logger.info(f"  Noise removal: purged components < {noise_min_area}px in mask {i+1}")
         
         result.append(binary_mask)
-        _progress(((7.5 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Binarized {i+1}/{total}")
-        logger.info(f"  Strict binarization (thresh={threshold_val}) applied to mask {i+1}")
+        _progress(((7.5 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Processed {i+1}/{total} [{actual_mode.upper()}]")
     
     return result
 
@@ -448,12 +516,9 @@ def step3_5_trapping(masks: list, separation_result: dict, args: argparse.Namesp
 def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
     _step(8, "Adding registration marks")
     
-    # Masks are already in paper representation (0 ink on 255 paper), no need to invert
-    paper_masks = masks
-    
     if not HAS_REG_MARKS:
         logger.warning("Skipping registration marks (module not found)")
-        return paper_masks
+        return masks
     
     config = RegistrationConfig(
         add_border=True,
@@ -468,24 +533,70 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
             show_corner_marks=True,
             show_crop_marks=True,
             show_color_label=True,
-            show_color_bar=(len(paper_masks) > 1),
+            show_color_bar=(len(masks) > 1),
         )
     )
     
     generator = RegistrationMarksGenerator(dpi=args.dpi)
     result_masks = []
     
-    for idx, mask in enumerate(paper_masks):
+    for idx, raw_mask in enumerate(masks):
+        # 1. المرحلة الأولى: معالجة التصميم فقط (Artwork Smoothing)
+        # Senior Opt: Use MORPH_CLOSE to fill tiny gaps without destroying font details
+        if not args.halftone:
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+            clean_mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, kernel)
+            
+            # Use a lighter GaussianBlur (3,3) and specific threshold
+            # Handle -1 global threshold signal from Dart
+            raw_threshold = getattr(args, 'global_threshold', 100)
+            threshold_val = 127 if raw_threshold == -1 else raw_threshold
+            
+            # Senior Fix: Artwork smoothing
+            smoothed = cv2.GaussianBlur(clean_mask, (3, 3), 0)
+            _, processed_mask = cv2.threshold(smoothed, threshold_val, 255, cv2.THRESH_BINARY)
+            logger.info(f"  Applied artwork-only smoothing (morph+blur+thresh={threshold_val}) to mask {idx+1}")
+        else:
+            processed_mask = raw_mask.copy()
+
+        # 2. المرحلة الثانية: تحويل التمثيل (Inversion for Paper Export)
+        # SILK SCREEN POSITIVES: 0 (Black Ink) on 255 (White/Clear Paper)
+        # Since MaskGenerator returns 255 as Design, we MUST invert it here.
+        paper_mask = cv2.bitwise_not(processed_mask)
+        
+        # 3. المرحلة الثالثة: إضافة العلامات والاسم الحاد (Marks & Branding)
+        # Now we apply marks directly to the inverted (0-ink / 255-paper) canvas
         marked = generator.add_marks(
-            image=mask,
+            image=paper_mask,
             color_name=f"Film_{idx+1}",
             color_index=idx + 1,
-            total_colors=len(paper_masks),
+            total_colors=len(masks),
             color_rgb=(0, 0, 0),
             config=config,
         )
+        
+        # Add custom film label if provided
+        if args.film_label:
+            cv2.putText(
+                marked, 
+                args.film_label, 
+                (100, 150), # margin + some offset
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                1.2, (0, 0, 0), 2, cv2.LINE_AA
+            )
+
+        # Add "Developed By MO2" branding
+        h_brand, w_brand = marked.shape[:2]
+        cv2.putText(
+            marked, 
+            "Developed By MO2", 
+            (w_brand - 450, h_brand - 40), # Bottom right
+            cv2.FONT_HERSHEY_SIMPLEX, 
+            1.2, (0, 0, 0), 2, cv2.LINE_AA
+        )
+
         result_masks.append(marked)
-        _progress(((8-1) + (idx+1)/len(paper_masks)) / TOTAL_STEPS, f"Marks {idx+1}/{len(paper_masks)}")
+        _progress(((8-1) + (idx+1)/len(masks)) / TOTAL_STEPS, f"Marks {idx+1}/ {len(masks)}")
     
     return result_masks
 
@@ -538,10 +649,18 @@ def step9_export(
             color_entry = separation_result['colors'][i] if i < len(separation_result['colors']) else (0,0,0)
             name_entry = separation_result['color_names'][i] if i < len(separation_result['color_names']) else f"Film_{i+1}"
             
-            # 1. Save PNG for UI preview (already inverted in step 8)
+            # 1. Save PNG for UI preview with anti-aliasing
             png_filename = f"film_{i+1}.png"
             png_filepath = os.path.join(output_dir, png_filename)
-            cv2.imwrite(png_filepath, mask)
+
+            # تطبيق GaussianBlur خفيف على الـ PNG preview لتقليل الشرشرة
+            preview_mask = mask.copy()
+            if len(preview_mask.shape) == 2:
+                smoothed = cv2.GaussianBlur(preview_mask, (3, 3), 0.8)
+                _, preview_mask = cv2.threshold(
+                    smoothed, 128, 255, cv2.THRESH_BINARY
+                )
+            cv2.imwrite(png_filepath, preview_mask)
             exported_paths.append(png_filepath)
             
             # 2. Save SVG (True Vector)
@@ -727,10 +846,14 @@ def parse_args() -> argparse.Namespace:
     
     # Advanced Tuning (Phase 8 Senior Optimizations)
     parser.add_argument("--global-threshold", type=int, default=127, help="Global threshold for solid masks (0-255)")
-    parser.add_argument("--smoothing-factor", type=float, default=0.25, help="Bezier smoothing factor (0-1.0)")
+    parser.add_argument("--smoothing-factor", type=float, default=0.4, help="Bezier smoothing factor (0-1.0)")
     parser.add_argument("--corner-threshold", type=float, default=45.0, help="Angle threshold to preserve sharp corners (degrees)")
     parser.add_argument("--noise-removal", type=int, default=3, help="Minimum contour area to keep (pixels)")
     parser.add_argument("--auto-crop", action="store_true", help="Auto-crop image before processing")
+    parser.add_argument("--adaptive-threshold", action="store_true", help="Use adaptive/Otsu thresholding instead of global")
+    parser.add_argument("--image-type", choices=["simple", "mixed", "complex", "auto"], default="auto", 
+                        help="Engine mode: simple (logo), mixed (normal), complex (details), or auto")
+    parser.add_argument("--film-label", type=str, default="", help="Custom label to print on each film")
     
     return parser.parse_args()
 

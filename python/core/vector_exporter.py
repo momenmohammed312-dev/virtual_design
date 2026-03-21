@@ -164,11 +164,15 @@ def export_vector_pdf(
         
         # ═══ رسم الـ vector paths ═══
         # 1. Pre-smoothing: تحويل الحواف المشرشرة لحواف منحنية ناعمة (رؤية البرنامج)
-        # نستخدم GaussianBlur لمسح "زوايا البكسل" وبعدين نرجعها صريحة بـ Threshold
-        smoothed = cv2.GaussianBlur(mask, (5, 5), 1.0)
+        # Senior Fix: Use MORPH_CLOSE to fill tiny gaps without destroying font details
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        bw_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        
+        # Use a lighter GaussianBlur (3,3) instead of (5,5) to prevent melting fonts
+        smoothed = cv2.GaussianBlur(bw_closed, (3, 3), 0)
         _, bw = cv2.threshold(smoothed, 128, 255, cv2.THRESH_BINARY)
         
-        # 2. Contour Extraction: استخراج الحواف
+        # 2. Contour Extraction: استخراج الحواف مع مراعاة الثقوب الداخلية (RETR_CCOMP)
         contours, hierarchy = cv2.findContours(
             bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
         )

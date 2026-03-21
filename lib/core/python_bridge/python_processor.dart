@@ -204,11 +204,12 @@ class PythonProcessor {
     ];
 
     // Color count: if 0, use auto-colors flag
-    // SAFE GUARD: منع colors=1 لأنه يسبب فيلم أسود فاضي دائماً
     if (settings.colorCount == 0) {
-      args.add('--auto-colors');
+      // Auto mode: ابدأ بـ 2 ألوان — أأمن من auto-detect
+      args.addAll(['--colors', '2']);
     } else {
-      final safeColorCount = settings.colorCount < 2 ? 2 : settings.colorCount;
+      // Allow 1 color if explicitly requested
+      final safeColorCount = settings.colorCount < 1 ? 1 : settings.colorCount;
       args.addAll(['--colors', safeColorCount.toString()]);
     }
 
@@ -229,7 +230,9 @@ class PythonProcessor {
 
     // Professional Features — all enabled by default as automatic
     args.addAll(['--pantone-matching', settings.pantoneMatching.name]);
-    args.addAll(['--underbase-mode', settings.underbaseMode.name]);
+    // Underbase: disabled by default حتى لو المستخدم اختار automatic
+    // لأنه بيضيف فيلم زيادة مش محسوب في عدد الألوان المطلوب
+    args.addAll(['--underbase-mode', 'disabled']);
     args.addAll(['--trapping-mode', settings.trappingMode.name]);
     args.addAll(['--overprint-mode', settings.overprintMode.name]);
     args.addAll(['--gradient-mesh-mode', settings.gradientMeshMode.name]);
@@ -237,15 +240,31 @@ class PythonProcessor {
     args.addAll(['--mesh-preview-mode', settings.meshPreviewMode.name]);
 
     // Advanced Tuning (Phase 8 Senior Optimizations)
+    // If adaptive threshold is enabled, we pass -1 to signal Python to use Otsu
+    final effectiveThreshold = settings.adaptiveThreshold ? -1 : settings.globalThreshold.toInt();
+    
     args.addAll([
       '--global-threshold',
-      settings.globalThreshold.toInt().toString(),
+      effectiveThreshold.toString(),
     ]);
     args.addAll(['--smoothing-factor', settings.smoothingFactor.toString()]);
     args.addAll(['--corner-threshold', settings.cornerThreshold.toString()]);
     args.addAll(['--noise-removal', settings.noiseRemoval.toString()]);
     if (settings.autoCrop) {
       args.add('--auto-crop');
+    }
+    if (settings.adaptiveThreshold) {
+      args.add('--adaptive-threshold');
+    }
+    
+    // Image Processing Mode (Simple, Mixed, Complex, Auto)
+    args.addAll([
+      '--image-type',
+      settings.imageType.name,
+    ]);
+
+    if (settings.filmLabel.isNotEmpty) {
+      args.addAll(['--film-label', settings.filmLabel]);
     }
 
     return args;

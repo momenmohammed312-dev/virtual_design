@@ -184,17 +184,17 @@ class RegistrationMarksGenerator:
         bg = style.background_color
 
         if style.show_circle:
-            cv2.circle(canvas, (cx, cy), size + 5, bg, -1)
+            cv2.circle(canvas, (cx, cy), size + 5, bg, -1, lineType=cv2.LINE_AA)
         if style.show_circle:
-            cv2.circle(canvas, (cx, cy), size, color, thickness)
-        cv2.circle(canvas, (cx, cy), 4, color, -1)
+            cv2.circle(canvas, (cx, cy), size, color, thickness, lineType=cv2.LINE_AA)
+        cv2.circle(canvas, (cx, cy), 4, color, -1, lineType=cv2.LINE_AA)
 
         if style.show_cross:
             gap = 8
-            cv2.line(canvas, (cx - size - 15, cy), (cx - gap, cy), color, thickness)
-            cv2.line(canvas, (cx + gap, cy), (cx + size + 15, cy), color, thickness)
-            cv2.line(canvas, (cx, cy - size - 15), (cx, cy - gap), color, thickness)
-            cv2.line(canvas, (cx, cy + gap), (cx, cy + size + 15), color, thickness)
+            cv2.line(canvas, (cx - size - 15, cy), (cx - gap, cy), color, thickness, lineType=cv2.LINE_AA)
+            cv2.line(canvas, (cx + gap, cy), (cx + size + 15, cy), color, thickness, lineType=cv2.LINE_AA)
+            cv2.line(canvas, (cx, cy - size - 15), (cx, cy - gap), color, thickness, lineType=cv2.LINE_AA)
+            cv2.line(canvas, (cx, cy + gap), (cx, cy + size + 15), color, thickness, lineType=cv2.LINE_AA)
 
     def _draw_corner_marks(self, canvas: np.ndarray, config: RegistrationConfig):
         h, w = canvas.shape[:2]
@@ -210,8 +210,8 @@ class RegistrationMarksGenerator:
             {'h_start': (w - b - length, h - b), 'h_end': (w - b + length, h - b), 'v_start': (w - b, h - b - length), 'v_end': (w - b, h - b + length)},
         ]
         for corner in corners:
-            cv2.line(canvas, corner['h_start'], corner['h_end'], color, thickness)
-            cv2.line(canvas, corner['v_start'], corner['v_end'], color, thickness)
+            cv2.line(canvas, corner['h_start'], corner['h_end'], color, thickness, lineType=cv2.LINE_AA)
+            cv2.line(canvas, corner['v_start'], corner['v_end'], color, thickness, lineType=cv2.LINE_AA)
 
     def _draw_crop_marks(self, canvas: np.ndarray, config: RegistrationConfig):
         h, w = canvas.shape[:2]
@@ -221,14 +221,14 @@ class RegistrationMarksGenerator:
         thickness = 1
         gap = 10
         length = 25
-        cv2.line(canvas, (b - gap - length, b), (b - gap, b), color, thickness)
-        cv2.line(canvas, (b, b - gap - length), (b, b - gap), color, thickness)
-        cv2.line(canvas, (w - b + gap, b), (w - b + gap + length, b), color, thickness)
-        cv2.line(canvas, (w - b, b - gap - length), (w - b, b - gap), color, thickness)
-        cv2.line(canvas, (b - gap - length, h - b), (b - gap, h - b), color, thickness)
-        cv2.line(canvas, (b, h - b + gap), (b, h - b + gap + length), color, thickness)
-        cv2.line(canvas, (w - b + gap, h - b), (w - b + gap + length, h - b), color, thickness)
-        cv2.line(canvas, (w - b, h - b + gap), (w - b, h - b + gap + length), color, thickness)
+        cv2.line(canvas, (b - gap - length, b), (b - gap, b), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (b, b - gap - length), (b, b - gap), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (w - b + gap, b), (w - b + gap + length, b), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (w - b, b - gap - length), (w - b, b - gap), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (b - gap - length, h - b), (b - gap, h - b), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (b, h - b + gap), (b, h - b + gap + length), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (w - b + gap, h - b), (w - b + gap + length, h - b), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (w - b, h - b + gap), (w - b, h - b + gap + length), color, thickness, lineType=cv2.LINE_AA)
 
     def _draw_color_label(self, canvas: np.ndarray, color_name: str, color_index: int, total_colors: int, color_rgb: Tuple[int, int, int], config: RegistrationConfig):
         h, w = canvas.shape[:2]
@@ -269,8 +269,8 @@ class RegistrationMarksGenerator:
             b_val = int(255 + (color_rgb[2] - 255) * t)
             cv2.line(canvas, (bar_x, bar_y + i), (bar_x + bar_width, bar_y + i), (b_val, g, r), 1)
         cv2.rectangle(canvas, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (0, 0, 0), 1)
-        cv2.putText(canvas, "0%", (bar_x, bar_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-        cv2.putText(canvas, "100%", (bar_x, bar_y + bar_height + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        cv2.putText(canvas, "0%", (bar_x, bar_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, lineType=cv2.LINE_AA)
+        cv2.putText(canvas, "100%", (bar_x, bar_y + bar_height + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, lineType=cv2.LINE_AA)
 
 
 def add_registration_marks(image_path: str, output_path: str, color_name: str = "Color", color_index: int = 1, total_colors: int = 1, color_rgb: Tuple[int, int, int] = (0, 0, 0), mark_type: str = 'full', dpi: int = 300, border_size: int = 120) -> str:
@@ -648,14 +648,14 @@ class RegistrationMarksGenerator:
         
         # White background circle (for visibility on any background)
         if style.show_circle:
-            cv2.circle(canvas, (cx, cy), size + 5, bg, -1)
+            cv2.circle(canvas, (cx, cy), size + 5, bg, -1, lineType=cv2.LINE_AA)
         
         # Outer circle
         if style.show_circle:
-            cv2.circle(canvas, (cx, cy), size, color, thickness)
+            cv2.circle(canvas, (cx, cy), size, color, thickness, lineType=cv2.LINE_AA)
         
         # Inner small circle (center dot)
-        cv2.circle(canvas, (cx, cy), 4, color, -1)
+        cv2.circle(canvas, (cx, cy), 4, color, -1, lineType=cv2.LINE_AA)
         
         # Cross lines (horizontal)
         if style.show_cross:
@@ -666,28 +666,28 @@ class RegistrationMarksGenerator:
                 canvas,
                 (cx - size - 15, cy),
                 (cx - gap, cy),
-                color, thickness
+                color, thickness, lineType=cv2.LINE_AA
             )
             # Horizontal right
             cv2.line(
                 canvas,
                 (cx + gap, cy),
                 (cx + size + 15, cy),
-                color, thickness
+                color, thickness, lineType=cv2.LINE_AA
             )
             # Vertical top
             cv2.line(
                 canvas,
                 (cx, cy - size - 15),
                 (cx, cy - gap),
-                color, thickness
+                color, thickness, lineType=cv2.LINE_AA
             )
             # Vertical bottom
             cv2.line(
                 canvas,
                 (cx, cy + gap),
                 (cx, cy + size + 15),
-                color, thickness
+                color, thickness, lineType=cv2.LINE_AA
             )
     
     # =============================================
@@ -746,9 +746,9 @@ class RegistrationMarksGenerator:
         
         for corner in corners:
             # Horizontal line
-            cv2.line(canvas, corner['h_start'], corner['h_end'], color, thickness)
+            cv2.line(canvas, corner['h_start'], corner['h_end'], color, thickness, lineType=cv2.LINE_AA)
             # Vertical line
-            cv2.line(canvas, corner['v_start'], corner['v_end'], color, thickness)
+            cv2.line(canvas, corner['v_start'], corner['v_end'], color, thickness, lineType=cv2.LINE_AA)
     
     # =============================================
     # Crop Marks
@@ -775,21 +775,21 @@ class RegistrationMarksGenerator:
         
         # Top-left corner crop marks
         # Horizontal
-        cv2.line(canvas, (b - gap - length, b), (b - gap, b), color, thickness)
+        cv2.line(canvas, (b - gap - length, b), (b - gap, b), color, thickness, lineType=cv2.LINE_AA)
         # Vertical
-        cv2.line(canvas, (b, b - gap - length), (b, b - gap), color, thickness)
+        cv2.line(canvas, (b, b - gap - length), (b, b - gap), color, thickness, lineType=cv2.LINE_AA)
         
         # Top-right corner crop marks
-        cv2.line(canvas, (w - b + gap, b), (w - b + gap + length, b), color, thickness)
-        cv2.line(canvas, (w - b, b - gap - length), (w - b, b - gap), color, thickness)
+        cv2.line(canvas, (w - b + gap, b), (w - b + gap + length, b), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (w - b, b - gap - length), (w - b, b - gap), color, thickness, lineType=cv2.LINE_AA)
         
         # Bottom-left corner crop marks
-        cv2.line(canvas, (b - gap - length, h - b), (b - gap, h - b), color, thickness)
-        cv2.line(canvas, (b, h - b + gap), (b, h - b + gap + length), color, thickness)
+        cv2.line(canvas, (b - gap - length, h - b), (b - gap, h - b), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (b, h - b + gap), (b, h - b + gap + length), color, thickness, lineType=cv2.LINE_AA)
         
         # Bottom-right corner crop marks
-        cv2.line(canvas, (w - b + gap, h - b), (w - b + gap + length, h - b), color, thickness)
-        cv2.line(canvas, (w - b, h - b + gap), (w - b, h - b + gap + length), color, thickness)
+        cv2.line(canvas, (w - b + gap, h - b), (w - b + gap + length, h - b), color, thickness, lineType=cv2.LINE_AA)
+        cv2.line(canvas, (w - b, h - b + gap), (w - b, h - b + gap + length), color, thickness, lineType=cv2.LINE_AA)
     
     # =============================================
     # Color Label
@@ -904,10 +904,10 @@ class RegistrationMarksGenerator:
         # Labels: 0% and 100%
         cv2.putText(canvas, "0%",
                    (bar_x, bar_y - 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, lineType=cv2.LINE_AA)
         cv2.putText(canvas, "100%",
                    (bar_x, bar_y + bar_height + 15),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, lineType=cv2.LINE_AA)
 
 
 # =============================================

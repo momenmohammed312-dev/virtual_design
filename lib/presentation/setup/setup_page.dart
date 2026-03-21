@@ -47,6 +47,7 @@ class _SetupPageState extends State<SetupPage> {
   bool removeBackground = true;
   bool edgeEnhancement = false;
   bool colorCorrection = false;
+  bool adaptiveThreshold = false;
 
   int get meshCount {
     // Calculate mesh count based on LPI and detail level
@@ -108,6 +109,9 @@ class _SetupPageState extends State<SetupPage> {
                               const SizedBox(height: 30),
 
                               _buildColorComplexitySection(),
+                              const SizedBox(height: 30),
+
+                              _buildImageTypeSection(controller),
                               const SizedBox(height: 30),
 
                               _buildPrintTypeSection(),
@@ -381,6 +385,159 @@ class _SetupPageState extends State<SetupPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ============= Image Type Section =============
+  Widget _buildImageTypeSection(SetupController controller) {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F2F1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.image_search_outlined,
+                  color: Color(0xFF00897B),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                '2. Image Type',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              const Tooltip(
+                message: 'CHOOSE BASED ON YOUR ARTWORK DETAILS',
+                child: Icon(Icons.info_outline, size: 18, color: Colors.grey),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'The engine will auto-tune thresholding and cleanup based on your choice.',
+            style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+          ),
+          const SizedBox(height: 25),
+          Obx(() => SegmentedButton<ps.ImageType>(
+                segments: const [
+                  ButtonSegment(
+                    value: ps.ImageType.simple,
+                    label: Text('Simple'),
+                    icon: Icon(Icons.text_fields),
+                    tooltip: 'Logos, Text, High Contrast',
+                  ),
+                  ButtonSegment(
+                    value: ps.ImageType.mixed,
+                    label: Text('Mixed'),
+                    icon: Icon(Icons.collections),
+                    tooltip: 'Normal Photos or Illustrations',
+                  ),
+                  ButtonSegment(
+                    value: ps.ImageType.complex,
+                    label: Text('Complex'),
+                    icon: Icon(Icons.auto_fix_high),
+                    tooltip: 'High Detail, Shadows, Gradients',
+                  ),
+                  ButtonSegment(
+                    value: ps.ImageType.auto,
+                    label: Text('Auto'),
+                    icon: Icon(Icons.auto_awesome),
+                    tooltip: 'Recommended — System Decides',
+                  ),
+                ],
+                selected: {controller.selectedImageType.value},
+                onSelectionChanged: (Set<ps.ImageType> newSelection) {
+                  controller.selectedImageType.value = newSelection.first;
+                },
+                style: ButtonStyle(
+                  side: WidgetStateProperty.all(
+                    const BorderSide(color: Color(0xFFE5E7EB)),
+                  ),
+                  backgroundColor: WidgetStateProperty.resolveWith<Color?>(
+                    (Set<WidgetState> states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return primaryBlue;
+                      }
+                      return Colors.white;
+                    },
+                  ),
+                  foregroundColor: WidgetStateProperty.resolveWith<Color?>(
+                    (Set<WidgetState> states) {
+                      if (states.contains(WidgetState.selected)) {
+                        return Colors.white;
+                      }
+                      return Colors.black87;
+                    },
+                  ),
+                ),
+              )),
+          const SizedBox(height: 15),
+          Obx(() {
+            final type = controller.selectedImageType.value;
+            String desc = '';
+            Color color = Colors.grey;
+            switch (type) {
+              case ps.ImageType.simple:
+                desc = 'BEST FOR: Logos, Text, and sharp vectors. (Fast & Clean)';
+                color = Colors.green;
+              case ps.ImageType.mixed:
+                desc = 'BEST FOR: Standard images with balanced details.';
+                color = Colors.blue;
+              case ps.ImageType.complex:
+                desc = 'BEST FOR: Intricate designs, shadows, or damaged artwork.';
+                color = Colors.orange;
+              case ps.ImageType.auto:
+                desc = 'The system will analyze and pick the best algorithm for you.';
+                color = primaryBlue;
+            }
+            return Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: color.withOpacity(0.2)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.lightbulb_outline, size: 16, color: color),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      desc,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: color.withOpacity(0.8),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
@@ -1349,6 +1506,15 @@ class _SetupPageState extends State<SetupPage> {
                       Get.find<SetupController>().colorCorrection.value = val;
                     },
                   ),
+                  const SizedBox(height: 16),
+                  _buildAdvancedOption(
+                    'Auto-Adjust Threshold',
+                    adaptiveThreshold,
+                    (val) {
+                      setState(() => adaptiveThreshold = val);
+                      Get.find<SetupController>().adaptiveThreshold.value = val;
+                    },
+                  ),
                 ],
               ),
             ),
@@ -1461,6 +1627,7 @@ class _SetupPageState extends State<SetupPage> {
                 removeBackground = true;
                 edgeEnhancement = false;
                 colorCorrection = false;
+                adaptiveThreshold = false;
               });
             },
             child: const Text(

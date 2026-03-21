@@ -250,7 +250,7 @@ class Exporter:
         h, w = mask.shape[:2]
         # Ensure binary
         _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
         _write_minimal_pdf(filepath, w, h, contours)
         return filepath
@@ -366,7 +366,7 @@ class Exporter:
         # 2. Find contours with better approximation
         contours, _ = cv2.findContours(
             mask_bw,
-            cv2.RETR_EXTERNAL,
+            cv2.RETR_TREE,
             cv2.CHAIN_APPROX_TC89_KCOS  # Better curve approximation
         )
 

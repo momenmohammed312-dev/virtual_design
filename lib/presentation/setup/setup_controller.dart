@@ -40,6 +40,8 @@ class SetupController extends GetxController {
   // Edge enhancement & color correction
   final RxBool edgeEnhancement = false.obs;
   final RxBool colorCorrection = false.obs;
+  final RxBool adaptiveThreshold = false.obs;
+  final Rx<ps.ImageType> selectedImageType = ps.ImageType.auto.obs;
 
   // Output directory selection
   final RxString outputDir = ''.obs;
@@ -85,6 +87,8 @@ class SetupController extends GetxController {
       selectedFinish.value = settings.printFinish;
       strokeWidth.value = settings.strokeWidthMm;
       printQuality.value = settings.dpi;
+      adaptiveThreshold.value = settings.adaptiveThreshold;
+      selectedImageType.value = settings.imageType;
       if (settings.halftoneSettings != null) {
         lpiValue.value = settings.halftoneSettings!.lpi;
         selectedDotShape.value = settings.halftoneSettings!.dotShape;
@@ -109,6 +113,8 @@ class SetupController extends GetxController {
     selectedDotShape.value = 'round';
     edgeEnhancement.value = false;
     colorCorrection.value = false;
+    adaptiveThreshold.value = false;
+    selectedImageType.value = ps.ImageType.auto;
     update();
   }
 
@@ -170,6 +176,8 @@ class SetupController extends GetxController {
         halftoneSettings: halftone,
         paperWidthCm: paperWidthCm.value,
         paperHeightCm: paperHeightCm.value,
+        adaptiveThreshold: adaptiveThreshold.value,
+        imageType: selectedImageType.value,
       );
 
       Get.log('✅ Settings built: DPI=${settings.dpi}, mesh=${settings.meshCount}, edge=${settings.edgeEnhancement.name}');

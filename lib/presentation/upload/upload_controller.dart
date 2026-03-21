@@ -106,7 +106,8 @@ class UploadController extends GetxController {
 
     try {
       final req = http.Request('GET', uri);
-      final res = await req.send().timeout(const Duration(seconds: 25));
+      req.headers['User-Agent'] = 'Mozilla/5.0 (compatible; VirtualDesign)';
+      final res = await req.send().timeout(const Duration(seconds: 60));
 
       if (res.statusCode < 200 || res.statusCode >= 300) {
         throw Exception('Request failed (HTTP ${res.statusCode})');
@@ -139,12 +140,16 @@ class UploadController extends GetxController {
       }
 
       if (ext.isEmpty) {
+        // Try from URL path first
         final seg = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
-        final inferred = p.extension(seg);
-        if (inferred.isNotEmpty && inferred.length <= 6) {
+        final inferred = p.extension(seg).toLowerCase();
+        const validExts = ['.png', '.jpg', '.jpeg', '.webp', '.bmp',
+                           '.tiff', '.tif', '.gif'];
+        if (validExts.contains(inferred)) {
           ext = inferred;
         } else {
-          ext = '.img';
+          // Default to .png — أأمن من .img
+          ext = '.png';
         }
       }
 
@@ -163,9 +168,17 @@ class UploadController extends GetxController {
 
       await _proceedToSetup(downloadedPath);
     } catch (e) {
+      String msg = e.toString();
+      if (msg.contains('403') || msg.contains('401')) {
+        msg = 'الصورة محمية — جرّب تنزّلها وترفعها يدوياً.';
+      } else if (msg.contains('timeout') || msg.contains('TimeoutException')) {
+        msg = 'انتهت المهلة — تأكد من الاتصال وجرّب مرة تانية.';
+      } else if (msg.contains('SocketException')) {
+        msg = 'مفيش اتصال — تأكد من الإنترنت.';
+      }
       Get.snackbar(
-        'Download Failed',
-        'Could not download image: $e',
+        'فشل التحميل',
+        msg,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.red,
         colorText: Colors.white,

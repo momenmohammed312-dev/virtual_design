@@ -44,6 +44,9 @@ class PreviewController extends GetxController {
   final RxDouble cornerThreshold = 45.0.obs;
   final RxInt noiseRemoval = 10.obs;
   final RxBool forceHalftone = false.obs;
+  final RxBool adaptiveThreshold = false.obs;
+  final RxString filmLabel = "".obs;
+  late final TextEditingController filmLabelController;
   final RxDouble currentDpi = 150.0.obs; // Track current DPI
   
   // Cache busting
@@ -85,7 +88,9 @@ class PreviewController extends GetxController {
           smoothingFactor.value = settings.smoothingFactor;
           cornerThreshold.value = settings.cornerThreshold;
           noiseRemoval.value = settings.noiseRemoval;
+          filmLabel.value = settings.filmLabel;
           currentDpi.value = settings.dpi;
+          adaptiveThreshold.value = settings.adaptiveThreshold;
         }
 
         final printType = args['printType'];
@@ -109,6 +114,14 @@ class PreviewController extends GetxController {
     debounce(cornerThreshold, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
     debounce(noiseRemoval, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
     debounce(forceHalftone, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
+    debounce(adaptiveThreshold, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
+    
+    filmLabelController = TextEditingController(text: filmLabel.value);
+    filmLabelController.addListener(() {
+      filmLabel.value = filmLabelController.text;
+    });
+    
+    debounce(filmLabel, (_) => regenerateFilms(), time: const Duration(milliseconds: 600));
   }
 
   @override
@@ -123,6 +136,7 @@ class PreviewController extends GetxController {
       Get.log('🧹 PreviewController.onClose: Cleaning up original raw image ${originalPath.value}');
       ImageProcessor.cleanupTempFile(originalPath.value);
     }
+    filmLabelController.dispose();
     transformationController.dispose();
     super.onClose();
   }
@@ -156,6 +170,8 @@ class PreviewController extends GetxController {
         cornerThreshold: cornerThreshold.value,
         noiseRemoval: noiseRemoval.value,
         forceHalftone: forceHalftone.value,
+        adaptiveThreshold: adaptiveThreshold.value,
+        filmLabel: filmLabel.value,
         dpi: targetDpi,
       );
 

@@ -88,120 +88,120 @@ class ProcessingErrorScreen extends StatelessWidget {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // أيقونة الخطأ
-                Container(
-                  width: 80, height: 80,
-                  decoration: BoxDecoration(
-                    color: info.color.withAlpha((0.12 * 255).round()),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: info.color.withAlpha((0.3 * 255).round())),
-                  ),
-                  child: Icon(info.icon, size: 40, color: info.color),
-                ),
-                const SizedBox(height: 24),
-
-                // العنوان
-                Text(
-                  info.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-
-                // الوصف
-                Text(
-                  info.description,
-                  style: TextStyle(
-                    color: Colors.white.withAlpha((0.65 * 255).round()),
-                    fontSize: 14,
-                    height: 1.7,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-
-                // تعليمات إضافية
-                if (info.instructions != null) ...[
-                  const SizedBox(height: 16),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // أيقونة الخطأ
                   Container(
-                    padding: const EdgeInsets.all(14),
+                    width: 80, height: 80,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1A1F2E),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFF2D3748)),
+                      color: info.color.withAlpha((0.12 * 255).round()),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: info.color.withAlpha((0.3 * 255).round())),
                     ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.terminal, size: 14, color: Color(0xFF94A3B8)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            info.instructions!,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              color: Color(0xFF86EFAC),
-                              fontSize: 12,
+                    child: Icon(info.icon, size: 40, color: info.color),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // العنوان
+                  Text(
+                    info.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+
+                  // الوصف
+                  Text(
+                    info.description,
+                    style: TextStyle(
+                      color: Colors.white.withAlpha((0.65 * 255).round()),
+                      fontSize: 14,
+                      height: 1.7,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+
+                  // تعليمات إضافية
+                  if (info.instructions != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1F2E),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF2D3748)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.terminal, size: 14, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              info.instructions!,
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                color: Color(0xFF86EFAC),
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-
-                // رسالة تقنية (قابلة للطي)
-                if (error.rawMessage.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  _TechnicalDetails(message: error.rawMessage),
-                ],
-
-                const SizedBox(height: 28),
-
-                // أزرار الإجراءات
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: onGoBack,
-                        icon: const Icon(Icons.arrow_back, size: 16),
-                        label: const Text('رجوع'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                          side: const BorderSide(color: Color(0xFF2D3748)),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: onRetry,
-                        icon: const Icon(Icons.refresh, size: 16),
-                        label: const Text('إعادة المحاولة'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4F46E5),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
+                        ],
                       ),
                     ),
                   ],
-                ),
-              ],
+
+                  // رسالة تقنية (قابلة للطي)
+                  if (error.rawMessage.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _TechnicalDetails(message: error.rawMessage),
+                  ],
+
+                  const SizedBox(height: 28),
+
+                  // أزرار الإجراءات
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: onGoBack,
+                          icon: const Icon(Icons.arrow_back, size: 16),
+                          label: const Text('رجوع'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            side: const BorderSide(color: Color(0xFF2D3748)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: onRetry,
+                          icon: const Icon(Icons.refresh, size: 16),
+                          label: const Text('إعادة المحاولة'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4F46E5),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
         ),
       ),
     );

@@ -29,6 +29,8 @@ enum TypographyMode { automatic, manual, disabled }
 
 enum MeshPreviewMode { automatic, manual, disabled }
 
+enum ImageType { simple, mixed, complex, auto }
+
 // ─── Halftone Settings ────────────────────────────────────────────────────────
 
 class HalftoneSettings {
@@ -84,6 +86,9 @@ class ProcessingSettings {
   final int noiseRemoval;
   final bool autoCrop;
   final bool forceHalftone;
+  final bool adaptiveThreshold;
+  final String filmLabel;
+  final ImageType imageType;
 
   // Professional Features (all enabled by default)
   final PantoneMatching pantoneMatching;
@@ -106,12 +111,15 @@ class ProcessingSettings {
     this.paperWidthCm = 21.0,
     this.paperHeightCm = 29.7,
     // Advanced Tuning Defaults
-    this.globalThreshold = 127.0,
+    this.globalThreshold = 60.0,
     this.smoothingFactor = 0.25,
     this.cornerThreshold = 45.0,
     this.noiseRemoval = 10,
     this.autoCrop = false,
     this.forceHalftone = false,
+    this.adaptiveThreshold = false,
+    this.filmLabel = '',
+    this.imageType = ImageType.auto,
     // Professional Features — all enabled automatically
     this.pantoneMatching = PantoneMatching.automatic,
     this.underbaseMode = UnderbaseMode.automatic,
@@ -242,6 +250,9 @@ class ProcessingSettings {
     int? noiseRemoval,
     bool? autoCrop,
     bool? forceHalftone,
+    bool? adaptiveThreshold,
+    String? filmLabel,
+    ImageType? imageType,
   }) => ProcessingSettings(
     colorCount: colorCount ?? this.colorCount,
     printFinish: printFinish ?? this.printFinish,
@@ -266,6 +277,9 @@ class ProcessingSettings {
     noiseRemoval: noiseRemoval ?? this.noiseRemoval,
     autoCrop: autoCrop ?? this.autoCrop,
     forceHalftone: forceHalftone ?? this.forceHalftone,
+    adaptiveThreshold: adaptiveThreshold ?? this.adaptiveThreshold,
+    filmLabel: filmLabel ?? this.filmLabel,
+    imageType: imageType ?? this.imageType,
   );
 
   Map<String, dynamic> toJson() => {
@@ -287,6 +301,9 @@ class ProcessingSettings {
     'typographyMode': typographyMode.name,
     'meshPreviewMode': meshPreviewMode.name,
     'forceHalftone': forceHalftone,
+    'adaptiveThreshold': adaptiveThreshold,
+    'filmLabel': filmLabel,
+    'imageType': imageType.name,
   };
 
   factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
@@ -348,5 +365,11 @@ class ProcessingSettings {
         noiseRemoval: (json['noiseRemoval'] as int?) ?? 10,
         autoCrop: (json['autoCrop'] as bool?) ?? false,
         forceHalftone: (json['forceHalftone'] as bool?) ?? false,
+        adaptiveThreshold: (json['adaptiveThreshold'] as bool?) ?? false,
+        filmLabel: (json['filmLabel'] as String?) ?? '',
+        imageType: ImageType.values.firstWhere(
+          (e) => e.name == json['imageType'],
+          orElse: () => ImageType.auto,
+        ),
       );
 }
