@@ -246,7 +246,7 @@ class AppTheme {
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return AppColors.primary.withAlpha((0.4 * 255).round());
+            return AppColors.primary.withValues(alpha: 0.4);
           }
           return AppColors.surface4;
         }),
@@ -258,7 +258,7 @@ class AppTheme {
         activeTrackColor:   AppColors.primary,
         inactiveTrackColor: AppColors.surface4,
         thumbColor:         AppColors.primary,
-        overlayColor:       AppColors.primary.withAlpha((0.15 * 255).round()),
+        overlayColor:       AppColors.primary.withValues(alpha: 0.15),
         valueIndicatorColor: AppColors.surface3,
         valueIndicatorTextStyle: AppTextStyles.bodyS.copyWith(
           color: AppColors.textPrimary,
@@ -268,7 +268,7 @@ class AppTheme {
       // ── Chip ────────────────────────────────────────────────────────────────
       chipTheme: ChipThemeData(
         backgroundColor:       AppColors.surface3,
-        selectedColor:         AppColors.primary.withAlpha((0.2 * 255).round()),
+        selectedColor:         AppColors.primary.withValues(alpha: 0.2),
         disabledColor:         AppColors.surface2,
         labelStyle:            AppTextStyles.bodyS,
         side:                  const BorderSide(color: AppColors.border),
@@ -364,7 +364,7 @@ class AppTheme {
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return AppColors.primary.withAlpha((0.3 * 255).round());
+            return AppColors.primary.withValues(alpha: 0.3);
           }
           return Colors.grey.shade300;
         }),

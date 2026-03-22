@@ -303,9 +303,9 @@ class _AddMoreChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: AppColors.primary.withAlpha((0.1 * 255).round()),
+          color: AppColors.primary.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: AppColors.primary.withAlpha((0.3 * 255).round())),
+          border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
         ),
         child: const Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(Icons.add, size: 14, color: AppColors.primary),
@@ -398,9 +398,9 @@ class _ProgressCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color: color.withAlpha((0.08 * 255).round()),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: color.withAlpha((0.3 * 255).round())),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

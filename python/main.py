@@ -159,7 +159,11 @@ def step2_5_underbase_creation(separation_result: Dict, args: argparse.Namespace
                 pantone_match.name.startswith(('Black', 'Dark', 'Navy'))
             )
             
-            if is_dark and color_rgb != (255, 255, 255):  # Exclude white underbase if already added
+            # Exclude white underbase if already added (check color channels individually)
+            r, g, b = int(color_rgb[0]), int(color_rgb[1]), int(color_rgb[2])
+            is_white = (r > 240 and g > 240 and b > 240)
+            
+            if is_dark and not is_white: 
                 dark_color_indices.append(i)
                 logger.info(f"Dark color detected {i+1}: {pantone_match.name} (brightness: {brightness:.1f})")
         
@@ -225,8 +229,9 @@ def step1_load_image(input_path: str) -> np.ndarray:
             scale_factor = min_width / w
             new_w = int(w * scale_factor)
             new_h = int(h * scale_factor)
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-            logger.info(f"Auto-upscaled small image: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [NEAREST]")
+            # Phase 16: Use Lanczos4 for high-quality upscaling (prevents jagged logo edges)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+            logger.info(f"Auto-upscaled small image: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [LANCZOS4]")
         
         return image
     except Exception as e:
@@ -404,12 +409,12 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
         if actual_mode == 'auto':
             # Analyze mask characteristics
             std_dev = np.std(mask)
-            unique_vals = len(np.unique(mask))
             contrast = np.max(mask) - np.min(mask)
             
-            if unique_vals < 5 and contrast > 200:
+            # High Contrast + High Variance = Simple Logo/Text
+            if contrast > 220 and std_dev > 70:
                 actual_mode = 'simple'
-            elif std_dev < 35:
+            elif std_dev < 45:
                 actual_mode = 'mixed'
             else:
                 actual_mode = 'complex'
@@ -417,52 +422,53 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
         # 2. Apply chosen Binarization Logic
         try:
             if actual_mode == 'simple':
-                # Fast, Sharp, Static Threshold
-                # Senior Fix: Minimum threshold 128 to prevent low default thresholds (like 60) 
-                # from turning entire masks white and causing them to "disappear" after inversion.
-                clean_thresh = max(threshold_val, 128)
-                _, binary_mask = cv2.threshold(mask, clean_thresh, 255, cv2.THRESH_BINARY)
-                logger.info(f"  [Engine:Simple] Applied clean threshold ({clean_thresh}) to mask {i+1}")
+                # Senior Fix (Phase 14): Use Otsu for ALL simple-auto masks.
+                # Fixed thresholds (like 128 or 200) often fail on subtle color separations.
+                # Otsu adapts to the specific histogram of this mask.
+                ret_val, binary_mask = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                logger.info(f"  [Engine:Simple] Applied Otsu (optimal_thresh={ret_val:.1f}) to mask {i+1}")
                 
             elif actual_mode == 'mixed':
                 # Balanced: Adaptive Gaussian
-                # Block size 11 is standard for mixed content
                 binary_mask = cv2.adaptiveThreshold(
                     mask, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                     cv2.THRESH_BINARY, 11, 2
                 )
-                logger.info(f"  [Engine:Mixed] Applied Adaptive Gaussian (11, 2) to mask {i+1}")
+                logger.info(f"  [Engine:Mixed] Applied Adaptive Gaussian to mask {i+1}")
                 
             elif actual_mode == 'complex':
-                # Advanced: Large-Block Adaptive (Close to Sauvola effect)
-                # Larger block size (31) preserves local details and handles shadows
+                # Deep: Large-Block Adaptive
                 binary_mask = cv2.adaptiveThreshold(
                     mask, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                     cv2.THRESH_BINARY, 31, 2
                 )
-                logger.info(f"  [Engine:Complex] Applied Deep Adaptive (31, 2) to mask {i+1}")
+                logger.info(f"  [Engine:Complex] Applied Deep Adaptive to mask {i+1}")
             
-            # Additional logic for specific adaptive/Otsu request override
-            if (use_adaptive or threshold_val == -1) and not is_halftone:
-                # Apply the Otsu logic from previous fix if user explicitly asked for adaptive
-                ret, otsu_mask = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                if np.mean(otsu_mask) > 127:
-                    otsu_mask = cv2.bitwise_not(otsu_mask)
-                binary_mask = otsu_mask
-                logger.info(f"  [Override:Adaptive] Forced Otsu on mask {i+1}")
+            # Manual override if specifically requested
+            if (use_adaptive or threshold_val == -1) and not is_halftone and actual_mode != 'simple':
+                ret_val, binary_mask = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                logger.info(f"  [Override:Adaptive] Forced Otsu (thresh={ret_val:.1f}) on mask {i+1}")
 
         except Exception as e:
-            logger.warning(f"  [Engine:Fallback] Smart engine failed ({e}), using simple threshold")
+            logger.warning(f"  [Engine:Fallback] Smart engine failed ({e}), using safe threshold")
             _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
 
-        # Senior Logic: Coverage Check & Auto-Correction
+        # Senior Logic: Coverage Check & Final Auto-Correction (Guards)
         coverage = np.sum(binary_mask > 0) / binary_mask.size
-        if coverage > 0.98 or coverage < 0.001:
-            # If extremely high or empty, try the inversion or a safe threshold
-            logger.warning(f"  [Guard] Mask {i+1} extreme coverage ({coverage*100:.1f}%). Auto-fixing...")
-            _, binary_mask = cv2.threshold(mask, 240, 255, cv2.THRESH_BINARY)
-            if np.sum(binary_mask > 0) / binary_mask.size > 0.95:
-                 binary_mask = cv2.bitwise_not(binary_mask)
+        
+        # Phase 15: Exact log message for senior traceability
+        if coverage > 0.80 or coverage < 0.05:
+            logger.warning(f"  [Guard] Mask {i+1} suspect coverage ({coverage*100:.1f}%). Auto-fixing with Otsu...")
+            # Re-evaluate with Otsu's data-driven threshold
+            ret_val, otsu_mask = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # Check if Otsu's result is also suspicious (more than 75% coverage)
+            if np.mean(otsu_mask) > 190:
+                 otsu_mask = cv2.bitwise_not(otsu_mask)
+            binary_mask = otsu_mask
+            new_coverage = np.sum(binary_mask > 0) / binary_mask.size
+            logger.info(f"  [Guard] Fixed mask {i+1}: New coverage is {new_coverage*100:.1f}%")
+        else:
+            logger.info(f"  [Guard] Mask {i+1} coverage: {coverage*100:.1f}%. Looks good.")
         
         # 3. Noise Removal
         if noise_min_area > 0:

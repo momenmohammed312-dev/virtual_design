@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
 
 import 'process_result.dart';
 import 'python_config.dart';
@@ -38,8 +39,14 @@ class PythonProcessor {
     String? outputDir,
     void Function(double progress, String message)? onProgress,
   }) async {
-    // HIGH #2: Guard — refuse processing if Python is unavailable
-    if (!config.isPythonAvailable && !config.isInitialized) {
+    // HIGH #2: Guard — refuse processing if Python is unavailable or not initialized
+    if (!config.isInitialized) {
+      return ProcessResult.failure(
+        'BRIDGE_NOT_INITIALIZED:The Python bridge has not been initialized. '
+        'Please call initialize() before processing.',
+      );
+    }
+    if (!config.isPythonAvailable) {
       return ProcessResult.failure(
         'PYTHON_NOT_FOUND:Python is not available. '
         'Please install Python 3.8+ from python.org and add it to PATH.',
@@ -67,11 +74,11 @@ class PythonProcessor {
     final pythonCommand = await config.resolvePythonCommand();
 
     // Log details for debugging
-    print('[PythonProcessor] Python: $pythonCommand');
-    print('[PythonProcessor] Scripts dir: $scriptsDir');
-    print('[PythonProcessor] Input: $imagePath');
-    print('[PythonProcessor] Output: $finalOutputDir');
-    print('[PythonProcessor] Args: $args');
+    debugPrint('[PythonProcessor] Python: $pythonCommand');
+    debugPrint('[PythonProcessor] Scripts dir: $scriptsDir');
+    debugPrint('[PythonProcessor] Input: $imagePath');
+    debugPrint('[PythonProcessor] Output: $finalOutputDir');
+    debugPrint('[PythonProcessor] Args: $args');
 
     // Verify scripts directory exists
     if (!await Directory(scriptsDir).exists()) {
@@ -167,8 +174,8 @@ class PythonProcessor {
     final exitCode = await process.exitCode;
     await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
 
-    print('[PythonProcessor] Exit code: $exitCode');
-    print('[PythonProcessor] Output dir from IPC: $outputDirectory');
+    debugPrint('[PythonProcessor] Exit code: $exitCode');
+    debugPrint('[PythonProcessor] Output dir from IPC: $outputDirectory');
 
     if (exitCode == 0 && outputDirectory.isNotEmpty) {
       if (onProgress != null) onProgress(1.0, 'Processing complete!');

@@ -136,13 +136,6 @@ class ColorSeparator:
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         h, w = img_rgb.shape[:2]
 
-        # إنشاء mask للخلفية البيضاء - استخدم threshold أعلى لتجنب حذف الألوان الفاتحة
-        white_threshold = 245  # زيادة من 240 إلى 245 لتجنب حذف الألوان الفاتحة
-        bg_mask = None
-        if remove_white_bg:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            _, bg_mask = cv2.threshold(gray, white_threshold, 255, cv2.THRESH_BINARY)
-
         # تحويل إلى LAB للـ clustering الأفضل
         if use_lab:
             img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
@@ -150,35 +143,46 @@ class ColorSeparator:
         else:
             clustering_image = img_rgb
 
-        # تحضير البيكسلات
-        pixels = clustering_image.reshape(-1, 3).astype(np.float32)
+        # --- Senior Phase 17: Optional Global Quantization ---
+        # This simplifies the image to num_colors * 2 flat colors to remove noise/gradients
+        # before the final separation for a cleaner "Silk Screen" effect.
+        if num_colors > 0:
+            logger.info(f"[ColorSeparator] Applying global quantization (K={num_colors*2}) to remove noise")
+            Z = clustering_image.reshape((-1, 3)).astype(np.float32)
+            k_quant = min(num_colors * 2, 16) # Don't over-quantize
+            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+            _, q_labels, q_centers = cv2.kmeans(Z, k_quant, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+            q_centers = np.uint8(q_centers)
+            quantized = q_centers[q_labels.flatten()].reshape(clustering_image.shape)
+            clustering_image = quantized
 
-        # استثناء الخلفية البيضاء
-        if bg_mask is not None:
-            bg_flat = bg_mask.reshape(-1)
-            foreground_pixels = pixels[bg_flat < 128]
-            if len(foreground_pixels) < num_colors * 10:
-                logger.warning("[ColorSeparator] Too few foreground pixels, using all pixels")
-                foreground_pixels = pixels
+        # Smart background detection: Priority to provided white_threshold
+        # but with Otsu-based safety check (Senior Phase 15)
+        gray_for_bg = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        otsu_ret, _ = cv2.threshold(gray_for_bg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # If user provided a specific threshold != 240, use it. 
+        # Otherwise, calculate auto_bg_thresh using Otsu.
+        if white_threshold != 240:
+            auto_bg_thresh = white_threshold
+            logger.info(f"[ColorSeparator] Using user-provided white_threshold: {auto_bg_thresh}")
         else:
-            foreground_pixels = pixels
+            auto_bg_thresh = max(int(otsu_ret), 150) if otsu_ret > 100 else 220
+            logger.info(f"[ColorSeparator] Auto background threshold: {auto_bg_thresh} (Otsu={otsu_ret:.0f})")
+        
+        # bg_mask must be 2D (h, w) boolean — use grayscale threshold
+        bg_mask_2d = gray_for_bg > auto_bg_thresh  # True = background
+        foreground_pixels = clustering_image[~bg_mask_2d].reshape(-1, 3)
 
-        # تحسين فصل الألوان للصور متعددة الألوان
-        # استخدام threshold أعلى لاستبعاد الخلفية البيضاء
-        white_threshold = 245  # زيادة من 240 لتجنب حذف الألوان الفاتحة
+        # Fallback if too few pixels detected
+        if len(foreground_pixels) < 1000:
+            bg_mask_2d = gray_for_bg > 200
+            foreground_pixels = clustering_image[~bg_mask_2d].reshape(-1, 3)
+            logger.info("Fallback: reduced threshold to 200 for better color detection")
+        
+        bg_mask = bg_mask_2d
 
-        # إنشاء mask للخلفية البيضاء مع تحسين
-        bg_mask = np.all(clustering_image > white_threshold, axis=2)
-        pixels = clustering_image[~bg_mask].reshape(-1, 3)
-
-        # إذا كان عدد البكسلات قليل جداً، نقوم بتقليل الـ threshold
-        if len(pixels) < 1000:
-            white_threshold = 220
-            bg_mask = np.all(clustering_image > white_threshold, axis=2)
-            pixels = clustering_image[~bg_mask].reshape(-1, 3)
-            logger.info(f"Reduced white threshold to {white_threshold} for better color detection")
-
-        if len(pixels) == 0:
+        if len(foreground_pixels) == 0:
             # صورة بيضاء تماماً - ننشئ لون أسود واحد
             logger.warning("No non-white pixels found, creating single black color")
             centers = np.array([[0, 0, 0]], dtype=np.uint8)
@@ -186,33 +190,32 @@ class ColorSeparator:
             bg_mask = np.ones((h, w), dtype=bool)
         else:
             # تحسين K-means للصور متعددة الألوان
-            # زيادة عدد التكرارات والمحاولات حسب عدد الألوان
-            max_iter = 200 if num_colors <= 4 else 300  # أكثر تكرارات للألوان الكثيرة
-            epsilon = 0.1 if num_colors <= 4 else 0.05  # دقة أعلى للألوان الكثيرة
+            max_iter = 200 if num_colors <= 4 else 300
+            epsilon = 0.1 if num_colors <= 4 else 0.05
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, max_iter, epsilon)
-            flags = cv2.KMEANS_PP_CENTERS  # استخدام PP centers لنتائج أفضل
+            flags = cv2.KMEANS_PP_CENTERS
 
-            attempts = 10 if num_colors <= 4 else 20  # محاولات أكثر للألوان الكثيرة
+            attempts = 10 if num_colors <= 4 else 20
 
             compactness, labels, centers = cv2.kmeans(
-                pixels.astype(np.float32),
+                foreground_pixels.astype(np.float32),
                 num_colors,
                 None,
                 criteria,
-                10,  # زيادة عدد المحاولات
+                10,
                 flags
             )
 
             centers = np.uint8(centers)
 
         # ════════════════════════════════════════════════════════════
-        # CRITICAL FIX: Vectorized label_map building (was Python loop)
+        # CRITICAL FIX (Phase 16): Vectorized label_map building on ALL pixels
+        # Build on full image (h*w) not just foreground pixels to avoid Reshape error
         # ════════════════════════════════════════════════════════════
         centers_np = centers.astype(np.float32)  # shape: (K, 3)
-        # Pixels: (N, 3) where N = h*w
-        # diff: (N, K, 3) via broadcasting
-        diff = pixels[:, np.newaxis, :] - centers_np[np.newaxis, :, :]
-        dists_sq = np.sum(diff ** 2, axis=2)  # (N, K) — squared distance
+        all_pixels = clustering_image.reshape(-1, 3).astype(np.float32)  # all h*w pixels
+        diff = all_pixels[:, np.newaxis, :] - centers_np[np.newaxis, :, :]
+        dists_sq = np.sum(diff ** 2, axis=2)  # (N, K)
         label_map = np.argmin(dists_sq, axis=1).reshape(h, w).astype(np.int32)
         # ════════════════════════════════════════════════════════════
 
@@ -229,21 +232,20 @@ class ColorSeparator:
 
         # تحديد الخلفية
         if bg_mask is not None:
-            label_map[bg_mask > 128] = -1
+            label_map[bg_mask] = -1
 
         colors = [tuple(int(c) for c in center) for center in centers]
+        # Convert back to RGB for output if we used LAB
+        if use_lab:
+            colors_rgb = []
+            for c in centers:
+                rgb = cv2.cvtColor(np.uint8([[c]]), cv2.COLOR_LAB2RGB)[0][0]
+                colors_rgb.append(tuple(int(x) for x in rgb))
+            colors = colors_rgb
+
         color_names = [f"color_{i+1:02d}" for i in range(num_colors)]
 
         logger.info(f"[ColorSeparator] Done. Colors: {[self.get_color_hex(c) for c in colors]}")
-
-        # VALIDATION: Check for single color result (causes solid black films) — DISABLED to allow 1 color processing
-        # if num_colors <= 1:
-        #     logger.error(f"[ColorSeparator] CRITICAL: Only {num_colors} color detected! This will create solid black film.")
-        #     logger.error("This usually happens when:")
-        #     logger.error("- Image has insufficient contrast")
-        #     logger.error("- White background threshold is too low")
-        #     logger.error("- K-means clustering failed")
-        #     raise ValueError(f"Color separation failed: only {num_colors} color detected. Film would be solid black.")
 
         return {
             "colors": colors,
