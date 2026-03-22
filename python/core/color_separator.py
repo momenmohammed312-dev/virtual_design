@@ -143,35 +143,36 @@ class ColorSeparator:
         else:
             clustering_image = img_rgb
 
-        # --- Senior Phase 17: Optional Global Quantization ---
-        # This simplifies the image to num_colors * 2 flat colors to remove noise/gradients
-        # before the final separation for a cleaner "Silk Screen" effect.
-        if num_colors > 0:
-            logger.info(f"[ColorSeparator] Applying global quantization (K={num_colors*2}) to remove noise")
-            Z = clustering_image.reshape((-1, 3)).astype(np.float32)
-            k_quant = min(num_colors * 2, 16) # Don't over-quantize
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-            _, q_labels, q_centers = cv2.kmeans(Z, k_quant, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-            q_centers = np.uint8(q_centers)
-            quantized = q_centers[q_labels.flatten()].reshape(clustering_image.shape)
-            clustering_image = quantized
+        # --- Senior Phase 17: Optional Global Quantization (SKIPPED TO SAVE MEMORY) ---
+        # Removing this step because it caused 'bad allocation' (14MB) on some systems.
+        # The final K-means separation is sufficient.
 
         # Smart background detection: Priority to provided white_threshold
-        # but with Otsu-based safety check (Senior Phase 15)
+        # with fallback to "Corner Modal Color" for black/colored backgrounds (Phase 19)
         gray_for_bg = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        otsu_ret, _ = cv2.threshold(gray_for_bg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        h_img, w_img = gray_for_bg.shape
+        corners = [
+            gray_for_bg[0, 0], gray_for_bg[0, w_img-1], 
+            gray_for_bg[h_img-1, 0], gray_for_bg[h_img-1, w_img-1],
+            gray_for_bg[h_img//2, 0], gray_for_bg[h_img//2, w_img-1],
+            gray_for_bg[0, w_img//2], gray_for_bg[h_img-1, w_img//2]
+        ]
+        # Convert to list of ints to handle numpy scalars
+        corners = [int(c) for c in corners]
+        corner_mode = max(set(corners), key=corners.count)
         
-        # If user provided a specific threshold != 240, use it. 
-        # Otherwise, calculate auto_bg_thresh using Otsu.
-        if white_threshold != 240:
-            auto_bg_thresh = white_threshold
-            logger.info(f"[ColorSeparator] Using user-provided white_threshold: {auto_bg_thresh}")
+        # If the corners are dark (e.g. Black background), we should ignore dark as background
+        # instead of white. High-quality Screen Printing separation.
+        if corner_mode < 50:
+             logger.info(f"[ColorSeparator] Dark background detected (Corner mode: {corner_mode}). Switching to dark-bg removal.")
+             bg_mask_2d = gray_for_bg < (corner_mode + 30)
         else:
-            auto_bg_thresh = max(int(otsu_ret), 150) if otsu_ret > 100 else 220
-            logger.info(f"[ColorSeparator] Auto background threshold: {auto_bg_thresh} (Otsu={otsu_ret:.0f})")
-        
-        # bg_mask must be 2D (h, w) boolean — use grayscale threshold
-        bg_mask_2d = gray_for_bg > auto_bg_thresh  # True = background
+             # Default: White/Light background removal
+             otsu_ret, _ = cv2.threshold(gray_for_bg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+             auto_bg_thresh = max(int(otsu_ret), 150) if white_threshold == 240 else white_threshold
+             logger.info(f"[ColorSeparator] Light background threshold: {auto_bg_thresh}")
+             bg_mask_2d = gray_for_bg > auto_bg_thresh
+
         foreground_pixels = clustering_image[~bg_mask_2d].reshape(-1, 3)
 
         # Fallback if too few pixels detected
@@ -209,14 +210,24 @@ class ColorSeparator:
             centers = np.uint8(centers)
 
         # ════════════════════════════════════════════════════════════
-        # CRITICAL FIX (Phase 16): Vectorized label_map building on ALL pixels
-        # Build on full image (h*w) not just foreground pixels to avoid Reshape error
+        # CRITICAL FIX (Phase 16/18): Memory-Efficient Label Map Building
+        # Using a loop over K instead of broadcasting (NxKx3) to save 200MB+ RAM.
         # ════════════════════════════════════════════════════════════
         centers_np = centers.astype(np.float32)  # shape: (K, 3)
-        all_pixels = clustering_image.reshape(-1, 3).astype(np.float32)  # all h*w pixels
-        diff = all_pixels[:, np.newaxis, :] - centers_np[np.newaxis, :, :]
-        dists_sq = np.sum(diff ** 2, axis=2)  # (N, K)
-        label_map = np.argmin(dists_sq, axis=1).reshape(h, w).astype(np.int32)
+        all_pixels = clustering_image.reshape(-1, 3).astype(np.float32)
+        
+        # Calculate distances to each center one by one to avoid OOM
+        min_dists = np.full(all_pixels.shape[0], float('inf'), dtype=np.float32)
+        label_map_flat = np.zeros(all_pixels.shape[0], dtype=np.int32)
+        
+        for k in range(len(centers_np)):
+            # Squared distance to center k
+            dist_sq = np.sum((all_pixels - centers_np[k])**2, axis=1)
+            f_mask = dist_sq < min_dists
+            min_dists[f_mask] = dist_sq[f_mask]
+            label_map_flat[f_mask] = k
+            
+        label_map = label_map_flat.reshape(h, w)
         # ════════════════════════════════════════════════════════════
 
         # ترتيب من الأغمق للأفتح

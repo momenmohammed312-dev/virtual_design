@@ -57,8 +57,10 @@ class MaskGenerator:
             mask = np.zeros(label_map.shape, dtype=np.uint8)
             
             if grayscale_output:
-                # استخدام grayscale intensity من الصورة الأصلية
-                mask[label_map == i] = gray_orig[label_map == i]
+                # SILK SCREEN OPT: We want "Ink Density".
+                # Darkest pixel (0) = 100% ink (255) = Largest Dot.
+                # Lightest pixel (255) = 0% ink (0) = Smallest Dot.
+                mask[label_map == i] = 255 - gray_orig[label_map == i]
             else:
                 # SILK SCREEN STANDARD: design=white (255, transparent), background=black (0, opaque)
                 # Set design pixels to white (transparent) and background to black (opaque)

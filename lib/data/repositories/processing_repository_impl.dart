@@ -69,25 +69,26 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
     try {
       final box = await _hiveService.getSettingsBox();
       final json = box.get('last_settings');
-      if (json == null || json is! Map) return null;
+      final Map<dynamic, dynamic>? rawJson = json as Map<dynamic, dynamic>?;
+      if (rawJson == null) return null;
 
-      final halftoneData = json['halftoneSettings'] as Map<String, dynamic>?;
+      final halftoneData = rawJson['halftoneSettings'] as Map?;
       
       return ProcessingSettings(
-        colorCount: json['colorCount'] as int,
+        colorCount: (rawJson['colorCount'] as num?)?.toInt() ?? 0,
         detailLevel: DetailLevel.values.firstWhere(
-          (e) => e.name == json['detailLevel'] as String,
+          (e) => e.name == rawJson['detailLevel'] as String?,
           orElse: () => DetailLevel.medium,
         ),
         printFinish: PrintFinish.values.firstWhere(
-          (e) => e.name == json['printFinish'] as String,
+          (e) => e.name == rawJson['printFinish'] as String?,
           orElse: () => PrintFinish.solid,
         ),
-        strokeWidthMm: (json['strokeWidthMm'] as num).toDouble(),
-        dpi: (json['dpi'] as num).toDouble(),
-        meshCount: (json['meshCount'] as num).toInt(),
+        strokeWidthMm: (rawJson['strokeWidthMm'] as num?)?.toDouble() ?? 0.5,
+        dpi: (rawJson['dpi'] as num?)?.toDouble() ?? 300.0,
+        meshCount: (rawJson['meshCount'] as num?)?.toInt() ?? 200,
         edgeEnhancement: EdgeEnhancement.values.firstWhere(
-          (e) => e.name == json['edgeEnhancement'] as String,
+          (e) => e.name == rawJson['edgeEnhancement'] as String?,
           orElse: () => EdgeEnhancement.light,
         ),
         halftoneSettings: halftoneData != null

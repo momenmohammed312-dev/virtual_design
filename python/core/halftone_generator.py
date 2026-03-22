@@ -29,39 +29,53 @@ class HalftoneGenerator:
         angle: float = 45.0,
         dot_shape: str = "circle",
     ) -> List[HalftoneDot]:
-        """Generate halftone as list of HalftoneDot objects.
-        NO raster intermediate — feed directly to PDFDocumentBuilder.
-        Angle is ACTUALLY APPLIED via rotation matrix (was broken before).
-        """
+        """Vectorized Halftone Dot generation for speed."""
         gray = self._to_gray(image)
         h, w = gray.shape
-        dot_spacing = int(self.dpi / lpi)
+        dot_spacing = self.dpi / lpi
         angle_rad = math.radians(angle)
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
         cx0, cy0 = w / 2.0, h / 2.0
 
-        diag = math.ceil(math.sqrt(w * w + h * h))
+        # Calculate bounding box in grid coordinate space
+        diag = math.sqrt(w * w + h * h)
         n = int(math.ceil(diag / dot_spacing)) + 2
 
-        dots: List[HalftoneDot] = []
-        for row in range(-n, n + 1):
-            for col in range(-n, n + 1):
-                gx = col * dot_spacing
-                gy = row * dot_spacing
-                px = cx0 + gx * cos_a - gy * sin_a
-                py = cy0 + gx * sin_a + gy * cos_a
+        # 1. Create a grid of points in rotated space
+        mg_cols, mg_rows = np.meshgrid(np.arange(-n, n + 1), np.arange(-n, n + 1))
+        gx = mg_cols.flatten() * dot_spacing
+        gy = mg_rows.flatten() * dot_spacing
 
-                px = max(0, min(w - 1, px))
-                py = max(0, min(h - 1, py))
+        # 2. Rotate grid points back to image space
+        px = cx0 + gx * cos_a - gy * sin_a
+        py = cy0 + gx * sin_a + gy * cos_a
 
-                ix = int(max(0, min(w - 1, round(px))))
-                iy = int(max(0, min(h - 1, round(py))))
-                intensity = gray[iy, ix] / 255.0
-                radius = (1.0 - intensity) * (dot_spacing / 2.0) * 0.95
+        # 3. Filter points inside or near boundary
+        mask = (px >= 0) & (px < w) & (py >= 0) & (py < h)
+        px, py = px[mask], py[mask]
 
-                dots.append(HalftoneDot(cx=px, cy=py, radius=radius, shape=dot_shape))
+        if len(px) == 0:
+            return []
 
+        # 4. Map pixel intensities at these points (using nearest neighbor for speed)
+        ix = np.round(px).astype(int)
+        iy = np.round(py).astype(int)
+        # Note: ix, iy are already clipped by the mask check above, 
+        # but let's be safe for boundary rounding.
+        ix = np.clip(ix, 0, w - 1)
+        iy = np.clip(iy, 0, h - 1)
+        
+        intensities = gray[iy, ix] / 255.0
+        radii = intensities * (dot_spacing / 2.0) * 0.95
+
+        # 5. Build dot list
+        dots = [
+            HalftoneDot(cx=float(px[i]), cy=float(py[i]), radius=float(radii[i]), shape=dot_shape)
+            for i in range(len(px))
+            if radii[i] > 0.05  # Skip invisible dots
+        ]
+        
         return dots
 
     # ─── RASTER OUTPUT (backwards compat / PNG preview) ──────────────────────

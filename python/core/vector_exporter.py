@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from reportlab.pdfgen import canvas as rl_canvas
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, A3, letter
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
@@ -33,8 +33,8 @@ def _get_angle(p1, p2, p3):
 
 def fit_bezier_to_contour(
     contour: np.ndarray,
-    smooth_factor: float = 0.25,
-    corner_threshold: float = 45.0
+    smooth_factor: float = 0.2,
+    corner_threshold: float = 150.0
 ) -> List[Tuple]:
     """
     تحويل النقاط (Contour) إلى منحنيات بيزييه (Bezier Curves) احترافية.
@@ -53,18 +53,18 @@ def fit_bezier_to_contour(
         p2 = pts[(i + 1) % n]
         p3 = pts[(i + 2) % n]
         
-        # Senior Optimization: Check if p1 and p2 are "Sharp Corners"
-        # If the angle at p1 or p2 is very sharp (e.g. < 45 deg or > 135 deg context dependent)
-        # We skip smoothing for that specific segment to keep it linear.
+        # Senior Optimization: Handle Sharp Corners and Flat Lines
+        # 1. Very sharp angles (< 150) -> Keep linear
+        # 2. Very flat angles (> 175) -> Keep linear (prevents wobbly straight lines)
+        # 3. Intermediate angles -> Apply light Bezier smoothing
         
         angle1 = _get_angle(p0, p1, p2)
         angle2 = _get_angle(p1, p2, p3)
         
-        # If it's a sharp corner, use linear segment (L) instead of Bezier (C)
-        # or reduce smooth_factor to 0 for this segment.
         is_corner = angle1 < corner_threshold or angle2 < corner_threshold
+        is_flat = angle1 > 176.0 or angle2 > 176.0
         
-        current_smooth = 0.0 if (is_corner or smooth_factor == 0) else smooth_factor
+        current_smooth = 0.0 if (is_corner or is_flat or smooth_factor == 0) else smooth_factor
         
         if current_smooth == 0:
             commands.append(('L', p2[0], p2[1]))
@@ -85,8 +85,8 @@ def export_vector_pdf(
     color_names: List[str],
     output_path: Path,
     dpi: int = 300,
-    smooth_factor: float = 0.25,
-    corner_threshold: float = 45.0,
+    smooth_factor: float = 0.2,
+    corner_threshold: float = 150.0,
     min_contour_area: int = 50,
     page_size: str = 'A4',
 ) -> Path:
@@ -163,55 +163,56 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ رسم الـ vector paths ═══
-        # 1. Pre-smoothing: تحويل الحواف المشرشرة لحواف منحنية ناعمة (رؤية البرنامج)
-        # Senior Fix: Use MORPH_CLOSE to fill tiny gaps without destroying font details
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-        bw_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        # 1. المرحلة الأولى: تحويل الصورة لثنائية (Binary) وتنعيم خفيف لإزالة الـ Jagginess
+        # We use a 5x5 blur to clean the input mask before tracing for smoother edges.
+        bw = cv2.GaussianBlur(mask, (5, 5), 0)
+        _, bw = cv2.threshold(bw, 64, 255, cv2.THRESH_BINARY)
         
-        # Use a lighter GaussianBlur (3,3) instead of (5,5) to prevent melting fonts
-        smoothed = cv2.GaussianBlur(bw_closed, (3, 3), 0)
-        _, bw = cv2.threshold(smoothed, 128, 255, cv2.THRESH_BINARY)
-        
-        # 2. Contour Extraction: استخراج الحواف مع مراعاة الثقوب الداخلية (RETR_CCOMP)
+        # 2. Contour Extraction: استخراج الحواف مع مراعاة الثقوب الداخلية (RETR_TREE)
         contours, hierarchy = cv2.findContours(
-            bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_TC89_KCOS
+            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
         )
         
         # coordinate transform (defined once, outside the loop)
         def px_to_pdf(px_x, px_y):
-            pt_x = draw_x + (px_x / mask_w) * draw_w
-            pt_y = draw_y + (1 - px_y / mask_h) * draw_h
-            return pt_x, pt_y
+            # --- Phase 20: Unified Path Rendering for Holes ---
+            # Instead of drawing one-by-one, we use a single path for ALL contours
+            # This allows the Even-Odd fill rule to handle holes perfectly (BMW logo FIX)
+            # We need to calculate scale_w and scale_h for the new coordinate transformation
+            scale_w = draw_w / mask_w
+            scale_h = draw_h / mask_h
+            return draw_x + px_x * scale_w, draw_y + (mask_h - px_y) * scale_h
+
+        path = c.beginPath()
+        path.setFillMode(1) # 1 = Even-Odd fill rule (essential for nested holes)
         
-        for ci, contour in enumerate(contours):
+        min_contour_area = 10 # capture small details
+        
+        # We need to sort contours by area descending so outer ones come first?
+        # Actually with RETR_TREE and Even-Odd, order doesn't matter for pure fill.
+        for j, contour in enumerate(contours):
             area = cv2.contourArea(contour)
             if area < min_contour_area:
                 continue
             
-            # FIX 1: epsilon ديناميكي حسب حجم الـ contour
-            # أكبر contour → epsilon أكبر → حواف أنعم
+            # FIX 1: Epsilon عالي لإزالة الـ Jagginess (شرشرة) 1.25
             perimeter = cv2.arcLength(contour, True)
-            epsilon = max(1.5, perimeter * 0.004)
+            epsilon = 1.25 
             approx = cv2.approxPolyDP(contour, epsilon, True)
             
             if len(approx) < 3:
                 continue
-            
+
             # Bezier curve fitting
             bezier_cmds = fit_bezier_to_contour(approx, smooth_factor, corner_threshold)
             
             if not bezier_cmds:
                 continue
-            
-            # FIX 2: hole detection — inner contours تتملى أبيض
-            is_hole = (hierarchy is not None and
-                       hierarchy[0][ci][3] != -1)
-            if is_hole:
-                c.setFillColor(white)
-            else:
-                c.setFillColor(black)
-            
-            path = c.beginPath()
+
+            # Start contour in path
+            # The original code used px_to_pdf for Bezier commands, let's stick to that.
+            # The provided diff had a different coordinate transformation, which might be a mistake.
+            # Reverting to using px_to_pdf for consistency with the rest of the file.
             
             for cmd in bezier_cmds:
                 if cmd[0] == 'M':
@@ -227,11 +228,13 @@ def export_vector_pdf(
                     px, py = px_to_pdf(cmd[1], cmd[2])
                     path.lineTo(px, py)
             
-            path.close()
-            c.drawPath(path, fill=1, stroke=0)
+            path.close() # Close sub-path
         
-        # Reset fill to black after loop
+        # Finalize and draw the unified path (Holes handled by Even-Odd)
         c.setFillColor(black)
+        c.drawPath(path, fill=1, stroke=0)
+        
+        # Reset fill settings
         c.setStrokeColor(black)
         c.setLineWidth(0.5)
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=0, stroke=1)

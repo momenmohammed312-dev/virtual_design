@@ -17,11 +17,10 @@ class _SetupPageState extends State<SetupPage> {
   static const Color primaryBlue = Color(0xFF1564A5);
   static const Color sidebarBlue = Color(0xFF0E3182);
 
-  // State variables
+  // State variables - Now synced with controller viainitState
   PrintType selectedPrintType = PrintType.screenPrinting;
   int selectedColorCount = 0;
   DetailLevel selectedDetailLevel = DetailLevel.medium;
-  PrintFinish selectedPrintFinish = PrintFinish.solid;
 
   // Halftone settings
   bool showHalftoneSettings = false;
@@ -125,10 +124,8 @@ class _SetupPageState extends State<SetupPage> {
                               _buildDetailLevelSection(),
                               const SizedBox(height: 30),
 
-                              if (true) ...[
-                                _buildPrintFinishSection(),
-                                const SizedBox(height: 30),
-                              ],
+                              _buildPrintFinishSection(controller),
+                              const SizedBox(height: 30),
 
                               _buildStrokeWidthSection(),
                               const SizedBox(height: 30),
@@ -399,7 +396,7 @@ class _SetupPageState extends State<SetupPage> {
         border: Border.all(color: const Color(0xFFE5E7EB)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: Colors.black.withOpacity(0.03),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -579,7 +576,7 @@ class _SetupPageState extends State<SetupPage> {
           ...PrintType.values.map((type) {
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: _buildPrintTypeOption(type),
+              child: _buildPrintTypeOption(type, Get.find<SetupController>()),
             );
           }),
         ],
@@ -587,7 +584,7 @@ class _SetupPageState extends State<SetupPage> {
     );
   }
 
-  Widget _buildPrintTypeOption(PrintType type) {
+  Widget _buildPrintTypeOption(PrintType type, SetupController controller) {
     bool isSelected = selectedPrintType == type;
 
     return InkWell(
@@ -596,7 +593,8 @@ class _SetupPageState extends State<SetupPage> {
               setState(() {
                 selectedPrintType = type;
                 if (!type.supportsHalftone) {
-                  selectedPrintFinish = PrintFinish.solid;
+                  controller.isHalftone.value = false;
+                  controller.selectedFinish.value = ps.PrintFinish.solid;
                   showHalftoneSettings = false;
                 }
               });
@@ -828,7 +826,7 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   // ============= Print Finish Section =============
-  Widget _buildPrintFinishSection() {
+  Widget _buildPrintFinishSection(SetupController controller) {
     return Container(
       padding: const EdgeInsets.all(25),
       decoration: BoxDecoration(
@@ -861,26 +859,24 @@ class _SetupPageState extends State<SetupPage> {
             ],
           ),
           const SizedBox(height: 20),
-          Row(
+          Obx(() => Row(
             children: PrintFinish.values.map((finish) {
-              bool isSelected = selectedPrintFinish == finish;
+              // Sync with controller value
+              bool isSelected = (controller.selectedFinish.value == ps.PrintFinish.halftone && finish == PrintFinish.halftone) ||
+                               (controller.selectedFinish.value == ps.PrintFinish.solid && finish == PrintFinish.solid);
+              
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 5),
                   child: InkWell(
                     onTap: () {
                       setState(() {
-                        selectedPrintFinish = finish;
-                        showHalftoneSettings = finish == PrintFinish.halftone;
+                         controller.isHalftone.value = (finish == PrintFinish.halftone);
+                         controller.selectedFinish.value = (finish == PrintFinish.halftone) 
+                            ? ps.PrintFinish.halftone 
+                            : ps.PrintFinish.solid;
+                         showHalftoneSettings = (finish == PrintFinish.halftone);
                       });
-                      // Sync ALL finish state to controller (both helper bool and explicit enum)
-                      final setupCtrl = Get.find<SetupController>();
-                      setupCtrl.isHalftone.value = (finish == PrintFinish.halftone);
-                      
-                      // Sync to domain enum
-                      setupCtrl.selectedFinish.value = (finish == PrintFinish.halftone) 
-                        ? ps.PrintFinish.halftone 
-                        : ps.PrintFinish.solid;
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 15),
@@ -908,7 +904,7 @@ class _SetupPageState extends State<SetupPage> {
                 ),
               );
             }).toList(),
-          ),
+          )),
           if (showHalftoneSettings) ...[
             const SizedBox(height: 25),
             Container(
@@ -1617,7 +1613,6 @@ class _SetupPageState extends State<SetupPage> {
               setState(() {
                 selectedColorCount = 0;
                 selectedDetailLevel = DetailLevel.medium;
-                selectedPrintFinish = PrintFinish.solid;
                 showHalftoneSettings = false;
                 lpi = 55;
                 selectedDotShape = DotShape.round;

@@ -88,7 +88,7 @@ def verify_output():
     expected_files = ["film_0_k.png", "film_1_cyan.png", "film_2_magenta.png"]
     found_files = []
     
-    for file in OUTPUT_DIR.glob("film_*.png"):
+    for file in OUTPUT_DIR.rglob("film_*.png"):
         found_files.append(file.name)
     
     print(f"Found {len(found_files)} film files:")

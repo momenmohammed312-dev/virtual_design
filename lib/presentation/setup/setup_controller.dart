@@ -85,6 +85,7 @@ class SetupController extends GetxController {
       selectedColors.value = settings.colorCount;
       selectedDetail.value = settings.detailLevel;
       selectedFinish.value = settings.printFinish;
+      isHalftone.value = (settings.printFinish == ps.PrintFinish.halftone);
       strokeWidth.value = settings.strokeWidthMm;
       printQuality.value = settings.dpi;
       adaptiveThreshold.value = settings.adaptiveThreshold;
@@ -151,8 +152,9 @@ class SetupController extends GetxController {
     progressMessage.value = 'Starting...';
 
     try {
-      // Build halftone settings from real UI values
-      final halftone = isHalftone.value
+      // Build halftone settings ONLY if finish is halftone
+      final bool effectivelyHalftone = selectedFinish.value == ps.PrintFinish.halftone;
+      final halftone = effectivelyHalftone
           ? ps.HalftoneSettings(
               lpi: lpiValue.value,
               dotShape: selectedDotShape.value,
@@ -168,7 +170,7 @@ class SetupController extends GetxController {
       final settings = ps.ProcessingSettings(
         colorCount: selectedColors.value,
         detailLevel: selectedDetail.value,
-        printFinish: isHalftone.value ? ps.PrintFinish.halftone : selectedFinish.value,
+        printFinish: selectedFinish.value,
         strokeWidthMm: strokeWidth.value,
         dpi: printQuality.value,
         meshCount: meshCount,
