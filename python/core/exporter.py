@@ -329,9 +329,11 @@ class Exporter:
         return filepath
     
     def export_svg(self,
-                   mask: np.ndarray,
-                   filename: str,
-                   color: Optional[List[int]] = None) -> Optional[Path]:
+                    mask: np.ndarray,
+                    filename: str,
+                    color: Optional[List[int]] = None,
+                    smooth_factor: float = 0.2,
+                    corner_threshold: float = 150.0) -> Optional[Path]:
         """
         Export mask as SVG with Bezier curves for true vector quality
 
@@ -339,6 +341,8 @@ class Exporter:
             mask: Binary mask
             filename: Output filename
             color: Optional RGB color
+            smooth_factor: Smoothing factor (0.0-0.5)
+            corner_threshold: Threshold angle in degrees to preserve corners
 
         Returns:
             Path to SVG file or None if failed
@@ -354,13 +358,17 @@ class Exporter:
             mask_1c = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
         else:
             mask_1c = mask.copy()
-            
+             
         if mask_1c.dtype != np.uint8:
             mask_1c = mask_1c.astype(np.uint8)
 
         # 1. Pre-smoothing: تحويل الحواف المشرشرة لحواف منحنية ناعمة
         # نستخدم GaussianBlur لمسح "زوايا البكسل" وبعدين نرجعها صريحة بـ Threshold
-        mask_smoothed = cv2.GaussianBlur(mask_1c, (3, 3), 0)
+        blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
+        if blur_k % 2 == 0:
+            blur_k += 1
+        blur_k = max(3, min(7, blur_k))
+        mask_smoothed = cv2.GaussianBlur(mask_1c, (blur_k, blur_k), 0)
         _, mask_bw = cv2.threshold(mask_smoothed, 128, 255, cv2.THRESH_BINARY)
 
         # 2. Find contours with better approximation
@@ -389,20 +397,21 @@ class Exporter:
                 continue
 
             # Convert to Bezier curve approximation
-            path_data = self._contour_to_bezier_path(approx)
+            path_data = self._contour_to_bezier_path(approx, smooth_factor, corner_threshold)
             if path_data:
                 dwg.add(dwg.path(d=path_data, fill=fill_color, stroke='none'))
 
         dwg.save()
         return filepath
 
-    def _contour_to_bezier_path(self, contour: np.ndarray, smooth_factor: float = 0.3) -> str:
+    def _contour_to_bezier_path(self, contour: np.ndarray, smooth_factor: float = 0.3, corner_threshold: float = 150.0) -> str:
         """
         Convert contour points to SVG Bezier curve path data
 
         Args:
             contour: Contour points array
             smooth_factor: Smoothing factor (0.0-0.5)
+            corner_threshold: Threshold angle in degrees to preserve sharp corners
 
         Returns:
             SVG path data string with Bezier curves
@@ -413,28 +422,42 @@ class Exporter:
         if n < 3:
             return ""
 
-        # Start path
+        def _get_angle(p1, p2, p3):
+            v1 = p1 - p2
+            v2 = p3 - p2
+            norm1 = np.linalg.norm(v1)
+            norm2 = np.linalg.norm(v2)
+            if norm1 < 1e-4 or norm2 < 1e-4:
+                return 0
+            cos_theta = np.dot(v1, v2) / (norm1 * norm2)
+            return np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0)))
+
         path_parts = [f"M {pts[0][0]:.2f},{pts[0][1]:.2f}"]
 
         for i in range(n):
-            # النقطة الحالية والتالية والاتنين اللي قبلهم وبعدهم للحساب
             p0 = pts[(i - 1) % n]
             p1 = pts[i]
             p2 = pts[(i + 1) % n]
             p3 = pts[(i + 2) % n]
 
-            # تحويل Catmull-Rom Control Points إلى Bezier Control Points
-            cp1x = p1[0] + (p2[0] - p0[0]) * smooth_factor
-            cp1y = p1[1] + (p2[1] - p0[1]) * smooth_factor
-            cp2x = p2[0] - (p3[0] - p1[0]) * smooth_factor
-            cp2y = p2[1] - (p3[1] - p1[1]) * smooth_factor
+            angle1 = _get_angle(p0, p1, p2)
+            angle2 = _get_angle(p1, p2, p3)
 
-            # Add cubic Bezier curve command
-            path_parts.append(f"C {cp1x:.2f},{cp1y:.2f} {cp2x:.2f},{cp2y:.2f} {p2[0]:.2f},{p2[1]:.2f}")
+            is_corner = angle1 < corner_threshold or angle2 < corner_threshold
+            is_flat = angle1 > 176.0 or angle2 > 176.0
 
-        # Close path
+            current_smooth = 0.0 if (is_corner or is_flat or smooth_factor == 0) else smooth_factor
+
+            if current_smooth == 0:
+                path_parts.append(f"L {p2[0]:.2f},{p2[1]:.2f}")
+            else:
+                cp1x = p1[0] + (p2[0] - p0[0]) * current_smooth
+                cp1y = p1[1] + (p2[1] - p0[1]) * current_smooth
+                cp2x = p2[0] - (p3[0] - p1[0]) * current_smooth
+                cp2y = p2[1] - (p3[1] - p1[1]) * current_smooth
+                path_parts.append(f"C {cp1x:.2f},{cp1y:.2f} {cp2x:.2f},{cp2y:.2f} {p2[0]:.2f},{p2[1]:.2f}")
+
         path_parts.append("Z")
-
         return " ".join(path_parts)
     
     def export_all_films_with_marks(

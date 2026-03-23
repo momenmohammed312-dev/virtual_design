@@ -6,12 +6,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
+import '../../core/utils/sound_manager.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
 
   SetupController({required ProcessingRepository repository})
-    : _repository = repository;
+      : _repository = repository;
 
   // ─── Image paths ─────────────────────────────────────────────────────────
   final RxString imagePath = ''.obs;
@@ -216,6 +217,8 @@ class SetupController extends GetxController {
         Get.log(
           '✅ Success! Navigating to preview with: ${result.outputDirectory}',
         );
+        // Play completion sound
+        SoundManager().playDone();
         await Future.delayed(const Duration(milliseconds: 500));
         Get.offNamed(
           '/preview',

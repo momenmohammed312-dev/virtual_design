@@ -80,20 +80,35 @@ class ColorSeparator:
                 inertias.append(float('inf'))
         
         # Elbow method: ابحث عن أكبر انخفاض نسبي
+        # متغير حسب تعقيد الصورة: simple (أول drop كبير) vs complex (drops متتالية صغيرة)
         if len(inertias) < 2:
             return 2
         
-        # Senior Update: Catch subtle color differences in logos (Phase 24)
         best_k = 2
+        has_big_initial_drop = False
+        
         for i in range(1, len(inertias)):
             if inertias[i - 1] > 0:
                 drop = (inertias[i - 1] - inertias[i]) / inertias[i - 1]
-                # Lowered the 'significant drop' hurdle to 0.10 to catch subtle color layers (BMW Fix)
-                if drop > 0.10: 
+                
+                # أول drop كبير (>15%) = صورة بسيطة (لوجو/نص) → نقف عنده
+                if drop > 0.15:
                     best_k = i + 2
+                    has_big_initial_drop = True
                     break
+                
+                # drop صغير بس ذي معنى (>5%) = ممكن يكون لون إضافي مهم
+                # نكمّل لحد ما نوصل لحد أقصى
+                elif drop > 0.05:
+                    best_k = i + 2
+                # drop صغير جداً (<5%) → noise، نتجاهله
         
-        logger.info(f"[ColorSeparator] Auto-detected {best_k} colors")
+        # لو مفيش drop كبير، الصورة معقدة (كثير ألوان) → best_k هي آخر K صالح
+        if not has_big_initial_drop:
+            # cap على أقصى عدد ألوان (max_colors)
+            best_k = min(best_k, max_colors)
+        
+        logger.info(f"[ColorSeparator] Auto-detected {best_k} colors (complex={not has_big_initial_drop})")
         return best_k
 
     def separate(
@@ -254,7 +269,17 @@ class ColorSeparator:
                 colors_rgb.append(tuple(int(x) for x in rgb))
             colors = colors_rgb
 
-        color_names = [f"color_{i+1:02d}" for i in range(num_colors)]
+        # Match each color to nearest Pantone for descriptive names
+        color_names = []
+        try:
+            from core.pantone_library import PantoneLibrary
+            pantone_lib = PantoneLibrary()
+            for color in colors:
+                match = pantone_lib.find_nearest_pantone(color)
+                color_names.append(match.name)
+        except Exception:
+            # Fallback to generic names if Pantone library unavailable
+            color_names = [f"color_{i+1:02d}" for i in range(num_colors)]
 
         logger.info(f"[ColorSeparator] Done. Colors: {[self.get_color_hex(c) for c in colors]}")
 

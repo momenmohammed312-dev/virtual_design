@@ -8,39 +8,43 @@ import 'package:open_file/open_file.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/enums/app_enums.dart';
 import '../../core/utils/image_processor.dart';
+import '../../core/utils/sound_manager.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
 
 class PreviewController extends GetxController {
   final ProcessingRepository _repository;
-  
+
   PreviewController({required ProcessingRepository repository})
-    : _repository = repository;
+      : _repository = repository;
 
   final RxString outputDirectory = ''.obs;
   final RxString imagePath = ''.obs;
   final RxString originalPath = ''.obs;
-  final Rx<ps.ProcessingSettings?> initialSettings = Rx<ps.ProcessingSettings?>(null);
-  
+  final Rx<ps.ProcessingSettings?> initialSettings =
+      Rx<ps.ProcessingSettings?>(null);
+
   // Hold both PNGs for UI and PDFs for export
   final RxList<String> previewPaths = <String>[].obs; // PNGs
   final RxList<String> pdfPaths = <String>[].obs; // PDFs
   final RxString combinedPdfPath = ''.obs; // all_films_combined.pdf
-  
+
   final RxBool isLoading = true.obs;
   final RxInt selectedFilmIndex = 0.obs;
   final Rx<PrintType> selectedPrintType = PrintType.screenPrinting.obs;
-  
+
   // Color Info from JSON
   final RxList<Map<String, dynamic>> colorInfo = <Map<String, dynamic>>[].obs;
 
   // Zoom functionality for InteractiveViewer
-  final TransformationController transformationController = TransformationController();
+  final TransformationController transformationController =
+      TransformationController();
   final RxDouble zoomLevel = 1.0.obs;
 
   // --- Adjustment State (Senior Perspective) ---
   final RxDouble globalThreshold = 127.0.obs;
-  final RxDouble smoothingFactor = 0.35.obs; // Phase 25: Increased default from 0.25 to 0.35 for smoother logos
+  final RxDouble smoothingFactor = 0.35
+      .obs; // Phase 25: Increased default from 0.25 to 0.35 for smoother logos
   final RxDouble cornerThreshold = 45.0.obs;
   final RxInt noiseRemoval = 10.obs;
   final RxBool forceHalftone = false.obs;
@@ -48,14 +52,14 @@ class PreviewController extends GetxController {
   final RxString filmLabel = "".obs;
   late final TextEditingController filmLabelController;
   final RxDouble currentDpi = 300.0.obs; // Professional Standard = 300
-  
+
   // Cache busting
   final RxInt lastUpdateTimestamp = 0.obs;
-  
+
   // Per-layer overrides
   final RxList<bool> isLayerInverted = <bool>[].obs;
   final RxList<bool> isLayerSolid = <bool>[].obs;
-  
+
   // Simulation Settings
   final Rx<Color> tshirtColor = Colors.white.obs;
   final RxBool showTshirtSimulation = false.obs;
@@ -64,7 +68,7 @@ class PreviewController extends GetxController {
   final RxBool isRegenerating = false.obs;
   final RxDouble progress = 0.0.obs;
   final RxString progressMessage = ''.obs;
-  
+
   bool _needsAnotherPass = false; // Queue for overlapping adjustment requests
   double? _queuedDpi;
 
@@ -79,7 +83,7 @@ class PreviewController extends GetxController {
         outputDirectory.value = args['outputDirectory'] as String? ?? '';
         imagePath.value = args['imagePath'] as String? ?? '';
         originalPath.value = args['originalPath'] as String? ?? '';
-        
+
         final settings = args['settings'];
         if (settings is ps.ProcessingSettings) {
           initialSettings.value = settings;
@@ -102,26 +106,33 @@ class PreviewController extends GetxController {
     } else {
       isLoading.value = false;
     }
-    
+
     // Listen to zoom changes
     transformationController.addListener(() {
       zoomLevel.value = transformationController.value.getMaxScaleOnAxis();
     });
 
     // Debounce Tuning Sliders to prevent Python flood (Phase 9 & 11)
-    debounce(globalThreshold, (_) => regenerateFilms(), time: const Duration(milliseconds: 300));
-    debounce(smoothingFactor, (_) => regenerateFilms(), time: const Duration(milliseconds: 300));
-    debounce(cornerThreshold, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
-    debounce(noiseRemoval, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
-    debounce(forceHalftone, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
-    debounce(adaptiveThreshold, (_) => regenerateFilms(), time: const Duration(milliseconds: 400));
-    
+    debounce(globalThreshold, (_) => regenerateFilms(),
+        time: const Duration(milliseconds: 300));
+    debounce(smoothingFactor, (_) => regenerateFilms(),
+        time: const Duration(milliseconds: 300));
+    debounce(cornerThreshold, (_) => regenerateFilms(),
+        time: const Duration(milliseconds: 400));
+    debounce(noiseRemoval, (_) => regenerateFilms(),
+        time: const Duration(milliseconds: 400));
+    debounce(forceHalftone, (_) => regenerateFilms(),
+        time: const Duration(milliseconds: 400));
+    debounce(adaptiveThreshold, (_) => regenerateFilms(),
+        time: const Duration(milliseconds: 400));
+
     filmLabelController = TextEditingController(text: filmLabel.value);
     filmLabelController.addListener(() {
       filmLabel.value = filmLabelController.text;
     });
-    
-    debounce(filmLabel, (_) => regenerateFilms(), time: const Duration(milliseconds: 600));
+
+    debounce(filmLabel, (_) => regenerateFilms(),
+        time: const Duration(milliseconds: 600));
   }
 
   @override
@@ -129,11 +140,14 @@ class PreviewController extends GetxController {
     // Final Cleanup - Only if we are NOT in a situation where we might need them again soon
     // FATAL #7 FIX: Be conservative with cleanup to avoid "File not found" during rapid tuning
     if (imagePath.value.contains('vd_normalized_') && !isRegenerating.value) {
-      Get.log('🧹 PreviewController.onClose: Cleaning up normalized image ${imagePath.value}');
+      Get.log(
+          '🧹 PreviewController.onClose: Cleaning up normalized image ${imagePath.value}');
       ImageProcessor.cleanupTempFile(imagePath.value);
     }
-    if (originalPath.value.contains('vd_normalized_') && !isRegenerating.value) {
-      Get.log('🧹 PreviewController.onClose: Cleaning up original raw image ${originalPath.value}');
+    if (originalPath.value.contains('vd_normalized_') &&
+        !isRegenerating.value) {
+      Get.log(
+          '🧹 PreviewController.onClose: Cleaning up original raw image ${originalPath.value}');
       ImageProcessor.cleanupTempFile(originalPath.value);
     }
     filmLabelController.dispose();
@@ -158,7 +172,7 @@ class PreviewController extends GetxController {
       isRegenerating.value = true;
       progress.value = 0.0;
       progressMessage.value = 'Preparing regeneration...';
-      
+
       // Phase 11 & 12 Refinement: Use 300 DPI as the new baseline for quality
       final targetDpi = forcedDpi ?? 300.0;
 
@@ -174,7 +188,8 @@ class PreviewController extends GetxController {
         dpi: targetDpi,
       );
 
-      Get.log('🔄 Regenerating with tuning: Threshold=${globalThreshold.value}, Smooth=${smoothingFactor.value}, DPI=$targetDpi');
+      Get.log(
+          '🔄 Regenerating with tuning: Threshold=${globalThreshold.value}, Smooth=${smoothingFactor.value}, DPI=$targetDpi');
 
       final result = await _repository.processImage(
         imagePath: imagePath.value,
@@ -190,6 +205,7 @@ class PreviewController extends GetxController {
         outputDirectory.value = result.outputDirectory!;
         currentDpi.value = targetDpi; // Update current DPI tracking
         await _loadFilmsAndInfo();
+        SoundManager().playDone();
         Get.snackbar('Success', 'Films updated with new adjustments.');
         return true;
       } else {
@@ -202,7 +218,7 @@ class PreviewController extends GetxController {
       return false;
     } finally {
       isRegenerating.value = false;
-      
+
       // If a request was queued while we were busy, run it now (Phase 9)
       if (_needsAnotherPass) {
         Get.log('🔄 Running queued regeneration pass...');
@@ -210,7 +226,8 @@ class PreviewController extends GetxController {
         _needsAnotherPass = false;
         _queuedDpi = null;
         // Schedule next pass after short delay to allow UI to breathe
-        Future.delayed(const Duration(milliseconds: 100), () => regenerateFilms(forcedDpi: nextDpi));
+        Future.delayed(const Duration(milliseconds: 100),
+            () => regenerateFilms(forcedDpi: nextDpi));
       }
     }
   }
@@ -223,27 +240,37 @@ class PreviewController extends GetxController {
       final dir = Directory(outputDirectory.value);
       if (await dir.exists()) {
         final allFiles = dir.listSync().whereType<File>().toList();
-        
+
         // Load PNG previews (sorted)
         previewPaths.value = allFiles
-            .where((f) => f.path.toLowerCase().endsWith('.png') && !f.path.contains('debug'))
+            .where((f) =>
+                f.path.toLowerCase().endsWith('.png') &&
+                !f.path.contains('debug'))
             .map((f) => f.path)
-            .toList()..sort();
-            
+            .toList()
+          ..sort();
+
         // Load Individual PDFs
         pdfPaths.value = allFiles
-            .where((f) => f.path.toLowerCase().endsWith('.pdf') && !f.path.contains('combined'))
+            .where((f) =>
+                f.path.toLowerCase().endsWith('.pdf') &&
+                !f.path.contains('combined'))
             .map((f) => f.path)
-            .toList()..sort();
-            
+            .toList()
+          ..sort();
+
         // Look for combined PDF
-        final combined = allFiles.where((f) => f.path.toLowerCase().endsWith('all_films_combined.pdf')).toList();
+        final combined = allFiles
+            .where(
+                (f) => f.path.toLowerCase().endsWith('all_films_combined.pdf'))
+            .toList();
         if (combined.isNotEmpty) {
           combinedPdfPath.value = combined.first.path;
         }
 
         // Load color_info.json
-        final colorInfoFile = allFiles.where((f) => f.path.endsWith('color_info.json')).toList();
+        final colorInfoFile =
+            allFiles.where((f) => f.path.endsWith('color_info.json')).toList();
         if (colorInfoFile.isNotEmpty) {
           final jsonStr = await colorInfoFile.first.readAsString();
           final data = jsonDecode(jsonStr);
@@ -254,7 +281,7 @@ class PreviewController extends GetxController {
 
         if (previewPaths.isNotEmpty) {
           selectedFilmIndex.value = 0;
-          
+
           // Initialize layer toggles if empty
           if (isLayerInverted.isEmpty) {
             isLayerInverted.value = List.filled(previewPaths.length, false);
@@ -263,7 +290,7 @@ class PreviewController extends GetxController {
             isLayerSolid.value = List.filled(previewPaths.length, false);
           }
         }
-        
+
         // Trigger cache bust (Phase 10) - Always update to force UI refresh
         lastUpdateTimestamp.value = DateTime.now().millisecondsSinceEpoch;
         Get.log('🔄 Cache bust triggered: ${lastUpdateTimestamp.value}');
@@ -338,7 +365,7 @@ class PreviewController extends GetxController {
       try {
         await File(combinedPdfPath.value).copy(savePath);
         Get.snackbar(
-          'Export Complete', 
+          'Export Complete',
           'Saved to $savePath',
           backgroundColor: Colors.green.withAlpha((0.1 * 255).round()),
           colorText: Colors.green,
@@ -348,7 +375,7 @@ class PreviewController extends GetxController {
       }
     }
   }
-  
+
   Future<void> sendToPrint() async {
     // Hybrid DPI Logic: If current preview is low quality, generate high quality for printing
     if (currentDpi.value < 300) {
@@ -366,16 +393,17 @@ class PreviewController extends GetxController {
     } else if (pdfPaths.isNotEmpty) {
       await openFile(pdfPaths[selectedFilmIndex.value]);
     } else {
-       Get.snackbar('Error', 'No PDF available to print.');
+      Get.snackbar('Error', 'No PDF available to print.');
     }
   }
 
   Future<void> openFile(String path) async {
     final result = await OpenFile.open(path);
     if (result.type != ResultType.done) {
-      Get.snackbar('Error', 'Could not open file: ${result.message}\nPlease ensure you have a PDF viewer installed.');
-      
-      // Fallback: copy to location 
+      Get.snackbar('Error',
+          'Could not open file: ${result.message}\nPlease ensure you have a PDF viewer installed.');
+
+      // Fallback: copy to location
       final savePath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save PDF instead',
         fileName: 'Film_${selectedFilmIndex.value + 1}.pdf',

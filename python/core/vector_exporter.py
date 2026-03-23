@@ -38,7 +38,7 @@ def fit_bezier_to_contour(
 ) -> List[Tuple]:
     """
     تحويل النقاط (Contour) إلى منحنيات بيزييه (Bezier Curves) احترافية.
-    إضافة: الحفاظ على الزوايا الحادة (Sharp Corners) بناءً على corner_threshold.
+    إضافة: الحفاظ على الزوايا الحادة (Sharp Corners) basado en corner_threshold.
     """
     pts = contour.reshape(-1, 2).astype(float)
     n = len(pts)
@@ -85,7 +85,7 @@ def export_vector_pdf(
     color_names: List[str],
     output_path: Path,
     dpi: int = 300,
-    smooth_factor: float = 0.2,
+        smooth_factor: float = 0.2,
     corner_threshold: float = 150.0,
     min_contour_area: int = 50,
     page_size: str = 'A4',
@@ -106,6 +106,7 @@ def export_vector_pdf(
         output_path: مسار حفظ الـ PDF
         dpi: دقة الإخراج
         smooth_factor: مقدار تنعيم الحواف (0.0-0.5)
+        corner_threshold: عتبة للحفاظ على الزوايا الحادة (درجات)
         min_contour_area: أصغر contour يُرسم (pixels²)
         page_size: 'A4', 'A3', 'LETTER'
     
@@ -163,9 +164,14 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ رسم الـ vector paths ═══
-        # 1. المرحلة الأولى: تحويل الصورة لثنائية (Binary) وتنعيم خفيف لإزالة الـ Jagginess
-        # We use a 5x5 blur to clean the input mask before tracing for smoother edges.
-        bw = cv2.GaussianBlur(mask, (5, 5), 0)
+        # 1. Pre-trace smoothing: soften stair-steps before contour extraction.
+        # Scale blur with smooth_factor to increase smoothing "after vector" consistently.
+        # Kernel must be odd.
+        blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
+        if blur_k % 2 == 0:
+            blur_k += 1
+        blur_k = max(3, min(7, blur_k))
+        bw = cv2.GaussianBlur(mask, (blur_k, blur_k), 0)
         _, bw = cv2.threshold(bw, 64, 255, cv2.THRESH_BINARY)
         
         # 2. Contour Extraction: استخراج الحواف مع مراعاة الثقوب الداخلية (RETR_TREE)
@@ -182,7 +188,7 @@ def export_vector_pdf(
             scale_w = draw_w / mask_w
             scale_h = draw_h / mask_h
             return draw_x + px_x * scale_w, draw_y + (mask_h - px_y) * scale_h
-
+        
         path = c.beginPath()
         # Some reportlab versions don't expose setFillMode() on PDFPathObject.
         # We'll use it when available; otherwise we fall back to hierarchy-based
@@ -200,18 +206,18 @@ def export_vector_pdf(
             area = cv2.contourArea(contour_arr)
             if area < min_contour_area:
                 return
-
+            
             perimeter = cv2.arcLength(contour_arr, True)
-            epsilon = max(0.5, min(1.5, 0.002 * perimeter))
+            epsilon = max(0.5, min(0.8, 0.002 * perimeter))
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
-
+            
             if len(approx) < 3:
                 return
-
+            
             bezier_cmds = fit_bezier_to_contour(approx, smooth_factor, corner_threshold)
             if not bezier_cmds:
                 return
-
+            
             for cmd in bezier_cmds:
                 if cmd[0] == 'M':
                     px, py = px_to_pdf(cmd[1], cmd[2])
@@ -225,11 +231,11 @@ def export_vector_pdf(
                     px, py = px_to_pdf(cmd[1], cmd[2])
                     target_path.lineTo(px, py)
             target_path.close()
-
+        
         if use_even_odd:
             for _, contour in enumerate(contours):
                 _append_contour_to_path(path, contour)
-
+            
             c.setFillColor(black)
             c.drawPath(path, fill=1, stroke=0)
         else:
@@ -247,11 +253,11 @@ def export_vector_pdf(
                     parent_idx = h[idx][3]
                     if parent_idx != -1:
                         continue
-
+                    
                     p_outer = c.beginPath()
                     _append_contour_to_path(p_outer, contours[idx])
                     c.drawPath(p_outer, fill=1, stroke=0)
-
+                    
                     child = h[idx][2]
                     while child != -1:
                         c.setFillColor(white)

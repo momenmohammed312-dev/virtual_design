@@ -321,6 +321,13 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
     if not is_halftone_enabled or not HAS_HALFTONE:
         return masks
     
+    # Auto-calculate LPI based on DPI if user didn't set it explicitly
+    # Rule: LPI = DPI / 8, clamped to [35, 85]
+    effective_lpi = args.lpi
+    if effective_lpi == 65:  # default value = user didn't set it
+        effective_lpi = min(85, max(35, args.dpi // 8))
+        logger.info(f"  Auto-calculated LPI: {effective_lpi} (based on DPI {args.dpi})")
+    
     # Standard CMYK angles for best results (avoid moiré patterns)
     # Cyan: 15°, Magenta: 75°, Yellow: 0°, Black: 45°
     cmyk_angles = [15.0, 75.0, 0.0, 45.0]
@@ -329,6 +336,10 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
         generator = HalftoneGenerator()
         result = []
         total = max(1, len(masks))
+        
+        # CLAHE for contrast enhancement before halftoning
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        
         for i, mask in enumerate(masks):
             # Check if mask is mostly solid (should not be halftoned)
             total_pixels = mask.size
@@ -342,11 +353,19 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
                 logger.info(f"  Skipping halftone for mask {i+1} ({coverage_percentage:.1f}% coverage) - too dense")
                 result.append(mask)
             else:
+                # Contrast enhancement: CLAHE pushes shadows darker and highlights whiter
+                # This produces cleaner, more regular halftone dots instead of scattered spray
+                if mask.dtype != np.uint8:
+                    enhanced = mask.astype(np.uint8)
+                else:
+                    enhanced = mask.copy()
+                enhanced = clahe.apply(enhanced)
+                
                 # Use CMYK angle for this color index, fallback to default
                 angle = cmyk_angles[i] if i < len(cmyk_angles) else args.angle
-                ht = generator.generate(mask, lpi=args.lpi, angle=angle, dot_shape=args.dot_shape, dpi=args.dpi)
+                ht = generator.generate(enhanced, lpi=effective_lpi, angle=angle, dot_shape=args.dot_shape, dpi=args.dpi)
                 result.append(ht)
-                logger.info(f"  Halftoned mask {i+1} ({coverage_percentage:.1f}% coverage) with angle {angle}°")
+                logger.info(f"  Halftoned mask {i+1} ({coverage_percentage:.1f}% coverage) angle={angle}° LPI={effective_lpi} CLAHE=ON")
             
             overall = ((5 - 1) + (i + 1) / total) / TOTAL_STEPS
             _progress(overall, f"Processed {i+1}/{total} (solid: {coverage_percentage:.1f}%)")
@@ -405,17 +424,25 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
 
         # ── BINARY MASK GUARD: Ensure clean edges and preserved dots ──────
         
-        # 1. Apply smoothing to SOLID masks if requested (Phase 22)
         is_solid = not is_halftone
-        if is_solid:
-            smooth = getattr(args, 'smoothing_factor', 0.0)
-            if smooth > 0.1:
-                blur_size = 5 if smooth > 0.5 else 3
-                mask = cv2.GaussianBlur(mask, (blur_size, blur_size), 0)
         
-        # 2. Select safe threshold (45 for halftone to keep tiny dots, 127/threshold_val for solid)
-        safe_thresh = 45 if is_halftone else threshold_val
-        _, binary_mask = cv2.threshold(mask, safe_thresh, 255, cv2.THRESH_BINARY)
+        if is_solid:
+            # SOLID MODE: upscale 2x + blur + high-threshold for smooth edges
+            # Step 1: Upscale 2x (creates smooth gray pixels at stair-step edges)
+            h_m, w_m = mask.shape[:2]
+            up = cv2.resize(mask, (w_m * 2, h_m * 2), interpolation=cv2.INTER_CUBIC)
+            # Step 2: Light blur to merge stair-step into smooth curve
+            up = cv2.GaussianBlur(up, (5, 5), 0)
+            # Step 3: High threshold (200) — grabs the smooth outer edge
+            _, binary_mask = cv2.threshold(up, 200, 255, cv2.THRESH_BINARY)
+            # Step 4: Downscale back to original size with area averaging
+            binary_mask = cv2.resize(binary_mask, (w_m, h_m), interpolation=cv2.INTER_AREA)
+            # Step 5: Re-threshold to ensure pure binary after area resize
+            _, binary_mask = cv2.threshold(binary_mask, 127, 255, cv2.THRESH_BINARY)
+        else:
+            # HALFTONE MODE: NO smoothing — raw dot preservation
+            safe_thresh = 45  # low threshold to keep tiny halftone dots
+            _, binary_mask = cv2.threshold(mask, safe_thresh, 255, cv2.THRESH_BINARY)
         
         # --- Senior Phase 23: Global Inversion Guard ---
         # If binary mask is mostly white (>75% coverage), it's likely inverted.
@@ -579,6 +606,13 @@ def step9_export(
     try:
         total = max(1, len(masks))
         
+        # Conditional smoothing: light for few colors, stronger for many colors
+        num_colors = len(masks)
+        if num_colors <= 3:
+            eff_smooth = 0.15
+        else:
+            eff_smooth = 0.30
+        
         # Import vector exporter
         from core.vector_exporter import export_vector_pdf
         from core.exporter import Exporter, SVGWRITE_AVAILABLE
@@ -639,7 +673,7 @@ def step9_export(
                 svg_filename = f"film_{i+1}.svg"
                 svg_filepath = os.path.join(output_dir, svg_filename)
                 exporter = Exporter(output_dir, args.dpi)
-                exporter.export_svg(ink_mask, svg_filename)
+                exporter.export_svg(ink_mask, svg_filename, smooth_factor=eff_smooth, corner_threshold=getattr(args, 'corner_threshold', 150.0))
                 exported_paths.append(svg_filepath)
                 logger.info(f"  Exported {svg_filename} (SVG Vector)")
             
@@ -657,7 +691,7 @@ def step9_export(
                     color_names=[name_entry],
                     output_path=Path(pdf_filepath),
                     dpi=args.dpi,
-                    smooth_factor=getattr(args, 'smoothing_factor', 0.2),
+                    smooth_factor=eff_smooth,
                     corner_threshold=getattr(args, 'corner_threshold', 150.0)
                 )
                 pdf_paths.append(pdf_filepath)
@@ -684,7 +718,7 @@ def step9_export(
                 color_names=all_names_for_pdf,
                 output_path=Path(combined_pdf_path),
                 dpi=args.dpi,
-                smooth_factor=getattr(args, 'smoothing_factor', 0.2),
+                smooth_factor=eff_smooth,
                 corner_threshold=getattr(args, 'corner_threshold', 150.0)
             )
             exported_paths.append(combined_pdf_path)
