@@ -1504,36 +1504,97 @@ class _SetupPageState extends State<SetupPage> {
                     },
                   ),
                   const SizedBox(height: 16),
-                  // Smoothing Factor Slider
-                  Obx(() => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text('Smoothing Factor',
-                                  style: TextStyle(fontSize: 14)),
-                              Text(
-                                  '${Get.find<SetupController>().smoothingFactor.value.toStringAsFixed(2)}',
-                                  style: const TextStyle(
-                                      fontSize: 12, color: Colors.grey)),
-                            ],
-                          ),
+                  // Smoothing Factor — Auto-config when not Auto mode
+                  Obx(() {
+                    final ctrl = Get.find<SetupController>();
+                    final isAuto =
+                        ctrl.selectedImageType.value == ps.ImageType.auto;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Smoothing Factor',
+                                style: TextStyle(fontSize: 14)),
+                            Text(
+                              '${ctrl.smoothingFactor.value.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: isAuto ? Colors.grey : Colors.green),
+                            ),
+                          ],
+                        ),
+                        if (isAuto)
                           Slider(
-                            value: Get.find<SetupController>()
-                                .smoothingFactor
-                                .value,
+                            value: ctrl.smoothingFactor.value,
                             min: 0.05,
                             max: 0.50,
                             divisions: 45,
                             onChanged: (val) {
-                              Get.find<SetupController>()
-                                  .smoothingFactor
-                                  .value = val;
+                              ctrl.smoothingFactor.value = val;
                             },
+                          )
+                        else
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8.0),
+                            child: Text(
+                              'Auto-configured based on image type',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.green,
+                                  fontStyle: FontStyle.italic),
+                            ),
                           ),
-                        ],
-                      )),
+                      ],
+                    );
+                  }),
+                  const SizedBox(height: 16),
+                  // Corner Threshold — Auto-config when not Auto mode
+                  Obx(() {
+                    final ctrl = Get.find<SetupController>();
+                    final isAuto =
+                        ctrl.selectedImageType.value == ps.ImageType.auto;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Corner Threshold (°)',
+                                style: TextStyle(fontSize: 14)),
+                            Text(
+                              '${ctrl.cornerThreshold.value.toInt()}°',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: isAuto ? Colors.grey : Colors.green),
+                            ),
+                          ],
+                        ),
+                        if (isAuto)
+                          Slider(
+                            value: ctrl.cornerThreshold.value,
+                            min: 120,
+                            max: 180,
+                            divisions: 60,
+                            onChanged: (val) {
+                              ctrl.cornerThreshold.value = val;
+                            },
+                          )
+                        else
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8.0),
+                            child: Text(
+                              'Auto-configured based on image type',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.green,
+                                  fontStyle: FontStyle.italic),
+                            ),
+                          ),
+                      ],
+                    );
+                  }),
                   const SizedBox(height: 16),
                   // Corner Threshold Slider
                   Obx(() => Column(

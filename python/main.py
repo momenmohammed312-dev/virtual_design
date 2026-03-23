@@ -943,39 +943,28 @@ def main() -> int:
     start_time = time.time()
 
     # ═══ Auto-set parameters based on image type ═══
-    # This ensures consistent quality for all image types.
-    # Only apply presets if user hasn't explicitly set a non-default value via CLI.
+    # When image_type is simple/mixed/complex, override all related params unconditionally.
+    # When image_type is auto, respect CLI-provided values or defaults.
     img_type = getattr(args, 'image_type', 'auto')
-    DEFAULT_SMOOTHING = 0.3
-    DEFAULT_CORNER = 150.0
-    DEFAULT_GLOBAL_THRESHOLD = 127
 
     if img_type == 'simple':
-        if args.smoothing_factor == DEFAULT_SMOOTHING:
-            args.smoothing_factor = 0.10
-        if args.corner_threshold == DEFAULT_CORNER:
-            args.corner_threshold = 140.0
-        if args.global_threshold == DEFAULT_GLOBAL_THRESHOLD:
-            args.global_threshold = 160
+        args.smoothing_factor = 0.10
+        args.corner_threshold = 140.0
+        args.global_threshold = 160
         logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'mixed':
-        if args.smoothing_factor == DEFAULT_SMOOTHING:
-            args.smoothing_factor = 0.15
-        if args.corner_threshold == DEFAULT_CORNER:
-            args.corner_threshold = 150.0
-        if args.global_threshold == DEFAULT_GLOBAL_THRESHOLD:
-            args.global_threshold = 200
+        args.smoothing_factor = 0.15
+        args.corner_threshold = 150.0
+        args.global_threshold = 200
         logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'complex':
-        if args.smoothing_factor == DEFAULT_SMOOTHING:
-            args.smoothing_factor = 0.25
-        if args.corner_threshold == DEFAULT_CORNER:
-            args.corner_threshold = 160.0
-        if args.global_threshold == DEFAULT_GLOBAL_THRESHOLD:
-            args.global_threshold = 200
+        args.smoothing_factor = 0.25
+        args.corner_threshold = 160.0
+        args.global_threshold = 200
         logger.info("[ImageType] Complex: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     else:
-        logger.info("[ImageType] Auto: using CLI/default parameters")
+        # Auto: keep CLI-provided values or defaults (smoothing_factor, corner_threshold, global_threshold)
+        logger.info("[ImageType] Auto: using CLI/default parameters (smooth=%.2f, corner=%.1f°, threshold=%d)" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
 
     logger.info("=" * 50)
     logger.info("Virtual Design — Silk Screen Processing Pipeline")
