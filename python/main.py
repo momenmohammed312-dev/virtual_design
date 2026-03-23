@@ -837,8 +837,6 @@ def main() -> int:
     logger.info("=" * 50)
 
     output_dir = args.output
-    # Senior Fix Phase 26: Signal the final directory to Dart for reliable path resolution
-    print(f"OUTPUT_DIR:{output_dir}", flush=True)
     logger.info(f"Root Output Directory: {output_dir}")
 
     try:
