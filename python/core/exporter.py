@@ -333,7 +333,8 @@ class Exporter:
                     filename: str,
                     color: Optional[List[int]] = None,
                     smooth_factor: float = 0.2,
-                    corner_threshold: float = 150.0) -> Optional[Path]:
+                    corner_threshold: float = 150.0,
+                    no_vector_blur: bool = False) -> Optional[Path]:
         """
         Export mask as SVG with Bezier curves for true vector quality
 
@@ -362,14 +363,14 @@ class Exporter:
         if mask_1c.dtype != np.uint8:
             mask_1c = mask_1c.astype(np.uint8)
 
-        # 1. Pre-smoothing: تحويل الحواف المشرشرة لحواف منحنية ناعمة
-        # نستخدم GaussianBlur لمسح "زوايا البكسل" وبعدين نرجعها صريحة بـ Threshold
-        blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
-        if blur_k % 2 == 0:
-            blur_k += 1
-        blur_k = max(3, min(7, blur_k))
-        mask_smoothed = cv2.GaussianBlur(mask_1c, (blur_k, blur_k), 0)
-        _, mask_bw = cv2.threshold(mask_smoothed, 128, 255, cv2.THRESH_BINARY)
+        # 1. Pre-smoothing: optional for text/logo, skip if no_vector_blur or low smooth_factor
+        if not no_vector_blur and smooth_factor > 0.2:
+            blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
+            if blur_k % 2 == 0:
+                blur_k += 1
+            blur_k = max(3, min(7, blur_k))
+            mask_1c = cv2.GaussianBlur(mask_1c, (blur_k, blur_k), 0)
+        _, mask_bw = cv2.threshold(mask_1c, 128, 255, cv2.THRESH_BINARY)
 
         # 2. Find contours with better approximation
         contours, _ = cv2.findContours(

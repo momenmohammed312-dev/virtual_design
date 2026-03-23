@@ -85,10 +85,11 @@ def export_vector_pdf(
     color_names: List[str],
     output_path: Path,
     dpi: int = 300,
-        smooth_factor: float = 0.2,
+    smooth_factor: float = 0.2,
     corner_threshold: float = 150.0,
     min_contour_area: int = 50,
     page_size: str = 'A4',
+    no_vector_blur: bool = False,
 ) -> Path:
     """
     تصدير كل الأفلام في PDF واحد متعدد الصفحات بجودة vector حقيقية.
@@ -164,14 +165,16 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ رسم الـ vector paths ═══
-        # 1. Pre-trace smoothing: soften stair-steps before contour extraction.
-        # Scale blur with smooth_factor to increase smoothing "after vector" consistently.
-        # Kernel must be odd.
-        blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
-        if blur_k % 2 == 0:
-            blur_k += 1
-        blur_k = max(3, min(7, blur_k))
-        bw = cv2.GaussianBlur(mask, (blur_k, blur_k), 0)
+        # 1. Pre-trace blur: optional, only for complex images.
+        # Use --no-vector-blur to disable even for complex.
+        if not no_vector_blur and smooth_factor > 0.2:
+            blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
+            if blur_k % 2 == 0:
+                blur_k += 1
+            blur_k = max(3, min(7, blur_k))
+            bw = cv2.GaussianBlur(mask, (blur_k, blur_k), 0)
+        else:
+            bw = mask.copy()
         _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
         
         # 2. Contour Extraction: TC89_KCOS for better curve approximation
@@ -208,7 +211,12 @@ def export_vector_pdf(
                 return
             
             perimeter = cv2.arcLength(contour_arr, True)
-            epsilon = max(0.25, min(0.5, 0.002 * perimeter))
+            # Fixed tight epsilon for text/logo (smooth_factor <= 0.15)
+            # For complex images, use proportional epsilon
+            if smooth_factor <= 0.15:
+                epsilon = 0.25  # preserves fine details
+            else:
+                epsilon = max(0.25, min(0.5, 0.002 * perimeter))
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
             
             if len(approx) < 3:

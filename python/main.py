@@ -741,7 +741,12 @@ def step9_export(
                 svg_filename = f"film_{i+1}.svg"
                 svg_filepath = os.path.join(output_dir, svg_filename)
                 exporter = Exporter(output_dir, args.dpi)
-                exporter.export_svg(ink_mask, svg_filename, smooth_factor=eff_smooth, corner_threshold=getattr(args, 'corner_threshold', 150.0))
+                exporter.export_svg(
+                    ink_mask, svg_filename,
+                    smooth_factor=eff_smooth,
+                    corner_threshold=getattr(args, 'corner_threshold', 150.0),
+                    no_vector_blur=getattr(args, 'no_vector_blur', False)
+                )
                 exported_paths.append(svg_filepath)
                 logger.info(f"  Exported {svg_filename} (SVG Vector)")
             
@@ -760,7 +765,8 @@ def step9_export(
                     output_path=Path(pdf_filepath),
                     dpi=args.dpi,
                     smooth_factor=eff_smooth,
-                    corner_threshold=getattr(args, 'corner_threshold', 150.0)
+                    corner_threshold=getattr(args, 'corner_threshold', 150.0),
+                    no_vector_blur=getattr(args, 'no_vector_blur', False)
                 )
                 pdf_paths.append(pdf_filepath)
                 exported_paths.append(pdf_filepath)
@@ -787,7 +793,8 @@ def step9_export(
                 output_path=Path(combined_pdf_path),
                 dpi=args.dpi,
                 smooth_factor=eff_smooth,
-                corner_threshold=getattr(args, 'corner_threshold', 150.0)
+                corner_threshold=getattr(args, 'corner_threshold', 150.0),
+                no_vector_blur=getattr(args, 'no_vector_blur', False)
             )
             exported_paths.append(combined_pdf_path)
             logger.info(f"  Exported all_films_combined.pdf (PDF Vector)")
@@ -919,6 +926,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-type", choices=["simple", "mixed", "complex", "auto"], default="auto", 
                         help="Engine mode: simple (logo), mixed (normal), complex (details), or auto")
     parser.add_argument("--film-label", type=str, default="", help="Custom label to print on each film")
+    parser.add_argument(
+        "--no-vector-blur", action="store_true",
+        help="Disable pre-trace Gaussian blur for sharpest text edges (overrides image-type settings)"
+    )
     parser.add_argument(
         "--white-threshold", type=int, default=240,
         help="Pixel value above which is considered white background (0-255)"
