@@ -26,7 +26,8 @@ try:
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
-    print("[WARNING] reportlab not installed. PDF export will use PNG fallback.", flush=True)
+    print("ERROR:reportlab_missing:PDF export requires: pip install reportlab", flush=True)
+    # Don't exit yet, fallback may be possible for PNG.
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -416,6 +417,15 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
         safe_thresh = 45 if is_halftone else threshold_val
         _, binary_mask = cv2.threshold(mask, safe_thresh, 255, cv2.THRESH_BINARY)
         
+        # --- Senior Phase 23: Global Inversion Guard ---
+        # If binary mask is mostly white (>75% coverage), it's likely inverted.
+        # Design pixels in silk screen separations should be white (255) at this stage.
+        white_px = np.sum(binary_mask == 255)
+        black_px = np.sum(binary_mask == 0)
+        if white_px > black_px * 3:
+             logger.info(f"  [Guard:Inversion] Auto-inverting mask {i+1} due to high white coverage ({white_px/binary_mask.size*100:.1f}%)")
+             binary_mask = cv2.bitwise_not(binary_mask)
+        
         # Noise removal (Area opening)
         if noise_min_area > 0:
             num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
@@ -561,6 +571,7 @@ def step9_export(
 ) -> list:
     _step(9, "Exporting films (PNG + PDF + SVG)")
     os.makedirs(output_dir, exist_ok=True)
+    output_dir = os.path.normpath(output_dir)
 
     exported_paths = []
     pdf_paths = []
@@ -798,7 +809,7 @@ def parse_args() -> argparse.Namespace:
     
     # Advanced Tuning (Phase 8 Senior Optimizations)
     parser.add_argument("--global-threshold", type=int, default=127, help="Global threshold for solid masks (0-255)")
-    parser.add_argument("--smoothing-factor", type=float, default=0.2, help="Bezier smoothing factor (0-1.0)")
+    parser.add_argument("--smoothing-factor", type=float, default=0.3, help="Bezier smoothing factor (0-1.0)")
     parser.add_argument("--corner-threshold", type=float, default=150.0, help="Angle threshold to preserve sharp corners (degrees)")
     parser.add_argument("--noise-removal", type=int, default=3, help="Minimum contour area to keep (pixels)")
     parser.add_argument("--auto-crop", action="store_true", help="Auto-crop image before processing")
@@ -826,12 +837,9 @@ def main() -> int:
     logger.info("=" * 50)
 
     output_dir = args.output
-    # Always create a timestamped subdirectory to avoid conflicts with existing files
-    # UNLESS we are already in a silk_output_ folder (prevents nesting during regeneration)
-    if "silk_output_" not in os.path.basename(output_dir):
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        output_dir = os.path.join(output_dir, f"silk_output_{timestamp}")
-        os.makedirs(output_dir, exist_ok=True)
+    # Senior Fix Phase 26: Signal the final directory to Dart for reliable path resolution
+    print(f"OUTPUT_DIR:{output_dir}", flush=True)
+    logger.info(f"Root Output Directory: {output_dir}")
 
     try:
         # Step 1 — Load

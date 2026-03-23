@@ -25,6 +25,9 @@ class SetupController extends GetxController {
   final RxBool removeBackground = false.obs;
   final RxBool autoUpscale = false.obs;
 
+  final RxDouble smoothingFactor = 0.25.obs;
+  final RxDouble cornerThreshold = 130.0.obs;
+
   // Paper size
   final RxDouble paperWidthCm = 21.0.obs;
   final RxDouble paperHeightCm = 29.7.obs;
@@ -116,6 +119,8 @@ class SetupController extends GetxController {
     colorCorrection.value = false;
     adaptiveThreshold.value = false;
     selectedImageType.value = ps.ImageType.auto;
+    smoothingFactor.value = 0.25;
+    cornerThreshold.value = 130.0;
     update();
   }
 
@@ -130,7 +135,9 @@ class SetupController extends GetxController {
     Get.log('selectedDetail: ${selectedDetail.value}');
     Get.log('selectedFinish: ${selectedFinish.value}');
     Get.log('DPI: ${printQuality.value}');
-    Get.log('Halftone: ${isHalftone.value}, LPI: ${lpiValue.value}, DotShape: ${selectedDotShape.value}');
+    Get.log(
+      'Halftone: ${isHalftone.value}, LPI: ${lpiValue.value}, DotShape: ${selectedDotShape.value}',
+    );
 
     if (imagePath.value.isEmpty) {
       Get.log('❌ No image selected, redirecting to upload');
@@ -153,7 +160,8 @@ class SetupController extends GetxController {
 
     try {
       // Build halftone settings ONLY if finish is halftone
-      final bool effectivelyHalftone = selectedFinish.value == ps.PrintFinish.halftone;
+      final bool effectivelyHalftone =
+          selectedFinish.value == ps.PrintFinish.halftone;
       final halftone = effectivelyHalftone
           ? ps.HalftoneSettings(
               lpi: lpiValue.value,
@@ -180,9 +188,13 @@ class SetupController extends GetxController {
         paperHeightCm: paperHeightCm.value,
         adaptiveThreshold: adaptiveThreshold.value,
         imageType: selectedImageType.value,
+        smoothingFactor: smoothingFactor.value,
+        cornerThreshold: cornerThreshold.value,
       );
 
-      Get.log('✅ Settings built: DPI=${settings.dpi}, mesh=${settings.meshCount}, edge=${settings.edgeEnhancement.name}');
+      Get.log(
+        '✅ Settings built: DPI=${settings.dpi}, mesh=${settings.meshCount}, edge=${settings.edgeEnhancement.name}',
+      );
       await _repository.saveSettings(settings);
 
       Get.log('🔄 Starting image processing...');
@@ -201,14 +213,19 @@ class SetupController extends GetxController {
 
       Get.log('Processing result: ${result.success}');
       if (result.success) {
-        Get.log('✅ Success! Navigating to preview with: ${result.outputDirectory}');
+        Get.log(
+          '✅ Success! Navigating to preview with: ${result.outputDirectory}',
+        );
         await Future.delayed(const Duration(milliseconds: 500));
-        Get.offNamed('/preview', arguments: {
-          'outputDirectory': result.outputDirectory,
-          'imagePath': imagePath.value,
-          'originalPath': _originalTempPath,
-          'settings': settings,
-        });
+        Get.offNamed(
+          '/preview',
+          arguments: {
+            'outputDirectory': result.outputDirectory,
+            'imagePath': imagePath.value,
+            'originalPath': _originalTempPath,
+            'settings': settings,
+          },
+        );
       } else {
         Get.log('❌ Processing failed: ${result.errorMessage}');
         isProcessing.value = false;

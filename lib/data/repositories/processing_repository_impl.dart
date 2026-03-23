@@ -60,6 +60,8 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
               'angle': settings.halftoneSettings!.angle,
             }
           : null,
+      'smoothingFactor': settings.smoothingFactor,
+      'cornerThreshold': settings.cornerThreshold,
     };
     await box.put('last_settings', json);
   }
@@ -98,6 +100,8 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
                 angle: (halftoneData['angle'] as num?)?.toDouble() ?? 45.0,
               )
             : null,
+        smoothingFactor: (rawJson['smoothingFactor'] as num?)?.toDouble() ?? 0.15,
+        cornerThreshold: (rawJson['cornerThreshold'] as num?)?.toDouble() ?? 130.0,
       );
     } catch (e) {
       // MEDIUM #2 FIX: Handle corrupted or schema-mismatched Hive data

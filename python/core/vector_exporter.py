@@ -33,7 +33,7 @@ def _get_angle(p1, p2, p3):
 
 def fit_bezier_to_contour(
     contour: np.ndarray,
-    smooth_factor: float = 0.2,
+    smooth_factor: float = 0.3, # Increased from 0.2 for better initial logo smoothing
     corner_threshold: float = 150.0
 ) -> List[Tuple]:
     """
@@ -195,9 +195,10 @@ def export_vector_pdf(
             if area < min_contour_area:
                 continue
             
-            # FIX 1: Epsilon عالي لإزالة الـ Jagginess (شرشرة) 1.25
+            # FIX 1: Epsilon نسبي بدلاً من ثابت للحفاظ على تفاصيل الحروف الصغيرة
+            # 0.002 * المحيط يعطي دقة متغيرة (Adaptive) ممتازة
             perimeter = cv2.arcLength(contour, True)
-            epsilon = 1.25 
+            epsilon = max(0.5, min(1.5, 0.002 * perimeter)) 
             approx = cv2.approxPolyDP(contour, epsilon, True)
             
             if len(approx) < 3:

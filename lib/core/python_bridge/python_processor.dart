@@ -94,7 +94,7 @@ class PythonProcessor {
       process = await Process.start(
         pythonCommand,
         args,
-        runInShell: true,
+        runInShell: false,
         workingDirectory: scriptsDir,
         environment: {
           ...Platform.environment,
@@ -254,11 +254,8 @@ class PythonProcessor {
     } else if (settings.adaptiveThreshold) {
       effectiveThreshold = -1;
     }
-    
-    args.addAll([
-      '--global-threshold',
-      effectiveThreshold.toString(),
-    ]);
+
+    args.addAll(['--global-threshold', effectiveThreshold.toString()]);
     args.addAll(['--smoothing-factor', settings.smoothingFactor.toString()]);
     args.addAll(['--corner-threshold', settings.cornerThreshold.toString()]);
     args.addAll(['--noise-removal', settings.noiseRemoval.toString()]);
@@ -268,12 +265,9 @@ class PythonProcessor {
     if (settings.adaptiveThreshold) {
       args.add('--adaptive-threshold');
     }
-    
+
     // Image Processing Mode (Simple, Mixed, Complex, Auto)
-    args.addAll([
-      '--image-type',
-      settings.imageType.name,
-    ]);
+    args.addAll(['--image-type', settings.imageType.name]);
 
     if (settings.filmLabel.isNotEmpty) {
       args.addAll(['--film-label', settings.filmLabel]);

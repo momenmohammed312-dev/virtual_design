@@ -46,6 +46,28 @@ class PythonConfig {
   Future<String> resolvePythonCommand() async {
     if (_resolvedCommand != null) return _resolvedCommand!;
 
+    final sep = Platform.pathSeparator;
+    
+    // Phase 25: Prioritize local virtual environment if it exists
+    // This ensures reportlab and other deps are used even if system python lacks them
+    final venvPath = Platform.isWindows 
+        ? '${Directory.current.path}${sep}venv${sep}Scripts${sep}python.exe'
+        : '${Directory.current.path}${sep}venv${sep}bin${sep}python';
+        
+    if (await File(venvPath).exists()) {
+      print('[PythonConfig] Found local venv: $venvPath');
+      try {
+        final result = await Process.run(venvPath, ['--version']);
+        if (result.exitCode == 0) {
+          _resolvedCommand = venvPath;
+          _resolvedVersion = (result.stdout as String).trim();
+          return venvPath;
+        }
+      } catch (e) {
+        print('[PythonConfig] venv found but failed validation: $e');
+      }
+    }
+
     for (final cmd in _candidates) {
       try {
         final result = await Process.run(cmd, ['--version']);

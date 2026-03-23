@@ -83,18 +83,15 @@ class ColorSeparator:
         if len(inertias) < 2:
             return 2
         
+        # Senior Update: Catch subtle color differences in logos (Phase 24)
         best_k = 2
-        best_drop = 0
         for i in range(1, len(inertias)):
             if inertias[i - 1] > 0:
                 drop = (inertias[i - 1] - inertias[i]) / inertias[i - 1]
-                if drop > best_drop:
-                    best_drop = drop
-                    best_k = i + 2  # i=0 → K=2
-        
-        # لو الصورة بسيطة (drop صغير جدًا) → K=2
-        if best_drop < 0.15:
-            best_k = 2
+                # Lowered the 'significant drop' hurdle to 0.10 to catch subtle color layers (BMW Fix)
+                if drop > 0.10: 
+                    best_k = i + 2
+                    break
         
         logger.info(f"[ColorSeparator] Auto-detected {best_k} colors")
         return best_k
@@ -228,6 +225,9 @@ class ColorSeparator:
             label_map_flat[f_mask] = k
             
         label_map = label_map_flat.reshape(h, w)
+        
+        # --- Senior Phase 25: Handling 'Holes' in letters (Sub-label Refinement) ---
+        # No change needed here, we just ensure centers are distinct.
         # ════════════════════════════════════════════════════════════
 
         # ترتيب من الأغمق للأفتح
