@@ -469,18 +469,25 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
         is_solid = not is_halftone
         
         if is_solid:
-            # SOLID MODE: upscale 2x + blur + high-threshold for smooth edges
-            # Step 1: Upscale 2x (creates smooth gray pixels at stair-step edges)
-            h_m, w_m = mask.shape[:2]
-            up = cv2.resize(mask, (w_m * 2, h_m * 2), interpolation=cv2.INTER_CUBIC)
-            # Step 2: Light blur (3x3) to merge stair-step without destroying thin strokes
-            up = cv2.GaussianBlur(up, (3, 3), 0)
-            # Step 3: High threshold — grabs the smooth outer edge
-            _, binary_mask = cv2.threshold(up, threshold_val, 255, cv2.THRESH_BINARY)
-            # Step 4: Downscale back to original size with area averaging
-            binary_mask = cv2.resize(binary_mask, (w_m, h_m), interpolation=cv2.INTER_AREA)
-            # Step 5: Re-threshold to ensure pure binary after area resize
-            _, binary_mask = cv2.threshold(binary_mask, 127, 255, cv2.THRESH_BINARY)
+            # NEW: Skip upscale+blur for text/logo (simple type or low smooth_factor)
+            # This preserves razor-sharp edges and prevents dot merging in Arabic/Latin text
+            img_type = getattr(args, 'image_type', 'auto')
+            cli_smooth = getattr(args, 'smoothing_factor', 0.3)
+            skip_upscale_blur = (img_type == 'simple') or (cli_smooth <= 0.15)
+            
+            if skip_upscale_blur:
+                # Direct threshold with threshold_val — sharp, no smoothing
+                _, binary_mask = cv2.threshold(mask, threshold_val, 255, cv2.THRESH_BINARY)
+                logger.info(f"  [Solid] Mask {i+1}: sharp binarization (no upscale-blur) [image_type={img_type}, smooth={cli_smooth:.2f}]")
+            else:
+                # Standard: upscale 2x + blur(3x3) + threshold + downscale
+                h_m, w_m = mask.shape[:2]
+                up = cv2.resize(mask, (w_m * 2, h_m * 2), interpolation=cv2.INTER_CUBIC)
+                up = cv2.GaussianBlur(up, (3, 3), 0)
+                _, binary_mask = cv2.threshold(up, threshold_val, 255, cv2.THRESH_BINARY)
+                binary_mask = cv2.resize(binary_mask, (w_m, h_m), interpolation=cv2.INTER_AREA)
+                _, binary_mask = cv2.threshold(binary_mask, 127, 255, cv2.THRESH_BINARY)
+                logger.info(f"  [Solid] Mask {i+1}: upscale-blur binarization (smooth edges)")
         else:
             # HALFTONE MODE: NO smoothing — raw dot preservation
             safe_thresh = 45  # low threshold to keep tiny halftone dots
