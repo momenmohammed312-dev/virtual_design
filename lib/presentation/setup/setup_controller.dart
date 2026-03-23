@@ -81,6 +81,28 @@ class SetupController extends GetxController {
       _originalTempPath = (args['originalPath'] as String?) ?? '';
     }
     _loadLastSettings();
+
+    // Auto-update smoothingFactor and cornerThreshold based on selectedImageType
+    ever(selectedImageType, (ps.ImageType type) {
+      switch (type) {
+        case ps.ImageType.simple:
+          smoothingFactor.value = 0.10;
+          cornerThreshold.value = 140.0;
+          break;
+        case ps.ImageType.mixed:
+          smoothingFactor.value = 0.15;
+          cornerThreshold.value = 150.0;
+          break;
+        case ps.ImageType.complex:
+          smoothingFactor.value = 0.25;
+          cornerThreshold.value = 160.0;
+          break;
+        case ps.ImageType.auto:
+        default:
+          // In Auto mode, keep user-set values (do nothing)
+          break;
+      }
+    });
   }
 
   Future<void> _loadLastSettings() async {

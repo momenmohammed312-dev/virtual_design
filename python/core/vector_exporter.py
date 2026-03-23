@@ -172,11 +172,11 @@ def export_vector_pdf(
             blur_k += 1
         blur_k = max(3, min(7, blur_k))
         bw = cv2.GaussianBlur(mask, (blur_k, blur_k), 0)
-        _, bw = cv2.threshold(bw, 64, 255, cv2.THRESH_BINARY)
+        _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
         
-        # 2. Contour Extraction: استخراج الحواف مع مراعاة الثقوب الداخلية (RETR_TREE)
+        # 2. Contour Extraction: TC89_KCOS for better curve approximation
         contours, hierarchy = cv2.findContours(
-            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_TC89_KCOS
         )
         
         # coordinate transform (defined once, outside the loop)
@@ -208,7 +208,7 @@ def export_vector_pdf(
                 return
             
             perimeter = cv2.arcLength(contour_arr, True)
-            epsilon = max(0.5, min(0.8, 0.002 * perimeter))
+            epsilon = max(0.25, min(0.5, 0.002 * perimeter))
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
             
             if len(approx) < 3:

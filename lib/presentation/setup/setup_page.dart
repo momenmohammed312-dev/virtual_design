@@ -87,7 +87,6 @@ class _SetupPageState extends State<SetupPage> {
                             children: [
                               _buildProgressSteps(),
                               const SizedBox(height: 30),
-
                               const Text(
                                 'Print & System Setup',
                                 style: TextStyle(
@@ -97,7 +96,6 @@ class _SetupPageState extends State<SetupPage> {
                                 ),
                               ),
                               const SizedBox(height: 10),
-
                               const Text(
                                 'Configure your print job parameters, finish type, and quality settings below.',
                                 style: TextStyle(
@@ -106,39 +104,28 @@ class _SetupPageState extends State<SetupPage> {
                                 ),
                               ),
                               const SizedBox(height: 30),
-
                               _buildColorComplexitySection(),
                               const SizedBox(height: 30),
-
                               _buildImageTypeSection(controller),
                               const SizedBox(height: 30),
-
                               _buildPrintTypeSection(),
                               const SizedBox(height: 30),
-
                               if (true) ...[
                                 _buildFabricTypeSection(),
                                 const SizedBox(height: 30),
                               ],
-
                               _buildDetailLevelSection(),
                               const SizedBox(height: 30),
-
                               _buildPrintFinishSection(controller),
                               const SizedBox(height: 30),
-
                               _buildStrokeWidthSection(),
                               const SizedBox(height: 30),
-
                               _buildSpecificationsSection(),
                               const SizedBox(height: 30),
-
                               _buildAdvancedSettingsSection(),
                               const SizedBox(height: 30),
-
                               _buildOutputDirectorySection(controller),
                               const SizedBox(height: 30),
-
                               _buildBottomActions(controller),
                             ],
                           ),
@@ -192,8 +179,8 @@ class _SetupPageState extends State<SetupPage> {
                                   backgroundColor: const Color(0xFFE5E7EB),
                                   valueColor:
                                       const AlwaysStoppedAnimation<Color>(
-                                        primaryBlue,
-                                      ),
+                                    primaryBlue,
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 12),
@@ -497,16 +484,19 @@ class _SetupPageState extends State<SetupPage> {
             Color color = Colors.grey;
             switch (type) {
               case ps.ImageType.simple:
-                desc = 'BEST FOR: Logos, Text, and sharp vectors. (Fast & Clean)';
+                desc =
+                    'BEST FOR: Logos, Text, and sharp vectors. (Fast & Clean)';
                 color = Colors.green;
               case ps.ImageType.mixed:
                 desc = 'BEST FOR: Standard images with balanced details.';
                 color = Colors.blue;
               case ps.ImageType.complex:
-                desc = 'BEST FOR: Intricate designs, shadows, or damaged artwork.';
+                desc =
+                    'BEST FOR: Intricate designs, shadows, or damaged artwork.';
                 color = Colors.orange;
               case ps.ImageType.auto:
-                desc = 'The system will analyze and pick the best algorithm for you.';
+                desc =
+                    'The system will analyze and pick the best algorithm for you.';
                 color = primaryBlue;
             }
             return Container(
@@ -628,9 +618,8 @@ class _SetupPageState extends State<SetupPage> {
                     type.displayName,
                     style: TextStyle(
                       fontSize: 16,
-                      fontWeight: isSelected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
                       color: type.isAvailable ? Colors.black : Colors.grey,
                     ),
                   ),
@@ -860,51 +849,59 @@ class _SetupPageState extends State<SetupPage> {
           ),
           const SizedBox(height: 20),
           Obx(() => Row(
-            children: PrintFinish.values.map((finish) {
-              // Sync with controller value
-              bool isSelected = (controller.selectedFinish.value == ps.PrintFinish.halftone && finish == PrintFinish.halftone) ||
-                               (controller.selectedFinish.value == ps.PrintFinish.solid && finish == PrintFinish.solid);
-              
-              return Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 5),
-                  child: InkWell(
-                    onTap: () {
-                      setState(() {
-                         controller.isHalftone.value = (finish == PrintFinish.halftone);
-                         controller.selectedFinish.value = (finish == PrintFinish.halftone) 
-                            ? ps.PrintFinish.halftone 
-                            : ps.PrintFinish.solid;
-                         showHalftoneSettings = (finish == PrintFinish.halftone);
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      decoration: BoxDecoration(
-                        color: isSelected ? primaryBlue : Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: isSelected
-                              ? primaryBlue
-                              : const Color(0xFFE5E7EB),
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          finish.displayName,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: isSelected ? Colors.white : Colors.black87,
+                children: PrintFinish.values.map((finish) {
+                  // Sync with controller value
+                  bool isSelected = (controller.selectedFinish.value ==
+                              ps.PrintFinish.halftone &&
+                          finish == PrintFinish.halftone) ||
+                      (controller.selectedFinish.value ==
+                              ps.PrintFinish.solid &&
+                          finish == PrintFinish.solid);
+
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            controller.isHalftone.value =
+                                (finish == PrintFinish.halftone);
+                            controller.selectedFinish.value =
+                                (finish == PrintFinish.halftone)
+                                    ? ps.PrintFinish.halftone
+                                    : ps.PrintFinish.solid;
+                            showHalftoneSettings =
+                                (finish == PrintFinish.halftone);
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          decoration: BoxDecoration(
+                            color: isSelected ? primaryBlue : Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isSelected
+                                  ? primaryBlue
+                                  : const Color(0xFFE5E7EB),
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              finish.displayName,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color:
+                                    isSelected ? Colors.white : Colors.black87,
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              );
-            }).toList(),
-          )),
+                  );
+                }).toList(),
+              )),
           if (showHalftoneSettings) ...[
             const SizedBox(height: 25),
             Container(
@@ -959,8 +956,9 @@ class _SetupPageState extends State<SetupPage> {
                           divisions: 40,
                           activeColor: primaryBlue,
                           onChanged: (value) {
-                              setState(() => lpi = value.toInt());
-                              Get.find<SetupController>().lpiValue.value = value.toInt();
+                            setState(() => lpi = value.toInt());
+                            Get.find<SetupController>().lpiValue.value =
+                                value.toInt();
                           },
                         ),
                       ),
@@ -1008,8 +1006,13 @@ class _SetupPageState extends State<SetupPage> {
                           padding: const EdgeInsets.symmetric(horizontal: 4),
                           child: InkWell(
                             onTap: () {
-                                setState(() => selectedDotShape = shape);
-                                Get.find<SetupController>().selectedDotShape.value = shape.technicalName == 'circle' ? 'round' : shape.technicalName;
+                              setState(() => selectedDotShape = shape);
+                              Get.find<SetupController>()
+                                      .selectedDotShape
+                                      .value =
+                                  shape.technicalName == 'circle'
+                                      ? 'round'
+                                      : shape.technicalName;
                             },
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 10),
@@ -1117,14 +1120,13 @@ class _SetupPageState extends State<SetupPage> {
                   min: 0.5,
                   max: 2.0,
                   divisions: 15,
-                  activeColor: hasWarning
-                      ? const Color(0xFFFBBF24)
-                      : primaryBlue,
-                   onChanged: (value) {
-                     setState(() => strokeWidth = value);
-                     Get.find<SetupController>().strokeWidth.value = value;
-                   },
-                 ),
+                  activeColor:
+                      hasWarning ? const Color(0xFFFBBF24) : primaryBlue,
+                  onChanged: (value) {
+                    setState(() => strokeWidth = value);
+                    Get.find<SetupController>().strokeWidth.value = value;
+                  },
+                ),
               ),
               const Text(
                 '2.0mm',
@@ -1193,7 +1195,6 @@ class _SetupPageState extends State<SetupPage> {
             ],
           ),
           const SizedBox(height: 25),
-
           Row(
             children: [
               Expanded(
@@ -1220,28 +1221,27 @@ class _SetupPageState extends State<SetupPage> {
                         value: selectedPaperSize,
                         isExpanded: true,
                         underline: const SizedBox(),
-                        items:
-                            [
-                              // CM options (new default)
-                              'A4 (21 × 29.7 cm)',
-                              'A3 (29.7 × 42 cm)',
-                              'A5 (14.8 × 21 cm)',
-                              'Letter (21.6 × 27.9 cm)',
-                              // MM options (kept for compatibility)
-                              'A4 (210 × 297 mm)',
-                              'A3 (297 × 420 mm)',
-                              'Letter (216 × 279 mm)',
-                              // Custom cm-based size
-                              'Custom (cm)',
-                            ].map((String value) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(
-                                  value,
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              );
-                            }).toList(),
+                        items: [
+                          // CM options (new default)
+                          'A4 (21 × 29.7 cm)',
+                          'A3 (29.7 × 42 cm)',
+                          'A5 (14.8 × 21 cm)',
+                          'Letter (21.6 × 27.9 cm)',
+                          // MM options (kept for compatibility)
+                          'A4 (210 × 297 mm)',
+                          'A3 (297 × 420 mm)',
+                          'Letter (216 × 279 mm)',
+                          // Custom cm-based size
+                          'Custom (cm)',
+                        ].map((String value) {
+                          return DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(
+                              value,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          );
+                        }).toList(),
                         onChanged: (String? newValue) {
                           if (newValue != null) {
                             setState(() {
@@ -1269,8 +1269,8 @@ class _SetupPageState extends State<SetupPage> {
                             child: TextField(
                               keyboardType:
                                   const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
+                                decimal: true,
+                              ),
                               decoration: const InputDecoration(
                                 labelText: 'Width (cm)',
                                 border: OutlineInputBorder(),
@@ -1289,21 +1289,19 @@ class _SetupPageState extends State<SetupPage> {
                             child: TextField(
                               keyboardType:
                                   const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
+                                decimal: true,
+                              ),
                               decoration: const InputDecoration(
                                 labelText: 'Height (cm)',
                                 border: OutlineInputBorder(),
                               ),
                               onChanged: (text) {
-                                final v =
-                                    double.tryParse(text) ??
+                                final v = double.tryParse(text) ??
                                     customPaperHeightCm;
                                 setState(() => customPaperHeightCm = v);
                                 Get.find<SetupController>()
-                                        .paperHeightCm
-                                        .value =
-                                    v;
+                                    .paperHeightCm
+                                    .value = v;
                               },
                             ),
                           ),
@@ -1314,7 +1312,6 @@ class _SetupPageState extends State<SetupPage> {
                 ),
               ),
               const SizedBox(width: 30),
-
               Expanded(
                 flex: 1,
                 child: Column(
@@ -1366,7 +1363,6 @@ class _SetupPageState extends State<SetupPage> {
             ],
           ),
           const SizedBox(height: 25),
-
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1378,11 +1374,7 @@ class _SetupPageState extends State<SetupPage> {
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                   Text(
-                    '${printQuality >= 450
-                        ? "Best"
-                        : printQuality >= 300
-                        ? "High"
-                        : "Draft"} (${printQuality.toInt()} DPI)',
+                    '${printQuality >= 450 ? "Best" : printQuality >= 300 ? "High" : "Draft"} (${printQuality.toInt()} DPI)',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -1406,8 +1398,8 @@ class _SetupPageState extends State<SetupPage> {
                       divisions: 3,
                       activeColor: primaryBlue,
                       onChanged: (value) {
-                          setState(() => printQuality = value);
-                          Get.find<SetupController>().printQuality.value = value;
+                        setState(() => printQuality = value);
+                        Get.find<SetupController>().printQuality.value = value;
                       },
                     ),
                   ),
@@ -1511,6 +1503,68 @@ class _SetupPageState extends State<SetupPage> {
                       Get.find<SetupController>().adaptiveThreshold.value = val;
                     },
                   ),
+                  const SizedBox(height: 16),
+                  // Smoothing Factor Slider
+                  Obx(() => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Smoothing Factor',
+                                  style: TextStyle(fontSize: 14)),
+                              Text(
+                                  '${Get.find<SetupController>().smoothingFactor.value.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Colors.grey)),
+                            ],
+                          ),
+                          Slider(
+                            value: Get.find<SetupController>()
+                                .smoothingFactor
+                                .value,
+                            min: 0.05,
+                            max: 0.50,
+                            divisions: 45,
+                            onChanged: (val) {
+                              Get.find<SetupController>()
+                                  .smoothingFactor
+                                  .value = val;
+                            },
+                          ),
+                        ],
+                      )),
+                  const SizedBox(height: 16),
+                  // Corner Threshold Slider
+                  Obx(() => Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Corner Threshold (°)',
+                                  style: TextStyle(fontSize: 14)),
+                              Text(
+                                  '${Get.find<SetupController>().cornerThreshold.value.toInt()}°',
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Colors.grey)),
+                            ],
+                          ),
+                          Slider(
+                            value: Get.find<SetupController>()
+                                .cornerThreshold
+                                .value,
+                            min: 120,
+                            max: 180,
+                            divisions: 60,
+                            onChanged: (val) {
+                              Get.find<SetupController>()
+                                  .cornerThreshold
+                                  .value = val;
+                            },
+                          ),
+                        ],
+                      )),
                 ],
               ),
             ),
@@ -1680,8 +1734,8 @@ class _SetupPageState extends State<SetupPage> {
             color: isComplete
                 ? Colors.green
                 : isActive
-                ? primaryBlue
-                : const Color(0xFFE5E7EB),
+                    ? primaryBlue
+                    : const Color(0xFFE5E7EB),
           ),
           child: Center(
             child: isComplete

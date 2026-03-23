@@ -81,10 +81,11 @@ class MaskGenerator:
         self,
         mask: np.ndarray,
         kernel_size: int = 3,
-        min_area: int = 50,
+        min_area: int = 20,
     ) -> np.ndarray:
         """
         تنظيف الـ mask من الضوضاء الصغيرة والفراغات.
+        min_area=20 لحماية النقاط العربية (dots, hamza) اللي بتوصل 20-80px.
         """
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)

@@ -116,62 +116,87 @@ class PythonProcessor {
     final stdoutCompleter = Completer<void>();
     final stderrCompleter = Completer<void>();
 
+    // RegExp for robust progress parsing (handles Windows paths with colons)
+    final progressRegex = RegExp(r'^PROGRESS:(0\.\d+|1\.0+):(.+)$');
+
     process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
-          (line) {
-            // New IPC fine-grained progress format: PROGRESS:<0.0-1.0>:message
-            if (line.startsWith('PROGRESS:')) {
-              if (onProgress != null) {
-                final parts = line.split(':');
-                if (parts.length >= 3) {
-                  final val = double.tryParse(parts[1]) ?? 0.0;
-                  final msg = parts.sublist(2).join(':');
-                  onProgress(val.clamp(0.0, 1.0), msg);
-                }
-              }
-              return;
+      (line) {
+        // BUG-10 FIX: Use RegExp instead of split(':') for robust parsing
+        // This handles Windows paths like PROGRESS:0.50:Loading C:\Users\...
+        if (line.startsWith('PROGRESS:')) {
+          if (onProgress != null) {
+            final match = progressRegex.firstMatch(line);
+            if (match != null) {
+              final val = double.tryParse(match.group(1)!) ?? 0.0;
+              final msg = match.group(2)!.trim();
+              onProgress(val.clamp(0.0, 1.0), msg);
             }
-            // FATAL #3 FIX: استخراج مسار output
-            if (line.startsWith('OUTPUT_DIR:')) {
-              outputDirectory = line.substring('OUTPUT_DIR:'.length).trim();
-              return;
-            }
+          }
+          return;
+        }
+        // FATAL #3 FIX: استخراج مسار output
+        if (line.startsWith('OUTPUT_DIR:')) {
+          outputDirectory = line.substring('OUTPUT_DIR:'.length).trim();
+          return;
+        }
 
-            // FATAL #4 FIX: تحديث progress من "Step X/9: ..."
-            final stepMatch = RegExp(
-              r'Step (\d+)/(\d+):\s*(.*)',
-            ).firstMatch(line);
-            if (stepMatch != null && onProgress != null) {
-              final current = int.parse(stepMatch.group(1)!);
-              final total = int.parse(stepMatch.group(2)!);
-              final stepName = stepMatch.group(3) ?? '';
-              onProgress(current / total, 'Step $current/$total: $stepName');
-            }
-          },
-          onDone: () {
-            if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
-          },
-          onError: (_) {
-            if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
-          },
-        );
+        // FATAL #4 FIX: تحديث progress من "Step X/9: ..."
+        final stepMatch = RegExp(
+          r'Step (\d+)/(\d+):\s*(.*)',
+        ).firstMatch(line);
+        if (stepMatch != null && onProgress != null) {
+          final current = int.parse(stepMatch.group(1)!);
+          final total = int.parse(stepMatch.group(2)!);
+          final stepName = stepMatch.group(3) ?? '';
+          onProgress(current / total, 'Step $current/$total: $stepName');
+        }
+      },
+      onDone: () {
+        if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
+      },
+      onError: (_) {
+        if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
+      },
+    );
 
-    process.stderr
-        .transform(utf8.decoder)
-        .listen(
-          (chunk) => stderrBuffer.write(chunk),
-          onDone: () {
-            if (!stderrCompleter.isCompleted) stderrCompleter.complete();
-          },
-          onError: (_) {
-            if (!stderrCompleter.isCompleted) stderrCompleter.complete();
-          },
-        );
+    process.stderr.transform(utf8.decoder).listen(
+      (chunk) => stderrBuffer.write(chunk),
+      onDone: () {
+        if (!stderrCompleter.isCompleted) stderrCompleter.complete();
+      },
+      onError: (_) {
+        if (!stderrCompleter.isCompleted) stderrCompleter.complete();
+      },
+    );
 
-    // انتظار انتهاء العملية
-    final exitCode = await process.exitCode;
+    // BUG-09 FIX: Process timeout — 5 minutes max
+    const timeout = Duration(minutes: 5);
+    int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(
+        timeout,
+        onTimeout: () {
+          debugPrint(
+              '[PythonProcessor] TIMEOUT after ${timeout.inMinutes}min — killing process');
+          process.kill();
+          return -99;
+        },
+      );
+    } catch (e) {
+      process.kill();
+      return ProcessResult.failure('Process error: $e');
+    }
+
+    if (exitCode == -99) {
+      return ProcessResult.failure(
+        'TIMEOUT:Processing took too long (>${timeout.inMinutes} min). '
+        'Try with a smaller image or fewer colors.',
+      );
+    }
+
     await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
 
     debugPrint('[PythonProcessor] Exit code: $exitCode');
@@ -247,11 +272,9 @@ class PythonProcessor {
     args.addAll(['--mesh-preview-mode', settings.meshPreviewMode.name]);
 
     // Advanced Tuning (Phase 8 Senior Optimizations)
-    // If simple mode, force threshold to 200 to keep logo sharp and clean
+    // Pass through globalThreshold; Python will auto-adjust based on --image-type
     int effectiveThreshold = settings.globalThreshold.toInt();
-    if (settings.imageType == ImageType.simple) {
-      effectiveThreshold = 200;
-    } else if (settings.adaptiveThreshold) {
+    if (settings.adaptiveThreshold) {
       effectiveThreshold = -1;
     }
 

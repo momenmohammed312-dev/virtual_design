@@ -309,9 +309,19 @@ def step3_generate_masks(image: np.ndarray, separation_result: dict, halftone_mo
 
 
 def step4_clean_edges(masks: list) -> list:
-    _step(4, "Cleaning edges (disabled to preserve sharp pixels)")
-    # Morphology rounded sharp corners, making text look hand-drawn. Disabled for precision.
-    return masks
+    _step(4, "Cleaning edges (small kernel, noise-only)")
+    # Small kernel: removes scattered noise without merging Arabic diacritics
+    kernel_noise = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    result = []
+    for mask in masks:
+        # Remove small scattered noise pixels
+        clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_noise)
+        # Close tiny gaps (2x2 only — avoids merging Arabic dots/strokes)
+        clean = cv2.morphologyEx(clean, cv2.MORPH_CLOSE, kernel_close)
+        result.append(clean)
+    logger.info(f"  Cleaned {len(masks)} masks (kernel=2x2 open + 2x2 close)")
+    return result
 
 
 def step5_halftone(masks: list, args: argparse.Namespace) -> list:
@@ -397,11 +407,43 @@ def step6_binarize(masks: list, args: argparse.Namespace) -> list:
 
 
 def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
-    _step(7, "Validating stroke widths (disabled)")
-    # Temporarily skip stroke validation to prevent INVALID_FORMAT errors
-    # TODO: Re-enable with improved validation logic
-    logger.info("  Stroke validation temporarily disabled")
-    return masks
+    _step(7, "Validating & fixing thin strokes")
+    
+    if not HAS_STROKE_VALIDATOR:
+        logger.info("  StrokeValidator not available, skipping")
+        return masks
+    
+    # Minimum stroke width: 0.15mm converted to pixels
+    min_stroke_mm = 0.15
+    min_stroke_px = max(1, int(args.dpi * min_stroke_mm / 25.4))
+    
+    result = []
+    for i, mask in enumerate(masks):
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
+        
+        # Find connected components
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8, cv2.CV_32S)
+        
+        thin_found = False
+        for lbl in range(1, num_labels):
+            area = stats[lbl, cv2.CC_STAT_AREA]
+            w_comp = stats[lbl, cv2.CC_STAT_WIDTH]
+            h_comp = stats[lbl, cv2.CC_STAT_HEIGHT]
+            # Check if component is thin (width or height < min_stroke_px)
+            if area > 10 and (w_comp < min_stroke_px or h_comp < min_stroke_px):
+                thin_found = True
+                break
+        
+        if thin_found:
+            logger.warning(f"  Mask {i+1}: thin strokes detected (<{min_stroke_px}px), auto-thickening")
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (min_stroke_px * 2 + 1, min_stroke_px * 2 + 1))
+            mask = cv2.dilate(mask, kernel, iterations=1)
+        
+        result.append(mask)
+    
+    logger.info(f"  Stroke validation complete (min={min_stroke_px}px = {min_stroke_mm}mm)")
+    return result
 
 
 def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
@@ -431,10 +473,10 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
             # Step 1: Upscale 2x (creates smooth gray pixels at stair-step edges)
             h_m, w_m = mask.shape[:2]
             up = cv2.resize(mask, (w_m * 2, h_m * 2), interpolation=cv2.INTER_CUBIC)
-            # Step 2: Light blur to merge stair-step into smooth curve
-            up = cv2.GaussianBlur(up, (5, 5), 0)
-            # Step 3: High threshold (200) — grabs the smooth outer edge
-            _, binary_mask = cv2.threshold(up, 200, 255, cv2.THRESH_BINARY)
+            # Step 2: Light blur (3x3) to merge stair-step without destroying thin strokes
+            up = cv2.GaussianBlur(up, (3, 3), 0)
+            # Step 3: High threshold — grabs the smooth outer edge
+            _, binary_mask = cv2.threshold(up, threshold_val, 255, cv2.THRESH_BINARY)
             # Step 4: Downscale back to original size with area averaging
             binary_mask = cv2.resize(binary_mask, (w_m, h_m), interpolation=cv2.INTER_AREA)
             # Step 5: Re-threshold to ensure pure binary after area resize
@@ -444,14 +486,16 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
             safe_thresh = 45  # low threshold to keep tiny halftone dots
             _, binary_mask = cv2.threshold(mask, safe_thresh, 255, cv2.THRESH_BINARY)
         
-        # --- Senior Phase 23: Global Inversion Guard ---
-        # If binary mask is mostly white (>75% coverage), it's likely inverted.
-        # Design pixels in silk screen separations should be white (255) at this stage.
-        white_px = np.sum(binary_mask == 255)
-        black_px = np.sum(binary_mask == 0)
-        if white_px > black_px * 3:
-             logger.info(f"  [Guard:Inversion] Auto-inverting mask {i+1} due to high white coverage ({white_px/binary_mask.size*100:.1f}%)")
-             binary_mask = cv2.bitwise_not(binary_mask)
+        # --- Inversion Guard (Coverage-based, safe for simple logos) ---
+        # Only invert if design coverage is suspiciously low (< 2%)
+        # This catches cases where mask generation produced inverted output
+        # Do NOT invert based on white/black ratio — simple logos naturally have 90%+ white
+        total_px = binary_mask.size
+        design_coverage = np.sum(binary_mask == 255) / total_px
+        
+        if design_coverage < 0.02:
+            logger.warning(f"  [Guard:Inversion] Very low coverage ({design_coverage:.1%}), inverting mask {i+1}")
+            binary_mask = cv2.bitwise_not(binary_mask)
         
         # Noise removal (Area opening)
         if noise_min_area > 0:
@@ -516,14 +560,24 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
         logger.warning("Skipping registration marks (module not found)")
         return masks
     
+    # DPI-aware sizing: all measurements in mm converted to pixels
+    quiet_zone_mm = 22       # 22mm quiet zone (above 20mm standard)
+    mark_target_mm = 5       # 5mm mark size
+    line_target_mm = 0.2     # 0.2mm line thickness
+    dpi = args.dpi
+    
+    safe_border = max(120, int(dpi * quiet_zone_mm / 25.4))
+    safe_mark_size = max(40, int(dpi * mark_target_mm / 25.4))
+    safe_line_thickness = max(1, int(dpi * line_target_mm / 25.4))
+    
     config = RegistrationConfig(
         add_border=True,
-        border_size=120,
+        border_size=safe_border,
         mark_type='full',
-        dpi=args.dpi,
+        dpi=dpi,
         style=MarkStyle(
-            mark_size=60,
-            line_thickness=2,
+            mark_size=safe_mark_size,
+            line_thickness=safe_line_thickness,
             show_circle=True,
             show_cross=True,
             show_corner_marks=True,
@@ -566,22 +620,32 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
         
         # Add custom film label if provided
         if args.film_label:
+            h_marked, w_marked = marked.shape[:2]
+            label_scale = max(0.5, min(1.0, w_marked / 2000))
+            (lw, lh), _ = cv2.getTextSize(args.film_label, cv2.FONT_HERSHEY_SIMPLEX, label_scale, 1)
+            label_margin = max(40, int(w_marked * 0.03))
             cv2.putText(
                 marked, 
                 args.film_label, 
-                (100, 150), # margin + some offset
+                (label_margin, h_marked - label_margin),
                 cv2.FONT_HERSHEY_SIMPLEX, 
-                1.2, (0, 0, 0), 2, cv2.LINE_AA
+                label_scale, (0, 0, 0), 1, cv2.LINE_AA
             )
 
-        # Add "Developed By MO2" branding
+        # Add "Developed By MO2" branding — safe coordinates based on actual text size
         h_brand, w_brand = marked.shape[:2]
+        brand_text = "Developed By MO2"
+        brand_scale = max(0.5, min(1.0, w_brand / 2000))
+        (tw, th), _ = cv2.getTextSize(brand_text, cv2.FONT_HERSHEY_SIMPLEX, brand_scale, 1)
+        brand_margin = max(40, int(w_brand * 0.03))
+        x_pos = w_brand - tw - brand_margin
+        y_pos = h_brand - brand_margin
         cv2.putText(
             marked, 
-            "Developed By MO2", 
-            (w_brand - 450, h_brand - 40), # Bottom right
+            brand_text, 
+            (x_pos, y_pos),
             cv2.FONT_HERSHEY_SIMPLEX, 
-            1.2, (0, 0, 0), 2, cv2.LINE_AA
+            brand_scale, (0, 0, 0), 1, cv2.LINE_AA
         )
 
         result_masks.append(marked)
@@ -606,12 +670,16 @@ def step9_export(
     try:
         total = max(1, len(masks))
         
-        # Conditional smoothing: light for few colors, stronger for many colors
-        num_colors = len(masks)
-        if num_colors <= 3:
-            eff_smooth = 0.15
+        # Conditional smoothing: use CLI arg if provided, else auto-detect based on colors
+        cli_smooth = getattr(args, 'smoothing_factor', None)
+        if cli_smooth is not None and cli_smooth > 0:
+            eff_smooth = cli_smooth
         else:
-            eff_smooth = 0.30
+            num_colors = len(masks)
+            if num_colors <= 3:
+                eff_smooth = 0.15
+            else:
+                eff_smooth = 0.30
         
         # Import vector exporter
         from core.vector_exporter import export_vector_pdf
@@ -863,6 +931,41 @@ def main() -> int:
     args = parse_args()
     start_time = time.time()
 
+    # ═══ Auto-set parameters based on image type ═══
+    # This ensures consistent quality for all image types.
+    # Only apply presets if user hasn't explicitly set a non-default value via CLI.
+    img_type = getattr(args, 'image_type', 'auto')
+    DEFAULT_SMOOTHING = 0.3
+    DEFAULT_CORNER = 150.0
+    DEFAULT_GLOBAL_THRESHOLD = 127
+
+    if img_type == 'simple':
+        if args.smoothing_factor == DEFAULT_SMOOTHING:
+            args.smoothing_factor = 0.10
+        if args.corner_threshold == DEFAULT_CORNER:
+            args.corner_threshold = 140.0
+        if args.global_threshold == DEFAULT_GLOBAL_THRESHOLD:
+            args.global_threshold = 160
+        logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
+    elif img_type == 'mixed':
+        if args.smoothing_factor == DEFAULT_SMOOTHING:
+            args.smoothing_factor = 0.15
+        if args.corner_threshold == DEFAULT_CORNER:
+            args.corner_threshold = 150.0
+        if args.global_threshold == DEFAULT_GLOBAL_THRESHOLD:
+            args.global_threshold = 200
+        logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
+    elif img_type == 'complex':
+        if args.smoothing_factor == DEFAULT_SMOOTHING:
+            args.smoothing_factor = 0.25
+        if args.corner_threshold == DEFAULT_CORNER:
+            args.corner_threshold = 160.0
+        if args.global_threshold == DEFAULT_GLOBAL_THRESHOLD:
+            args.global_threshold = 200
+        logger.info("[ImageType] Complex: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
+    else:
+        logger.info("[ImageType] Auto: using CLI/default parameters")
+
     logger.info("=" * 50)
     logger.info("Virtual Design — Silk Screen Processing Pipeline")
     logger.info(f"Input:  {args.input}")
@@ -906,11 +1009,11 @@ def main() -> int:
         #     cv2.imwrite(debug_path, mask)
         #     logger.info(f"DEBUG: Saved mask {idx+1} after generation: {debug_path}")
 
-        # Step 4 — Edge Cleaning (skip if halftone, cleanup already done in mask gen)
-        if args.clean and not args.halftone:
+        # Step 4 — Edge Cleaning (always enabled for solid, skip for halftone)
+        if not args.halftone:
             masks = step4_clean_edges(masks)
         else:
-            _step(4, "Edge cleaning (skipped)")
+            _step(4, "Edge cleaning (skipped for halftone)")
 
         # Step 5 — Halftone (applied to grayscale masks)
         masks = step5_halftone(masks, args)

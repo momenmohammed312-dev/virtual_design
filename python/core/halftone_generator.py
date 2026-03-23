@@ -131,17 +131,23 @@ class HalftoneGenerator:
 
     @staticmethod
     def _rasterize(dots: List[HalftoneDot], shape: tuple) -> np.ndarray:
-        """Render dot list onto binary image — no anti-aliasing."""
+        """Render dot list with super-sampling for smooth anti-aliased edges."""
         h, w = shape
-        out = np.zeros((h, w), dtype=np.uint8)
+        scale = 2  # 2x super-sampling
+        
+        # Draw on 2x canvas
+        big = np.zeros((h * scale, w * scale), dtype=np.uint8)
         for dot in dots:
-            cx = int(round(dot.cx))
-            cy = int(round(dot.cy))
-            r = max(1, int(round(dot.radius)))
+            cx = int(round(dot.cx * scale))
+            cy = int(round(dot.cy * scale))
+            r = max(scale, int(round(dot.radius * scale)))
             if dot.shape == "square":
                 x1, y1 = max(0, cx - r), max(0, cy - r)
-                x2, y2 = min(w - 1, cx + r), min(h - 1, cy + r)
-                out[y1:y2 + 1, x1:x2 + 1] = 255
+                x2, y2 = min(big.shape[1] - 1, cx + r), min(big.shape[0] - 1, cy + r)
+                big[y1:y2 + 1, x1:x2 + 1] = 255
             else:
-                cv2.circle(out, (cx, cy), r, 255, -1, lineType=cv2.LINE_8)
+                cv2.circle(big, (cx, cy), r, 255, -1)  # LINE_8 on 2x canvas
+        
+        # Downscale with area averaging — produces natural anti-aliasing
+        out = cv2.resize(big, (w, h), interpolation=cv2.INTER_AREA)
         return out

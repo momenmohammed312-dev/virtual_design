@@ -155,6 +155,11 @@ class ColorSeparator:
         else:
             clustering_image = img_rgb
 
+        # Pre-processing: light GaussianBlur to remove JPEG artifacts
+        # This smooths compression noise without affecting real edges
+        # Only used for clustering — original image is used for mask generation
+        clustering_image = cv2.GaussianBlur(clustering_image, (3, 3), sigmaX=0.8, sigmaY=0.8)
+
         # --- Senior Phase 17: Optional Global Quantization (SKIPPED TO SAVE MEMORY) ---
         # Removing this step because it caused 'bad allocation' (14MB) on some systems.
         # The final K-means separation is sufficient.
