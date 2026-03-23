@@ -184,56 +184,82 @@ def export_vector_pdf(
             return draw_x + px_x * scale_w, draw_y + (mask_h - px_y) * scale_h
 
         path = c.beginPath()
-        path.setFillMode(1) # 1 = Even-Odd fill rule (essential for nested holes)
+        # Some reportlab versions don't expose setFillMode() on PDFPathObject.
+        # We'll use it when available; otherwise we fall back to hierarchy-based
+        # drawing to preserve holes.
+        use_even_odd = False
+        if hasattr(path, 'setFillMode'):
+            path.setFillMode(1) # 1 = Even-Odd fill rule (essential for nested holes)
+            use_even_odd = True
         
         min_contour_area = 10 # capture small details
         
         # We need to sort contours by area descending so outer ones come first?
         # Actually with RETR_TREE and Even-Odd, order doesn't matter for pure fill.
-        for j, contour in enumerate(contours):
-            area = cv2.contourArea(contour)
+        def _append_contour_to_path(target_path, contour_arr):
+            area = cv2.contourArea(contour_arr)
             if area < min_contour_area:
-                continue
-            
-            # FIX 1: Epsilon نسبي بدلاً من ثابت للحفاظ على تفاصيل الحروف الصغيرة
-            # 0.002 * المحيط يعطي دقة متغيرة (Adaptive) ممتازة
-            perimeter = cv2.arcLength(contour, True)
-            epsilon = max(0.5, min(1.5, 0.002 * perimeter)) 
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-            
+                return
+
+            perimeter = cv2.arcLength(contour_arr, True)
+            epsilon = max(0.5, min(1.5, 0.002 * perimeter))
+            approx = cv2.approxPolyDP(contour_arr, epsilon, True)
+
             if len(approx) < 3:
-                continue
+                return
 
-            # Bezier curve fitting
             bezier_cmds = fit_bezier_to_contour(approx, smooth_factor, corner_threshold)
-            
             if not bezier_cmds:
-                continue
+                return
 
-            # Start contour in path
-            # The original code used px_to_pdf for Bezier commands, let's stick to that.
-            # The provided diff had a different coordinate transformation, which might be a mistake.
-            # Reverting to using px_to_pdf for consistency with the rest of the file.
-            
             for cmd in bezier_cmds:
                 if cmd[0] == 'M':
                     px, py = px_to_pdf(cmd[1], cmd[2])
-                    path.moveTo(px, py)
+                    target_path.moveTo(px, py)
                 elif cmd[0] == 'C':
                     cx1, cy1 = px_to_pdf(cmd[1], cmd[2])
                     cx2, cy2 = px_to_pdf(cmd[3], cmd[4])
-                    ex, ey   = px_to_pdf(cmd[5], cmd[6])
-                    path.curveTo(cx1, cy1, cx2, cy2, ex, ey)
+                    ex, ey = px_to_pdf(cmd[5], cmd[6])
+                    target_path.curveTo(cx1, cy1, cx2, cy2, ex, ey)
                 elif cmd[0] == 'L':
-                    # FIX 3: handle linear segments (sharp corners)
                     px, py = px_to_pdf(cmd[1], cmd[2])
-                    path.lineTo(px, py)
-            
-            path.close() # Close sub-path
-        
-        # Finalize and draw the unified path (Holes handled by Even-Odd)
-        c.setFillColor(black)
-        c.drawPath(path, fill=1, stroke=0)
+                    target_path.lineTo(px, py)
+            target_path.close()
+
+        if use_even_odd:
+            for _, contour in enumerate(contours):
+                _append_contour_to_path(path, contour)
+
+            c.setFillColor(black)
+            c.drawPath(path, fill=1, stroke=0)
+        else:
+            # Fallback hole handling without even-odd fill:
+            # draw outer contours filled black, then draw children (holes) filled white.
+            c.setFillColor(black)
+            if hierarchy is None:
+                for contour in contours:
+                    p = c.beginPath()
+                    _append_contour_to_path(p, contour)
+                    c.drawPath(p, fill=1, stroke=0)
+            else:
+                h = hierarchy[0]
+                for idx in range(len(contours)):
+                    parent_idx = h[idx][3]
+                    if parent_idx != -1:
+                        continue
+
+                    p_outer = c.beginPath()
+                    _append_contour_to_path(p_outer, contours[idx])
+                    c.drawPath(p_outer, fill=1, stroke=0)
+
+                    child = h[idx][2]
+                    while child != -1:
+                        c.setFillColor(white)
+                        p_hole = c.beginPath()
+                        _append_contour_to_path(p_hole, contours[child])
+                        c.drawPath(p_hole, fill=1, stroke=0)
+                        c.setFillColor(black)
+                        child = h[child][0]
         
         # Reset fill settings
         c.setStrokeColor(black)
