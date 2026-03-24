@@ -33,8 +33,8 @@ def _get_angle(p1, p2, p3):
 
 def fit_bezier_to_contour(
     contour: np.ndarray,
-    smooth_factor: float = 0.3, # Increased from 0.2 for better initial logo smoothing
-    corner_threshold: float = 150.0
+    smooth_factor: float = 0.4,
+    corner_threshold: float = 160.0
 ) -> List[Tuple]:
     """
     تحويل النقاط (Contour) إلى منحنيات بيزييه (Bezier Curves) احترافية.
@@ -214,9 +214,9 @@ def export_vector_pdf(
             # Fixed tight epsilon for text/logo (smooth_factor <= 0.15)
             # For complex images, use proportional epsilon
             if smooth_factor <= 0.15:
-                epsilon = 0.25  # preserves fine details
+                epsilon = 0.15  # preserves fine details (smaller = more accurate)
             else:
-                epsilon = max(0.25, min(0.5, 0.002 * perimeter))
+                epsilon = max(0.15, min(0.4, 0.001 * perimeter))  # smaller and more precise
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
             
             if len(approx) < 3:

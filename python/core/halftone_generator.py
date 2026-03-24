@@ -66,7 +66,7 @@ class HalftoneGenerator:
         ix = np.clip(ix, 0, w - 1)
         iy = np.clip(iy, 0, h - 1)
         
-        intensities = gray[iy, ix] / 255.0
+        intensities = 1.0 - (gray[iy, ix] / 255.0)  # Invert: dark areas get bigger dots
         radii = intensities * (dot_spacing / 2.0) * 0.95
 
         # 5. Build dot list

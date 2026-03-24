@@ -347,10 +347,10 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
         return masks
     
     # Auto-calculate LPI based on DPI if user didn't set it explicitly
-    # Rule: LPI = DPI / 8, clamped to [35, 85]
+    # Rule: LPI = DPI / 5, clamped to [55, 120] (better detail for screen printing)
     effective_lpi = args.lpi
     if effective_lpi == 65:  # default value = user didn't set it
-        effective_lpi = min(85, max(35, args.dpi // 8))
+        effective_lpi = min(120, max(55, args.dpi // 5))
         logger.info(f"  Auto-calculated LPI: {effective_lpi} (based on DPI {args.dpi})")
     
     # Standard CMYK angles for best results (avoid moiré patterns)
