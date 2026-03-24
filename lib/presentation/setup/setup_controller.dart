@@ -95,7 +95,7 @@ class SetupController extends GetxController {
           break;
         case ps.ImageType.complex:
           smoothingFactor.value = 0.30;
-          cornerThreshold.value = 55.0;
+          cornerThreshold.value = 50.0;
           break;
         case ps.ImageType.auto:
         default:

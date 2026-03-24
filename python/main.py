@@ -986,18 +986,18 @@ def main() -> int:
     img_type = getattr(args, 'image_type', 'auto')
 
     if img_type == 'simple':
-        args.smoothing_factor = 0.35
+        args.smoothing_factor = 0.25
         args.corner_threshold = 45.0
         args.global_threshold = 160
         logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'mixed':
-        args.smoothing_factor = 0.35
+        args.smoothing_factor = 0.25
         args.corner_threshold = 45.0
         args.global_threshold = 200
         logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'complex':
-        args.smoothing_factor = 0.40
-        args.corner_threshold = 55.0
+        args.smoothing_factor = 0.30
+        args.corner_threshold = 50.0
         args.global_threshold = 200
         logger.info("[ImageType] Complex: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     else:

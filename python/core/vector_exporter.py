@@ -33,8 +33,8 @@ def _get_angle(p1, p2, p3):
 
 def fit_bezier_to_contour(
     contour: np.ndarray,
-    smooth_factor: float = 0.5,
-    corner_threshold: float = 160.0
+    smooth_factor: float = 0.25,
+    corner_threshold: float = 140.0
 ) -> List[Tuple]:
     """
     تحويل النقاط (Contour) إلى منحنيات بيزييه (Bezier Curves) احترافية.
@@ -167,7 +167,7 @@ def export_vector_pdf(
         # ═══ رسم الـ vector paths ═══
         # 1. Pre-trace blur: optional, only for complex images.
         # Use --no-vector-blur to disable even for complex.
-        if not no_vector_blur and smooth_factor > 0.2:
+        if not no_vector_blur and smooth_factor > 0.3:
             blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
             if blur_k % 2 == 0:
                 blur_k += 1
@@ -211,12 +211,12 @@ def export_vector_pdf(
                 return
             
             perimeter = cv2.arcLength(contour_arr, True)
-            # Fixed tight epsilon for text/logo (smooth_factor <= 0.15)
-            # For complex images, use proportional epsilon
+            # Epsilon: balanced for text and logos
+            # 0.25 = moderate detail, reduces noise
             if smooth_factor <= 0.15:
-                epsilon = 0.15  # preserves fine details (smaller = more accurate)
+                epsilon = 0.20  # preserves fine details
             else:
-                epsilon = max(0.15, min(0.4, 0.001 * perimeter))  # smaller and more precise
+                epsilon = max(0.20, min(0.35, 0.0015 * perimeter))  # balanced
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
             
             if len(approx) < 3:
