@@ -648,19 +648,28 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
         # Add "Developed By MO2" branding — bottom-right corner, clearly visible
         h_brand, w_brand = marked.shape[:2]
         brand_text = "Developed By MO2"
-        # Use a fixed readable scale (not too small)
-        brand_scale = 0.7
+        
+        # Fixed scale and thickness for visibility
+        brand_scale = 0.8
         thickness = 2
-        (tw, th), _ = cv2.getTextSize(brand_text, cv2.FONT_HERSHEY_SIMPLEX, brand_scale, thickness)
+        (tw, th), baseline = cv2.getTextSize(brand_text, cv2.FONT_HERSHEY_SIMPLEX, brand_scale, thickness)
+        
         # Position: bottom-right with safe margin
-        brand_margin = max(50, int(w_brand * 0.04))
+        brand_margin = max(60, int(w_brand * 0.05))
         x_pos = w_brand - tw - brand_margin
         y_pos = h_brand - brand_margin
         
+        # Ensure coordinates are within image bounds
+        x_pos = max(10, min(x_pos, w_brand - tw - 10))
+        y_pos = max(th + 10, min(y_pos, h_brand - 10))
+        
         # Draw white background rectangle for readability
-        padding = 8
-        cv2.rectangle(marked, (x_pos - padding, y_pos - th - padding), 
-                      (x_pos + tw + padding, y_pos + padding), 255, -1)
+        pad = 10
+        bg_x1 = max(0, x_pos - pad)
+        bg_y1 = max(0, y_pos - th - pad)
+        bg_x2 = min(w_brand, x_pos + tw + pad)
+        bg_y2 = min(h_brand, y_pos + baseline + pad)
+        cv2.rectangle(marked, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
         
         # Draw black text
         cv2.putText(
@@ -670,7 +679,7 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
             cv2.FONT_HERSHEY_SIMPLEX, 
             brand_scale, (0, 0, 0), thickness, cv2.LINE_AA
         )
-        logger.info(f"  Added branding: '{brand_text}' at ({x_pos}, {y_pos}) on {w_brand}x{h_brand}")
+        logger.info(f"  Branding: '{brand_text}' at ({x_pos},{y_pos}) size {tw}x{th} on {w_brand}x{h_brand}")
 
         result_masks.append(marked)
         _progress(((8-1) + (idx+1)/len(masks)) / TOTAL_STEPS, f"Marks {idx+1}/ {len(masks)}")
@@ -977,17 +986,17 @@ def main() -> int:
     img_type = getattr(args, 'image_type', 'auto')
 
     if img_type == 'simple':
-        args.smoothing_factor = 0.25
+        args.smoothing_factor = 0.35
         args.corner_threshold = 45.0
         args.global_threshold = 160
         logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'mixed':
-        args.smoothing_factor = 0.25
+        args.smoothing_factor = 0.35
         args.corner_threshold = 45.0
         args.global_threshold = 200
         logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'complex':
-        args.smoothing_factor = 0.30
+        args.smoothing_factor = 0.40
         args.corner_threshold = 55.0
         args.global_threshold = 200
         logger.info("[ImageType] Complex: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))

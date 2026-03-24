@@ -33,7 +33,7 @@ def _get_angle(p1, p2, p3):
 
 def fit_bezier_to_contour(
     contour: np.ndarray,
-    smooth_factor: float = 0.4,
+    smooth_factor: float = 0.5,
     corner_threshold: float = 160.0
 ) -> List[Tuple]:
     """
