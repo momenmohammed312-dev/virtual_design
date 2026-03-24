@@ -324,7 +324,22 @@ def step4_clean_edges(masks: list) -> list:
     return result
 
 
+def _apply_image_type_defaults(args: argparse.Namespace) -> None:
+    """Set default parameters based on image type."""
+    if args.image_type == 'simple':
+        args.corner_threshold = 0.0
+    elif args.image_type == 'text':
+        args.corner_threshold = 15.0
+    elif args.image_type == 'logo':
+        args.corner_threshold = 30.0
+    elif args.image_type == 'photo':
+        args.corner_threshold = 45.0
+    elif args.image_type == 'auto':
+        args.corner_threshold = 45.0  # default value
+
+
 def step5_halftone(masks: list, args: argparse.Namespace) -> list:
+    """Generate halftone patterns for screen printing."""
     is_halftone_enabled = args.halftone and not getattr(args, 'skip_halftone', False)
     _step(5, "Halftone generation" if is_halftone_enabled else "Halftone (skipped)")
     
@@ -353,18 +368,14 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
         for i, mask in enumerate(masks):
             # Check if mask is mostly solid (should not be halftoned)
             total_pixels = mask.size
-            design_pixels = np.sum(mask == 255)  # design=255, background=0
+            design_pixels = np.sum(mask < 128)  # design=0 (ink), background=255
             coverage_percentage = (design_pixels / total_pixels) * 100
             
-            # If the user explicitly chose HALTONE finish, we usually want to process it
-            # But if it's already a very simple solid shape, we might skip
-            # The user's analysis suggests they want SOLID if they didn't choose halftone.
             if coverage_percentage > 95.0:
                 logger.info(f"  Skipping halftone for mask {i+1} ({coverage_percentage:.1f}% coverage) - too dense")
                 result.append(mask)
             else:
                 # Contrast enhancement: CLAHE pushes shadows darker and highlights whiter
-                # This produces cleaner, more regular halftone dots instead of scattered spray
                 if mask.dtype != np.uint8:
                     enhanced = mask.astype(np.uint8)
                 else:
@@ -609,15 +620,10 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
         else:
             processed_mask = raw_mask.copy()
 
-        # 2. المرحلة الثانية: تحويل التمثيل (Inversion for Paper Export)
-        # SILK SCREEN POSITIVES: 0 (Black Ink) on 255 (White/Clear Paper)
-        # Since MaskGenerator returns 255 as Design, we MUST invert it here.
-        paper_mask = cv2.bitwise_not(processed_mask)
-        
-        # 3. المرحلة الثالثة: إضافة العلامات والاسم الحاد (Marks & Branding)
-        # Now we apply marks directly to the inverted (0-ink / 255-paper) canvas
+        # 2. المرحلة الثانية: إضافة العلامات والاسم الحاد (Marks & Branding)
+        # Masks are kept in film polarity: 0 (black ink) on 255 (white paper).
         marked = generator.add_marks(
-            image=paper_mask,
+            image=processed_mask,
             color_name=f"Film_{idx+1}",
             color_index=idx + 1,
             total_colors=len(masks),
@@ -728,14 +734,6 @@ def step9_export(
             # Internally, vector tracing uses design=255, but film output is 0-ink / 255-paper.
             # Save PNG in final film polarity to match PDFs.
             preview_mask = mask.copy()
-            if len(preview_mask.shape) == 3:
-                preview_gray = cv2.cvtColor(preview_mask, cv2.COLOR_BGR2GRAY)
-            else:
-                preview_gray = preview_mask
-            # If majority pixels are black, it's likely already film polarity; otherwise invert.
-            black_ratio = float(np.sum(preview_gray < 128)) / float(preview_gray.size)
-            if black_ratio < 0.50:
-                preview_mask = cv2.bitwise_not(preview_mask)
             # Save PNG with correct DPI metadata (cv2.imwrite ignores DPI)
             try:
                 from PIL import Image as _PIL
@@ -939,7 +937,7 @@ def parse_args() -> argparse.Namespace:
     # Advanced Tuning (Phase 8 Senior Optimizations)
     parser.add_argument("--global-threshold", type=int, default=127, help="Global threshold for solid masks (0-255)")
     parser.add_argument("--smoothing-factor", type=float, default=0.3, help="Bezier smoothing factor (0-1.0)")
-    parser.add_argument("--corner-threshold", type=float, default=150.0, help="Angle threshold to preserve sharp corners (degrees)")
+    parser.add_argument("--corner-threshold", type=float, default=45.0, help="Angle threshold to preserve sharp corners (degrees)")
     parser.add_argument("--noise-removal", type=int, default=3, help="Minimum contour area to keep (pixels)")
     parser.add_argument("--auto-crop", action="store_true", help="Auto-crop image before processing")
     parser.add_argument("--adaptive-threshold", action="store_true", help="Use adaptive/Otsu thresholding instead of global")
@@ -968,23 +966,30 @@ def main() -> int:
     img_type = getattr(args, 'image_type', 'auto')
 
     if img_type == 'simple':
-        args.smoothing_factor = 0.20
-        args.corner_threshold = 150.0
+        args.smoothing_factor = 0.25
+        args.corner_threshold = 45.0
         args.global_threshold = 160
         logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'mixed':
-        args.smoothing_factor = 0.20
-        args.corner_threshold = 150.0
+        args.smoothing_factor = 0.25
+        args.corner_threshold = 45.0
         args.global_threshold = 200
         logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'complex':
         args.smoothing_factor = 0.30
-        args.corner_threshold = 160.0
+        args.corner_threshold = 55.0
         args.global_threshold = 200
         logger.info("[ImageType] Complex: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     else:
         # Auto: keep CLI-provided values or defaults (smoothing_factor, corner_threshold, global_threshold)
         logger.info("[ImageType] Auto: using CLI/default parameters (smooth=%.2f, corner=%.1f°, threshold=%d)" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
+
+    # Safety clamp: keep within UI semantics
+    try:
+        args.corner_threshold = float(args.corner_threshold)
+    except Exception:
+        args.corner_threshold = 45.0
+    args.corner_threshold = max(0.0, min(90.0, args.corner_threshold))
 
     logger.info("=" * 50)
     logger.info("Virtual Design — Silk Screen Processing Pipeline")

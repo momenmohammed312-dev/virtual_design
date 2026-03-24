@@ -62,10 +62,10 @@ class MaskGenerator:
                 # Lightest pixel (255) = 0% ink (0) = Smallest Dot.
                 mask[label_map == i] = 255 - gray_orig[label_map == i]
             else:
-                # SILK SCREEN STANDARD: design=white (255, transparent), background=black (0, opaque)
-                # Set design pixels to white (transparent) and background to black (opaque)
-                mask.fill(0)  # All black background (opaque)
-                mask[label_map == i] = 255  # Design pixels are white (transparent)
+                # SILK SCREEN STANDARD (FILM): design=black(0) ink on white(255) paper.
+                # Keep masks in film polarity throughout the pipeline to avoid accidental double inversion.
+                mask.fill(255)  # White background (paper/clear)
+                mask[label_map == i] = 0  # Black design (ink)
 
             if apply_cleanup and not grayscale_output:
                 # لا نطبق cleanup على الـ grayscale masks لأنه يغير الـ intensities
@@ -153,7 +153,7 @@ class MaskGenerator:
     def generate_film_image(
         self,
         mask: np.ndarray,
-        invert: bool = True,
+        invert: bool = False,
         add_border: bool = True,
         border_px: int = 20,
     ) -> np.ndarray:

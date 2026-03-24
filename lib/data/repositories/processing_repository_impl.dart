@@ -13,8 +13,8 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
   ProcessingRepositoryImpl({
     required PythonProcessor processor,
     HiveService? hiveService,
-  }) : _processor = processor,
-       _hiveService = hiveService ?? HiveService.instance;
+  })  : _processor = processor,
+        _hiveService = hiveService ?? HiveService.instance;
 
   @override
   Future<ProcessResult> processImage({
@@ -75,7 +75,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
       if (rawJson == null) return null;
 
       final halftoneData = rawJson['halftoneSettings'] as Map?;
-      
+
       return ProcessingSettings(
         colorCount: (rawJson['colorCount'] as num?)?.toInt() ?? 0,
         detailLevel: DetailLevel.values.firstWhere(
@@ -100,12 +100,15 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
                 angle: (halftoneData['angle'] as num?)?.toDouble() ?? 45.0,
               )
             : null,
-        smoothingFactor: (rawJson['smoothingFactor'] as num?)?.toDouble() ?? 0.15,
-        cornerThreshold: (rawJson['cornerThreshold'] as num?)?.toDouble() ?? 130.0,
+        smoothingFactor:
+            (rawJson['smoothingFactor'] as num?)?.toDouble() ?? 0.25,
+        cornerThreshold:
+            (rawJson['cornerThreshold'] as num?)?.toDouble() ?? 45.0,
       );
     } catch (e) {
       // MEDIUM #2 FIX: Handle corrupted or schema-mismatched Hive data
-      print('[ProcessingRepo] Warning: Failed to load settings (data may be corrupted): $e');
+      print(
+          '[ProcessingRepo] Warning: Failed to load settings (data may be corrupted): $e');
       return null;
     }
   }

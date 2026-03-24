@@ -113,7 +113,7 @@ class ProcessingSettings {
     // Advanced Tuning Defaults
     this.globalThreshold = 127.0,
     this.smoothingFactor = 0.25,
-    this.cornerThreshold = 130.0,
+    this.cornerThreshold = 45.0,
     this.noiseRemoval = 10,
     this.autoCrop = false,
     this.forceHalftone = false,
@@ -367,7 +367,7 @@ class ProcessingSettings {
         ),
         globalThreshold: (json['globalThreshold'] as num?)?.toDouble() ?? 127.0,
         smoothingFactor: (json['smoothingFactor'] as num?)?.toDouble() ?? 0.25,
-        cornerThreshold: (json['cornerThreshold'] as num?)?.toDouble() ?? 130.0,
+        cornerThreshold: (json['cornerThreshold'] as num?)?.toDouble() ?? 45.0,
         noiseRemoval: (json['noiseRemoval'] as int?) ?? 10,
         autoCrop: (json['autoCrop'] as bool?) ?? false,
         forceHalftone: (json['forceHalftone'] as bool?) ?? false,

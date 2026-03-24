@@ -27,7 +27,7 @@ class SetupController extends GetxController {
   final RxBool autoUpscale = false.obs;
 
   final RxDouble smoothingFactor = 0.25.obs;
-  final RxDouble cornerThreshold = 130.0.obs;
+  final RxDouble cornerThreshold = 45.0.obs;
 
   // Paper size
   final RxDouble paperWidthCm = 21.0.obs;
@@ -86,16 +86,16 @@ class SetupController extends GetxController {
     ever(selectedImageType, (ps.ImageType type) {
       switch (type) {
         case ps.ImageType.simple:
-          smoothingFactor.value = 0.20;
-          cornerThreshold.value = 150.0;
+          smoothingFactor.value = 0.25;
+          cornerThreshold.value = 45.0;
           break;
         case ps.ImageType.mixed:
-          smoothingFactor.value = 0.20;
-          cornerThreshold.value = 150.0;
+          smoothingFactor.value = 0.25;
+          cornerThreshold.value = 45.0;
           break;
         case ps.ImageType.complex:
           smoothingFactor.value = 0.30;
-          cornerThreshold.value = 160.0;
+          cornerThreshold.value = 55.0;
           break;
         case ps.ImageType.auto:
         default:
@@ -143,7 +143,7 @@ class SetupController extends GetxController {
     adaptiveThreshold.value = false;
     selectedImageType.value = ps.ImageType.auto;
     smoothingFactor.value = 0.25;
-    cornerThreshold.value = 130.0;
+    cornerThreshold.value = 45.0;
     update();
   }
 

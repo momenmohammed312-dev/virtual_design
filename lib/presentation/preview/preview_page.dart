@@ -933,9 +933,9 @@ class PreviewPage extends StatelessWidget {
           _buildTuningSlider(
             label: 'Corner Preservation',
             value: controller.cornerThreshold,
-            min: 120,
-            max: 180,
-            divisions: 60,
+            min: 0,
+            max: 90,
+            divisions: 90,
             description: 'Angles sharper than this will not be smoothed.',
           ),
           const Divider(height: 30),

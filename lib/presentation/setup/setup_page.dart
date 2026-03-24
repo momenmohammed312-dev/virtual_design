@@ -1574,9 +1574,9 @@ class _SetupPageState extends State<SetupPage> {
                         if (isAuto)
                           Slider(
                             value: ctrl.cornerThreshold.value,
-                            min: 120,
-                            max: 180,
-                            divisions: 60,
+                            min: 0,
+                            max: 90,
+                            divisions: 90,
                             onChanged: (val) {
                               ctrl.cornerThreshold.value = val;
                             },
@@ -1615,9 +1615,9 @@ class _SetupPageState extends State<SetupPage> {
                             value: Get.find<SetupController>()
                                 .cornerThreshold
                                 .value,
-                            min: 120,
-                            max: 180,
-                            divisions: 60,
+                            min: 0,
+                            max: 90,
+                            divisions: 90,
                             onChanged: (val) {
                               Get.find<SetupController>()
                                   .cornerThreshold
