@@ -28,8 +28,9 @@ class HalftoneGenerator:
         lpi: int = 55,
         angle: float = 45.0,
         dot_shape: str = "circle",
+        gamma: float = 1.6,
     ) -> List[HalftoneDot]:
-        """Vectorized Halftone Dot generation for speed."""
+        """Vectorized Halftone Dot generation with gamma correction for professional screen printing."""
         gray = self._to_gray(image)
         h, w = gray.shape
         dot_spacing = self.dpi / lpi
@@ -61,12 +62,17 @@ class HalftoneGenerator:
         # 4. Map pixel intensities at these points (using nearest neighbor for speed)
         ix = np.round(px).astype(int)
         iy = np.round(py).astype(int)
-        # Note: ix, iy are already clipped by the mask check above, 
-        # but let's be safe for boundary rounding.
         ix = np.clip(ix, 0, w - 1)
         iy = np.clip(iy, 0, h - 1)
         
-        intensities = 1.0 - (gray[iy, ix] / 255.0)  # Invert: dark areas get bigger dots
+        # Invert: dark areas (low gray) = big dots, light areas = small dots
+        norm = gray[iy, ix] / 255.0
+        
+        # Gamma correction: controls dot growth curve
+        # gamma > 1.0 = dots grow faster in shadows (more ink in dark areas)
+        # gamma < 1.0 = dots grow faster in highlights
+        intensities = (1.0 - norm) ** (1.0 / gamma)
+        
         radii = intensities * (dot_spacing / 2.0) * 0.95
 
         # 5. Build dot list
@@ -87,13 +93,14 @@ class HalftoneGenerator:
         angle: float = 45.0,
         dot_shape: Literal["round", "square", "ellipse"] = "round",
         dpi: Optional[int] = None,
+        gamma: float = 1.6,
     ) -> np.ndarray:
-        """Generate halftone as binary numpy array. Angle is now properly applied."""
-        print(f"      [Halftone] raster (LPI:{lpi}, angle:{angle}°, {dot_shape})", flush=True)
+        """Generate halftone as binary numpy array. Gamma controls dot growth curve."""
         gray = self._to_gray(image)
         shape_map = {"round": "circle", "square": "square", "ellipse": "circle"}
         dots = self.generate_vector_dots(gray, lpi=lpi, angle=angle,
-                                         dot_shape=shape_map.get(dot_shape, "circle"))
+                                         dot_shape=shape_map.get(dot_shape, "circle"),
+                                         gamma=gamma)
         return self._rasterize(dots, gray.shape)
 
     def floyd_steinberg_dithering(self, gray: np.ndarray) -> np.ndarray:

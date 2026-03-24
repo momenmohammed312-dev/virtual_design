@@ -267,6 +267,29 @@ def step0_auto_crop(image: np.ndarray) -> np.ndarray:
         return image
 
 
+def step1_5_preprocess(image: np.ndarray) -> np.ndarray:
+    """
+    Pre-processing: sharpen + contrast boost for better color separation.
+    - Sharpen: enhances edges and details
+    - Contrast boost: makes colors more distinct for K-means
+    """
+    _step(1.5, "Pre-processing (sharpen + contrast)")
+    
+    # 1. Sharpen: Laplacian kernel for edge enhancement
+    sharpen_kernel = np.array([[0, -1, 0],
+                               [-1,  5, -1],
+                               [0, -1, 0]], dtype=np.float32)
+    sharpened = cv2.filter2D(image, -1, sharpen_kernel)
+    
+    # 2. Contrast boost: alpha=1.3 for moderate enhancement
+    alpha = 1.3  # contrast control (1.0 = no change)
+    beta = 0     # brightness control (0 = no change)
+    contrasted = cv2.convertScaleAbs(sharpened, alpha=alpha, beta=beta)
+    
+    logger.info(f"  Applied sharpen + contrast (alpha={alpha})")
+    return contrasted
+
+
 def step2_separate_colors(
     image: np.ndarray,
     num_colors: int,
@@ -339,7 +362,7 @@ def _apply_image_type_defaults(args: argparse.Namespace) -> None:
 
 
 def step5_halftone(masks: list, args: argparse.Namespace) -> list:
-    """Generate halftone patterns for screen printing."""
+    """Generate halftone patterns for screen printing with gamma correction."""
     is_halftone_enabled = args.halftone and not getattr(args, 'skip_halftone', False)
     _step(5, "Halftone generation" if is_halftone_enabled else "Halftone (skipped)")
     
@@ -356,6 +379,10 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
     # Standard CMYK angles for best results (avoid moiré patterns)
     # Cyan: 15°, Magenta: 75°, Yellow: 0°, Black: 45°
     cmyk_angles = [15.0, 75.0, 0.0, 45.0]
+    
+    # Gamma correction: controls dot growth curve
+    # 1.6 = standard for screen printing (dots grow faster in shadows)
+    halftone_gamma = 1.6
     
     try:
         generator = HalftoneGenerator()
@@ -384,9 +411,10 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
                 
                 # Use CMYK angle for this color index, fallback to default
                 angle = cmyk_angles[i] if i < len(cmyk_angles) else args.angle
-                ht = generator.generate(enhanced, lpi=effective_lpi, angle=angle, dot_shape=args.dot_shape, dpi=args.dpi)
+                ht = generator.generate(enhanced, lpi=effective_lpi, angle=angle, 
+                                       dot_shape=args.dot_shape, dpi=args.dpi, gamma=halftone_gamma)
                 result.append(ht)
-                logger.info(f"  Halftoned mask {i+1} ({coverage_percentage:.1f}% coverage) angle={angle}° LPI={effective_lpi} CLAHE=ON")
+                logger.info(f"  Halftoned mask {i+1} ({coverage_percentage:.1f}%) angle={angle}° LPI={effective_lpi} gamma={halftone_gamma}")
             
             overall = ((5 - 1) + (i + 1) / total) / TOTAL_STEPS
             _progress(overall, f"Processed {i+1}/{total} (solid: {coverage_percentage:.1f}%)")
@@ -1028,6 +1056,9 @@ def main() -> int:
         # Step 1.5 — Auto Crop (Senior Optimization)
         if args.auto_crop:
             image = step0_auto_crop(image)
+
+        # Step 1.75 — Pre-processing (sharpen + contrast boost)
+        image = step1_5_preprocess(image)
 
         # Step 2 — Color Separation
         separation_result = step2_separate_colors(

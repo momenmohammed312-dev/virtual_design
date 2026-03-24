@@ -108,33 +108,37 @@ class MaskGenerator:
 
     def _smart_smooth_mask(self, mask: np.ndarray) -> np.ndarray:
         """
-        خوارزمية النعومة الفائقة (Anti-Aliasing Engine)
-        تحول أي نص "مشرشر" لخط ناعم جداً كأنه فيكتور.
+        Vector-like smoothing for clean edges.
+        Uses contour approximation (epsilon) for sharp, vector-quality edges.
         
-        الخطوات:
-        1. تكبير الصورة 3x لزيادة الدقة الرياضية (Super-Sampling)
-        2. تنعيم الحواف المشرشرة (Gaussian Blur)
-        3. إعادة الكبس (Threshold) عند ليفل عالي لحافة حادة
-        4. العودة للحجم الأصلي بدقة عالية
+        This is better than super-sampling for text/logos because:
+        - Preserves sharp corners
+        - Produces clean binary edges
+        - No anti-aliasing artifacts
         """
-        h, w = mask.shape[:2]
+        # 1. Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # 1. Super-Sampling: تكبير 3x لزيادة الدقة الرياضية
-        big_mask = cv2.resize(mask, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
+        # 2. Create clean output mask
+        smooth = np.zeros_like(mask)
         
-        # 2. Gaussian Blur: تنعيم درجات السلم بتاعة البكسلات
-        smoothed = cv2.GaussianBlur(big_mask, (5, 5), 0)
+        # 3. Draw contours with epsilon simplification
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 20:  # Skip tiny contours (noise)
+                continue
+            
+            # Epsilon: 1% of perimeter = moderate simplification
+            epsilon = 0.01 * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            
+            # Draw filled contour
+            cv2.drawContours(smooth, [approx], -1, 255, -1)
         
-        # 3. High Threshold: كبس عند 150 لحافة حادة ونظيفة
-        _, sharp = cv2.threshold(smoothed, 150, 255, cv2.THRESH_BINARY)
+        # 4. Final threshold for clean binary
+        _, smooth = cv2.threshold(smooth, 127, 255, cv2.THRESH_BINARY)
         
-        # 4. Area Downscale: العودة للحجم الأصلي مع anti-aliasing طبيعي
-        final = cv2.resize(sharp, (w, h), interpolation=cv2.INTER_AREA)
-        
-        # 5. Final threshold لضمان binary clean
-        _, final = cv2.threshold(final, 127, 255, cv2.THRESH_BINARY)
-        
-        return final
+        return smooth
 
     def _remove_small_components(
         self, mask: np.ndarray, min_area: int
