@@ -87,21 +87,54 @@ class MaskGenerator:
         تنظيف الـ mask من الضوضاء الصغيرة والفراغات.
         min_area=20 لحماية النقاط العربية (dots, hamza) اللي بتوصل 20-80px.
         """
+        # 1. Smart smoothing: Super-sampling + blur + threshold for anti-aliased edges
+        mask = self._smart_smooth_mask(mask)
+        
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
         )
 
-        # إزالة النقاط الصغيرة المتناثرة (noise)
+        # 2. إزالة النقاط الصغيرة المتناثرة (noise)
         cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-        # سد الفراغات الصغيرة داخل الأشكال
+        # 3. سد الفراغات الصغيرة داخل الأشكال
         cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
 
-        # إزالة connected components صغيرة جداً
+        # 4. إزالة connected components صغيرة جداً
         if min_area > 0:
             cleaned = self._remove_small_components(cleaned, min_area)
 
         return cleaned
+
+    def _smart_smooth_mask(self, mask: np.ndarray) -> np.ndarray:
+        """
+        خوارزمية النعومة الفائقة (Anti-Aliasing Engine)
+        تحول أي نص "مشرشر" لخط ناعم جداً كأنه فيكتور.
+        
+        الخطوات:
+        1. تكبير الصورة 3x لزيادة الدقة الرياضية (Super-Sampling)
+        2. تنعيم الحواف المشرشرة (Gaussian Blur)
+        3. إعادة الكبس (Threshold) عند ليفل عالي لحافة حادة
+        4. العودة للحجم الأصلي بدقة عالية
+        """
+        h, w = mask.shape[:2]
+        
+        # 1. Super-Sampling: تكبير 3x لزيادة الدقة الرياضية
+        big_mask = cv2.resize(mask, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
+        
+        # 2. Gaussian Blur: تنعيم درجات السلم بتاعة البكسلات
+        smoothed = cv2.GaussianBlur(big_mask, (5, 5), 0)
+        
+        # 3. High Threshold: كبس عند 150 لحافة حادة ونظيفة
+        _, sharp = cv2.threshold(smoothed, 150, 255, cv2.THRESH_BINARY)
+        
+        # 4. Area Downscale: العودة للحجم الأصلي مع anti-aliasing طبيعي
+        final = cv2.resize(sharp, (w, h), interpolation=cv2.INTER_AREA)
+        
+        # 5. Final threshold لضمان binary clean
+        _, final = cv2.threshold(final, 127, 255, cv2.THRESH_BINARY)
+        
+        return final
 
     def _remove_small_components(
         self, mask: np.ndarray, min_area: int
