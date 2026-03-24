@@ -128,8 +128,8 @@ class MaskGenerator:
             if area < 20:  # Skip tiny contours (noise)
                 continue
             
-            # Epsilon: 1% of perimeter = moderate simplification
-            epsilon = 0.01 * cv2.arcLength(cnt, True)
+            # Epsilon: 0.5% of perimeter = preserves more detail
+            epsilon = 0.005 * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
             
             # Draw filled contour

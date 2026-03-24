@@ -532,15 +532,14 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
             safe_thresh = 45  # low threshold to keep tiny halftone dots
             _, binary_mask = cv2.threshold(mask, safe_thresh, 255, cv2.THRESH_BINARY)
         
-        # --- Inversion Guard (Coverage-based, safe for simple logos) ---
-        # Only invert if design coverage is suspiciously low (< 2%)
-        # This catches cases where mask generation produced inverted output
-        # Do NOT invert based on white/black ratio — simple logos naturally have 90%+ white
+        # --- Inversion Guard (Coverage-based, safe for film polarity) ---
+        # In film polarity: design=BLACK (0), background=WHITE (255)
+        # Only invert if design (black) coverage is suspiciously low (< 2%)
         total_px = binary_mask.size
-        design_coverage = np.sum(binary_mask == 255) / total_px
+        design_coverage = np.sum(binary_mask == 0) / total_px  # Count BLACK pixels as design
         
         if design_coverage < 0.02:
-            logger.warning(f"  [Guard:Inversion] Very low coverage ({design_coverage:.1%}), inverting mask {i+1}")
+            logger.warning(f"  [Guard:Inversion] Very low design coverage ({design_coverage:.1%}), inverting mask {i+1}")
             binary_mask = cv2.bitwise_not(binary_mask)
         
         # Noise removal (Area opening)
@@ -983,7 +982,7 @@ def parse_args() -> argparse.Namespace:
     )
     
     # Advanced Tuning (Phase 8 Senior Optimizations)
-    parser.add_argument("--global-threshold", type=int, default=127, help="Global threshold for solid masks (0-255)")
+    parser.add_argument("--global-threshold", type=int, default=200, help="Global threshold for solid masks (0-255)")
     parser.add_argument("--smoothing-factor", type=float, default=0.3, help="Bezier smoothing factor (0-1.0)")
     parser.add_argument("--corner-threshold", type=float, default=45.0, help="Angle threshold to preserve sharp corners (degrees)")
     parser.add_argument("--noise-removal", type=int, default=3, help="Minimum contour area to keep (pixels)")
@@ -1014,17 +1013,17 @@ def main() -> int:
     img_type = getattr(args, 'image_type', 'auto')
 
     if img_type == 'simple':
-        args.smoothing_factor = 0.25
+        args.smoothing_factor = 0.15
         args.corner_threshold = 45.0
         args.global_threshold = 160
         logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'mixed':
-        args.smoothing_factor = 0.25
+        args.smoothing_factor = 0.20
         args.corner_threshold = 45.0
         args.global_threshold = 200
         logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'complex':
-        args.smoothing_factor = 0.30
+        args.smoothing_factor = 0.25
         args.corner_threshold = 50.0
         args.global_threshold = 200
         logger.info("[ImageType] Complex: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))

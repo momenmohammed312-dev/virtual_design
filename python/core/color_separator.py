@@ -142,6 +142,31 @@ class ColorSeparator:
         if auto_detect:
             num_colors = self.auto_detect_color_count(image, white_threshold=white_threshold)
         
+        # Special case: single color — use adaptive threshold instead of K-means
+        if num_colors == 1:
+            logger.info(f"[ColorSeparator] Single color mode: using adaptive threshold (no K-means)")
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            # Use Otsu for automatic threshold
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            
+            h, w = gray.shape
+            label_map = np.zeros((h, w), dtype=np.int32)
+            label_map[binary == 255] = 0  # foreground color index
+            
+            # Find dominant color from foreground pixels
+            fg_pixels = image[binary == 255]
+            if len(fg_pixels) > 0:
+                dominant_color = tuple(int(c) for c in np.mean(fg_pixels, axis=0))
+            else:
+                dominant_color = (0, 0, 0)
+            
+            return {
+                'label_map': label_map,
+                'colors': [dominant_color],
+                'color_names': ['color_01'],
+                'bg_mask': binary == 0,
+            }
+        
         logger.info(f"[ColorSeparator] Starting: {num_colors} colors, LAB={use_lab}, image={image.shape}")
 
         # تحويل BGR → RGB
