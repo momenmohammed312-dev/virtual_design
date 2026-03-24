@@ -33,7 +33,6 @@ class PreviewPage extends StatelessWidget {
                       children: [
                         _buildProgressSteps(),
                         const SizedBox(height: 30),
-
                         const Text(
                           'Print Preview',
                           style: TextStyle(
@@ -43,7 +42,6 @@ class PreviewPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 10),
-
                         const Text(
                           'Review your color separations and films before exporting.',
                           style: TextStyle(
@@ -52,7 +50,6 @@ class PreviewPage extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 30),
-
                         Expanded(
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -72,7 +69,6 @@ class PreviewPage extends StatelessWidget {
                             ],
                           ),
                         ),
-
                         const SizedBox(height: 20),
                         _buildBottomActions(controller),
                       ],
@@ -237,14 +233,19 @@ class PreviewPage extends StatelessWidget {
                                 (index) {
                                   return Obx(() {
                                     final isSelected =
-                                        controller.selectedFilmIndex.value == index;
+                                        controller.selectedFilmIndex.value ==
+                                            index;
                                     return AnimatedContainer(
-                                      duration: const Duration(milliseconds: 200),
-                                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                                      duration:
+                                          const Duration(milliseconds: 200),
+                                      margin: const EdgeInsets.symmetric(
+                                          horizontal: 4),
                                       width: isSelected ? 24 : 12,
                                       height: 12,
                                       decoration: BoxDecoration(
-                                        color: isSelected ? primaryBlue : Colors.grey.shade300,
+                                        color: isSelected
+                                            ? primaryBlue
+                                            : Colors.grey.shade300,
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                     );
@@ -267,7 +268,8 @@ class PreviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildFilmPreview(PreviewController controller, String path, int index) {
+  Widget _buildFilmPreview(
+      PreviewController controller, String path, int index) {
     if (!File(path).existsSync()) {
       return Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -280,21 +282,40 @@ class PreviewPage extends StatelessWidget {
     }
 
     return Obx(() {
-      final isInverted = controller.isLayerInverted.length > index ? controller.isLayerInverted[index] : false;
+      final isInverted = controller.isLayerInverted.length > index
+          ? controller.isLayerInverted[index]
+          : false;
       final tShirtCol = controller.tshirtColor.value;
       final showSim = controller.showTshirtSimulation.value;
 
       // matrix to invert colors: output = 255 - input
       const invertMatrix = <double>[
-        -1,  0,  0, 0, 255,
-         0, -1,  0, 0, 255,
-         0,  0, -1, 0, 255,
-         0,  0,  0, 1,   0,
+        -1,
+        0,
+        0,
+        0,
+        255,
+        0,
+        -1,
+        0,
+        0,
+        255,
+        0,
+        0,
+        -1,
+        0,
+        255,
+        0,
+        0,
+        0,
+        1,
+        0,
       ];
 
       Widget image = Image.file(
         File(path),
-        key: ValueKey('${path}_${controller.lastUpdateTimestamp.value}'), // Cache Busting (Phase 10)
+        key: ValueKey(
+            '${path}_${controller.lastUpdateTimestamp.value}'), // Cache Busting (Phase 10)
         fit: BoxFit.contain,
         gaplessPlayback: true, // Smoother transitions (Phase 11)
         errorBuilder: (context, error, stackTrace) => const Icon(Icons.error),
@@ -367,7 +388,6 @@ class PreviewPage extends StatelessWidget {
               ],
             ),
           ),
-
           Expanded(
             child: Obx(() {
               if (controller.previewPaths.isEmpty) {
@@ -414,14 +434,16 @@ class PreviewPage extends StatelessWidget {
                               borderRadius: BorderRadius.circular(6),
                               border: Border.all(color: Colors.grey.shade300),
                             ),
-                            child: _buildColorSwatchOrThumb(controller, index, path),
+                            child: _buildColorSwatchOrThumb(
+                                controller, index, path),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _buildFilmColorName(controller, index, isSelected),
+                                _buildFilmColorName(
+                                    controller, index, isSelected),
                                 _buildFilmDetails(controller, index),
                               ],
                             ),
@@ -446,7 +468,6 @@ class PreviewPage extends StatelessWidget {
               );
             }),
           ),
-
           Container(
             padding: const EdgeInsets.all(15),
             decoration: const BoxDecoration(
@@ -578,8 +599,8 @@ class PreviewPage extends StatelessWidget {
             color: isComplete
                 ? Colors.green
                 : isActive
-                ? primaryBlue
-                : const Color(0xFFE5E7EB),
+                    ? primaryBlue
+                    : const Color(0xFFE5E7EB),
           ),
           child: Center(
             child: isComplete
@@ -764,13 +785,14 @@ class PreviewPage extends StatelessWidget {
 
   // ─── Helpers for Color Layers ──────────────────────────────────────────────
 
-  Widget _buildColorSwatchOrThumb(PreviewController controller, int index, String path) {
+  Widget _buildColorSwatchOrThumb(
+      PreviewController controller, int index, String path) {
     // If we have color info, show a clean swatch
     if (controller.colorInfo.length > index) {
       final colorData = controller.colorInfo[index];
       final hex = colorData['hex'] as String;
       final color = _hexToColor(hex);
-      
+
       return Container(
         decoration: BoxDecoration(
           color: color,
@@ -778,10 +800,11 @@ class PreviewPage extends StatelessWidget {
         ),
       );
     }
-    
+
     // Fallback: show thumbnail
     return Container(
-      key: ValueKey('${path}_${controller.lastUpdateTimestamp.value}'), // Cache Busting (Phase 10)
+      key: ValueKey(
+          '${path}_${controller.lastUpdateTimestamp.value}'), // Cache Busting (Phase 10)
       decoration: BoxDecoration(
         color: Colors.grey.shade300,
         borderRadius: BorderRadius.circular(5),
@@ -793,13 +816,14 @@ class PreviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildFilmColorName(PreviewController controller, int index, bool isSelected) {
+  Widget _buildFilmColorName(
+      PreviewController controller, int index, bool isSelected) {
     String name = 'Film ${index + 1}';
-    
+
     if (controller.colorInfo.length > index) {
       name = controller.colorInfo[index]['name'] ?? name;
     }
-    
+
     return Text(
       name,
       style: TextStyle(
@@ -815,7 +839,7 @@ class PreviewPage extends StatelessWidget {
       final colorData = controller.colorInfo[index];
       final coverage = colorData['percentage'] ?? 0.0;
       final hex = colorData['hex'] ?? '';
-      
+
       return Text(
         '$hex • $coverage% coverage',
         style: const TextStyle(
@@ -824,7 +848,7 @@ class PreviewPage extends StatelessWidget {
         ),
       );
     }
-    
+
     return const Text(
       'Generic Film Layer',
       style: TextStyle(
@@ -891,7 +915,6 @@ class PreviewPage extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
           ),
           const Divider(height: 30),
-          
           _buildTuningSlider(
             label: 'Global Threshold',
             value: controller.globalThreshold,
@@ -899,7 +922,6 @@ class PreviewPage extends StatelessWidget {
             max: 255,
             description: 'Higher values make design thinner/sharper.',
           ),
-          
           _buildTuningSlider(
             label: 'Path Smoothing',
             value: controller.smoothingFactor,
@@ -908,17 +930,15 @@ class PreviewPage extends StatelessWidget {
             divisions: 20,
             description: 'Reduces pixelation jagged edges.',
           ),
-
           _buildTuningSlider(
             label: 'Corner Preservation',
             value: controller.cornerThreshold,
-            min: 0,
-            max: 90,
+            min: 120,
+            max: 180,
+            divisions: 60,
             description: 'Angles sharper than this will not be smoothed.',
           ),
-
           const Divider(height: 30),
-          
           const Text(
             'Film Label',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
@@ -931,7 +951,8 @@ class PreviewPage extends StatelessWidget {
               hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
               filled: true,
               fillColor: const Color(0xFFF9FAFB),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
@@ -948,9 +969,7 @@ class PreviewPage extends StatelessWidget {
             'Custom text printed on each film layer.',
             style: TextStyle(fontSize: 10, color: Colors.grey),
           ),
-
           const Divider(height: 30),
-
           const Text(
             'Layer Overrides',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
@@ -959,59 +978,69 @@ class PreviewPage extends StatelessWidget {
           Obx(() {
             final idx = controller.selectedFilmIndex.value;
             if (controller.isLayerInverted.isEmpty) return const SizedBox();
-            
+
             return Column(
               children: [
                 SwitchListTile(
-                  title: const Text('Invert Image', style: TextStyle(fontSize: 13)),
-                  subtitle: const Text('Black to White / White to Black', style: TextStyle(fontSize: 11)),
+                  title: const Text('Invert Image',
+                      style: TextStyle(fontSize: 13)),
+                  subtitle: const Text('Black to White / White to Black',
+                      style: TextStyle(fontSize: 11)),
                   value: controller.isLayerInverted[idx],
                   onChanged: (val) => controller.isLayerInverted[idx] = val,
                   activeThumbColor: primaryBlue,
                   dense: true,
                 ),
                 SwitchListTile(
-                  title: const Text('Force Solid', style: TextStyle(fontSize: 13)),
-                  subtitle: const Text('Ignore halftones for this layer', style: TextStyle(fontSize: 11)),
+                  title:
+                      const Text('Force Solid', style: TextStyle(fontSize: 13)),
+                  subtitle: const Text('Ignore halftones for this layer',
+                      style: TextStyle(fontSize: 11)),
                   value: controller.isLayerSolid[idx],
                   onChanged: (val) => controller.isLayerSolid[idx] = val,
                   activeThumbColor: primaryBlue,
                   dense: true,
                 ),
                 Obx(() => SwitchListTile(
-                  title: const Text('Force Halftone', style: TextStyle(fontSize: 13)),
-                  subtitle: const Text('Convert everything to dots (Halftone)', style: TextStyle(fontSize: 11)),
-                  value: controller.forceHalftone.value,
-                  onChanged: (val) => controller.forceHalftone.value = val,
-                  activeThumbColor: primaryBlue,
-                  dense: true,
-                )),
+                      title: const Text('Force Halftone',
+                          style: TextStyle(fontSize: 13)),
+                      subtitle: const Text(
+                          'Convert everything to dots (Halftone)',
+                          style: TextStyle(fontSize: 11)),
+                      value: controller.forceHalftone.value,
+                      onChanged: (val) => controller.forceHalftone.value = val,
+                      activeThumbColor: primaryBlue,
+                      dense: true,
+                    )),
                 Obx(() => SwitchListTile(
-                  title: const Text('Auto-Adjust Threshold', style: TextStyle(fontSize: 13)),
-                  subtitle: const Text('Smart adaptive thresholding per film', style: TextStyle(fontSize: 11)),
-                  value: controller.adaptiveThreshold.value,
-                  onChanged: (val) => controller.adaptiveThreshold.value = val,
-                  activeThumbColor: primaryBlue,
-                  dense: true,
-                )),
+                      title: const Text('Auto-Adjust Threshold',
+                          style: TextStyle(fontSize: 13)),
+                      subtitle: const Text(
+                          'Smart adaptive thresholding per film',
+                          style: TextStyle(fontSize: 11)),
+                      value: controller.adaptiveThreshold.value,
+                      onChanged: (val) =>
+                          controller.adaptiveThreshold.value = val,
+                      activeThumbColor: primaryBlue,
+                      dense: true,
+                    )),
               ],
             );
           }),
-
           const Divider(height: 30),
-
           const Text(
             'Simulation (T-Shirt)',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
           Obx(() => SwitchListTile(
-            title: const Text('Show Simulation', style: TextStyle(fontSize: 13)),
-            value: controller.showTshirtSimulation.value,
-            onChanged: (val) => controller.showTshirtSimulation.value = val,
-            activeThumbColor: primaryBlue,
-            dense: true,
-          )),
+                title: const Text('Show Simulation',
+                    style: TextStyle(fontSize: 13)),
+                value: controller.showTshirtSimulation.value,
+                onChanged: (val) => controller.showTshirtSimulation.value = val,
+                activeThumbColor: primaryBlue,
+                dense: true,
+              )),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -1023,23 +1052,29 @@ class PreviewPage extends StatelessWidget {
               _buildColorSeed(controller, Colors.grey),
             ],
           ),
-
           const SizedBox(height: 40),
-          
           SizedBox(
             width: double.infinity,
             child: Obx(() => ElevatedButton.icon(
-              onPressed: controller.isRegenerating.value ? null : controller.regenerateFilms,
-              icon: controller.isRegenerating.value 
-                  ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.refresh, size: 18),
-              label: Text(controller.isRegenerating.value ? 'Regenerating...' : 'Regenerate Films'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryBlue,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 15),
-              ),
-            )),
+                  onPressed: controller.isRegenerating.value
+                      ? null
+                      : controller.regenerateFilms,
+                  icon: controller.isRegenerating.value
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.refresh, size: 18),
+                  label: Text(controller.isRegenerating.value
+                      ? 'Regenerating...'
+                      : 'Regenerate Films'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
+                )),
           ),
           const SizedBox(height: 10),
           const Center(
@@ -1069,22 +1104,36 @@ class PreviewPage extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600)),
               Obx(() => Text(
-                value.value.toInt() == value.value ? value.value.toInt().toString() : value.value.toStringAsFixed(2),
-                style: const TextStyle(fontSize: 13, color: primaryBlue, fontWeight: FontWeight.bold),
-              )),
+                    value.value.toInt() == value.value
+                        ? value.value.toInt().toString()
+                        : value.value.toStringAsFixed(2),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: primaryBlue,
+                        fontWeight: FontWeight.bold),
+                  )),
             ],
           ),
-          Obx(() => Slider(
-            value: value.value,
-            min: min,
-            max: max,
-            divisions: divisions,
-            onChanged: (v) => value.value = v,
-            activeColor: primaryBlue,
-          )),
-          Text(description, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+          Obx(() {
+            final safeValue = value.value.clamp(min, max).toDouble();
+            if (safeValue != value.value) {
+              value.value = safeValue;
+            }
+            return Slider(
+              value: safeValue,
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChanged: (v) => value.value = v,
+              activeColor: primaryBlue,
+            );
+          }),
+          Text(description,
+              style: const TextStyle(fontSize: 10, color: Colors.grey)),
         ],
       ),
     );
@@ -1106,7 +1155,9 @@ class PreviewPage extends StatelessWidget {
               width: isSelected ? 3 : 1,
             ),
           ),
-          child: isSelected ? const Icon(Icons.check, size: 15, color: Colors.white) : null,
+          child: isSelected
+              ? const Icon(Icons.check, size: 15, color: Colors.white)
+              : null,
         );
       }),
     );

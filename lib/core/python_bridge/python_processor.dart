@@ -116,16 +116,15 @@ class PythonProcessor {
     final stdoutCompleter = Completer<void>();
     final stderrCompleter = Completer<void>();
 
-    // RegExp for robust progress parsing (handles Windows paths with colons)
     final progressRegex = RegExp(r'^PROGRESS:(0\.\d+|1\.0+):(.+)$');
 
+    // RegExp for robust progress parsing (handles Windows paths with colons)
     process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
       (line) {
-        // BUG-10 FIX: Use RegExp instead of split(':') for robust parsing
-        // This handles Windows paths like PROGRESS:0.50:Loading C:\Users\...
+        // New IPC fine-grained progress format: PROGRESS:<0.0-1.0>:message
         if (line.startsWith('PROGRESS:')) {
           if (onProgress != null) {
             final match = progressRegex.firstMatch(line);
@@ -187,17 +186,16 @@ class PythonProcessor {
       );
     } catch (e) {
       process.kill();
-      return ProcessResult.failure('Process error: $e');
+      await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
+      return ProcessResult.failure('Process timeout: $e');
     }
+    await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
 
     if (exitCode == -99) {
       return ProcessResult.failure(
-        'TIMEOUT:Processing took too long (>${timeout.inMinutes} min). '
-        'Try with a smaller image or fewer colors.',
+        'TIMEOUT:Processing took too long (>${timeout.inMinutes} min).',
       );
     }
-
-    await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
 
     debugPrint('[PythonProcessor] Exit code: $exitCode');
     debugPrint('[PythonProcessor] Output dir from IPC: $outputDirectory');

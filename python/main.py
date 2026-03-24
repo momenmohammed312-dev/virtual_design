@@ -724,7 +724,18 @@ def step9_export(
             # 1. Save PNG for UI preview (Pure Binary)
             png_filename = f"film_{i+1}.png"
             png_filepath = os.path.join(output_dir, png_filename)
+            # Ensure consistent film polarity for previews: black artwork (ink) on white background (paper)
+            # Internally, vector tracing uses design=255, but film output is 0-ink / 255-paper.
+            # Save PNG in final film polarity to match PDFs.
             preview_mask = mask.copy()
+            if len(preview_mask.shape) == 3:
+                preview_gray = cv2.cvtColor(preview_mask, cv2.COLOR_BGR2GRAY)
+            else:
+                preview_gray = preview_mask
+            # If majority pixels are black, it's likely already film polarity; otherwise invert.
+            black_ratio = float(np.sum(preview_gray < 128)) / float(preview_gray.size)
+            if black_ratio < 0.50:
+                preview_mask = cv2.bitwise_not(preview_mask)
             # Save PNG with correct DPI metadata (cv2.imwrite ignores DPI)
             try:
                 from PIL import Image as _PIL
@@ -762,8 +773,10 @@ def step9_export(
                 pdf_filename = f"film_{i+1}.pdf"
                 pdf_filepath = os.path.join(output_dir, pdf_filename)
                 
-                # Re-invert to get design=255 for vector_exporter
-                ink_mask_pdf = cv2.bitwise_not(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+                # Vector exporter expects design pixels as 255
+                ink_mask_pdf = cv2.bitwise_not(
+                    mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+                )
                 
                 export_vector_pdf(
                     masks=[ink_mask_pdf],
