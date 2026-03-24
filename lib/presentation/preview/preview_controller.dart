@@ -43,9 +43,8 @@ class PreviewController extends GetxController {
 
   // --- Adjustment State (Senior Perspective) ---
   final RxDouble globalThreshold = 127.0.obs;
-  final RxDouble smoothingFactor = 0.35
-      .obs; // Phase 25: Increased default from 0.25 to 0.35 for smoother logos
-  final RxDouble cornerThreshold = 45.0.obs;
+  final RxDouble smoothingFactor = 0.25.obs; // Match setup controller default
+  final RxDouble cornerThreshold = 130.0.obs; // Match setup controller default
   final RxInt noiseRemoval = 10.obs;
   final RxBool forceHalftone = false.obs;
   final RxBool adaptiveThreshold = false.obs;

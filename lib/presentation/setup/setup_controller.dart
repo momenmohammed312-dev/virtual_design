@@ -86,15 +86,15 @@ class SetupController extends GetxController {
     ever(selectedImageType, (ps.ImageType type) {
       switch (type) {
         case ps.ImageType.simple:
-          smoothingFactor.value = 0.10;
-          cornerThreshold.value = 140.0;
+          smoothingFactor.value = 0.20;
+          cornerThreshold.value = 150.0;
           break;
         case ps.ImageType.mixed:
-          smoothingFactor.value = 0.15;
+          smoothingFactor.value = 0.20;
           cornerThreshold.value = 150.0;
           break;
         case ps.ImageType.complex:
-          smoothingFactor.value = 0.25;
+          smoothingFactor.value = 0.30;
           cornerThreshold.value = 160.0;
           break;
         case ps.ImageType.auto:
