@@ -160,11 +160,15 @@ class ColorSeparator:
             else:
                 dominant_color = (0, 0, 0)
             
+            bg_mask = binary == 0
+            
             return {
                 'label_map': label_map,
                 'colors': [dominant_color],
                 'color_names': ['color_01'],
-                'bg_mask': binary == 0,
+                'image': image,
+                'num_colors': 1,
+                'bg_mask': bg_mask,
             }
         
         logger.info(f"[ColorSeparator] Starting: {num_colors} colors, LAB={use_lab}, image={image.shape}")
