@@ -645,21 +645,32 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
                 label_scale, (0, 0, 0), 1, cv2.LINE_AA
             )
 
-        # Add "Developed By MO2" branding — safe coordinates based on actual text size
+        # Add "Developed By MO2" branding — bottom-right corner, clearly visible
         h_brand, w_brand = marked.shape[:2]
         brand_text = "Developed By MO2"
-        brand_scale = max(0.5, min(1.0, w_brand / 2000))
-        (tw, th), _ = cv2.getTextSize(brand_text, cv2.FONT_HERSHEY_SIMPLEX, brand_scale, 1)
-        brand_margin = max(40, int(w_brand * 0.03))
+        # Use a fixed readable scale (not too small)
+        brand_scale = 0.7
+        thickness = 2
+        (tw, th), _ = cv2.getTextSize(brand_text, cv2.FONT_HERSHEY_SIMPLEX, brand_scale, thickness)
+        # Position: bottom-right with safe margin
+        brand_margin = max(50, int(w_brand * 0.04))
         x_pos = w_brand - tw - brand_margin
         y_pos = h_brand - brand_margin
+        
+        # Draw white background rectangle for readability
+        padding = 8
+        cv2.rectangle(marked, (x_pos - padding, y_pos - th - padding), 
+                      (x_pos + tw + padding, y_pos + padding), 255, -1)
+        
+        # Draw black text
         cv2.putText(
             marked, 
             brand_text, 
             (x_pos, y_pos),
             cv2.FONT_HERSHEY_SIMPLEX, 
-            brand_scale, (0, 0, 0), 1, cv2.LINE_AA
+            brand_scale, (0, 0, 0), thickness, cv2.LINE_AA
         )
+        logger.info(f"  Added branding: '{brand_text}' at ({x_pos}, {y_pos}) on {w_brand}x{h_brand}")
 
         result_masks.append(marked)
         _progress(((8-1) + (idx+1)/len(masks)) / TOTAL_STEPS, f"Marks {idx+1}/ {len(masks)}")
