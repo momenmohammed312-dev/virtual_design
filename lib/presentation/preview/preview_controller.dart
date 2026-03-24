@@ -281,13 +281,9 @@ class PreviewController extends GetxController {
         if (previewPaths.isNotEmpty) {
           selectedFilmIndex.value = 0;
 
-          // Initialize layer toggles if empty
-          if (isLayerInverted.isEmpty) {
-            isLayerInverted.value = List.filled(previewPaths.length, false);
-          }
-          if (isLayerSolid.isEmpty) {
-            isLayerSolid.value = List.filled(previewPaths.length, false);
-          }
+          // Always reinitialize layer toggles to default (false) for new processing
+          isLayerInverted.value = List.filled(previewPaths.length, false);
+          isLayerSolid.value = List.filled(previewPaths.length, false);
         }
 
         // Trigger cache bust (Phase 10) - Always update to force UI refresh
