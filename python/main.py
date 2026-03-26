@@ -576,8 +576,18 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
             
             if skip_upscale_blur:
                 # Direct threshold with threshold_val — sharp, no smoothing
-                _, binary_mask = cv2.threshold(mask, threshold_val, 255, cv2.THRESH_BINARY)
-                logger.info(f"  [Solid] Mask {i+1}: sharp binarization (no upscale-blur) [image_type={img_type}, smooth={cli_smooth:.2f}]")
+                if binarizer is not None:
+                    # SOLID: Smart adaptive threshold — picks best method per mask
+                    # الـ mask جاي بـ film polarity (design=0, bg=255)
+                    # smart_threshold محتاج يشتغل على الـ ink pixels مش الـ background
+                    # نعكس مؤقتاً عشان يحلل الـ design صح
+                    inv_mask = cv2.bitwise_not(mask)
+                    binary_inv = binarizer.smart_threshold(inv_mask)
+                    binary_mask = cv2.bitwise_not(binary_inv)
+                    logger.info(f"  [Solid] Mask {i+1}: SmartThreshold applied (film polarity corrected)")
+                else:
+                    _, binary_mask = cv2.threshold(mask, threshold_val, 255, cv2.THRESH_BINARY)
+                    logger.info(f"  [Solid] Mask {i+1}: sharp binarization (no upscale-blur) [image_type={img_type}, smooth={cli_smooth:.2f}]")
             else:
                 # Standard: upscale 2x + blur(3x3) + threshold + downscale
                 h_m, w_m = mask.shape[:2]
@@ -602,15 +612,18 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
             logger.warning(f"  [Guard:Inversion] Inverting mask {i+1} (coverage={design_coverage:.1%})")
             binary_mask = cv2.bitwise_not(binary_mask)
         
-        # Noise removal (Area opening)
+        # Noise removal (Area opening) — يشتغل على الـ design pixels (الأبيض بعد الـ invert للـ CC)
         if noise_min_area > 0:
+            # connectedComponents يشتغل على الأبيض — الـ design عندنا أسود (0)
+            # نعكس مؤقتاً للـ noise removal فقط
+            inv_for_cc = cv2.bitwise_not(binary_mask)
             num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-                binary_mask, 8, cv2.CV_32S
+                inv_for_cc, 8, cv2.CV_32S
             )
-            clean = np.zeros_like(binary_mask)
+            clean = np.full_like(binary_mask, 255)  # ابدأ بخلفية بيضاء
             for lbl in range(1, num_labels):
                 if stats[lbl, cv2.CC_STAT_AREA] >= noise_min_area:
-                    clean[labels == lbl] = 255
+                    clean[labels == lbl] = 0  # الـ design أسود
             binary_mask = clean
         
         result.append(binary_mask)
@@ -1148,7 +1161,8 @@ def main() -> int:
             args.smoothing_factor = analysis.smoothing_factor
             args.corner_threshold = analysis.corner_threshold
             args.global_threshold = analysis.global_threshold
-            args.halftone = analysis.use_halftone
+            # ❌ لا تـoverride الـ halftone — المستخدم هو اللي بيقرر solid أو halftone
+            # args.halftone = analysis.use_halftone  
             args.lpi = analysis.lpi
             
             # Store image class for later use in pipeline steps

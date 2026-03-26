@@ -130,6 +130,98 @@ class Binarizer:
             )
             return binary, 'adaptive_gaussian', 0
     
+    def smart_threshold(self, mask: np.ndarray) -> np.ndarray:
+        """
+        Adaptive threshold selection based on image histogram analysis.
+        Automatically picks the best method for each mask.
+
+        Decision logic:
+          1. Non-uniform lighting   → Adaptive Gaussian
+          2. Very small foreground  → Triangle method
+          3. Clear bimodal hist     → Otsu
+          4. Everything else        → Adaptive Mean (fallback)
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if len(mask.shape) == 3:
+            gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = mask.copy()
+
+        total = gray.size
+
+        # ── 1. Histogram analysis ──────────────────────────────────────────
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        dark_ratio  = float(np.sum(hist[:85]))  / total   # 0-84
+        light_ratio = float(np.sum(hist[170:])) / total   # 170-255
+        mid_ratio   = 1.0 - dark_ratio - light_ratio
+
+        # ── 2. Foreground ratio via quick Otsu ────────────────────────────
+        otsu_val, _ = cv2.threshold(gray, 0, 255,
+                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        fg_ratio = float(np.sum(gray < otsu_val)) / total
+
+        # ── 3. Lighting uniformity (quad-mean variance) ───────────────────
+        h, w = gray.shape
+        q = [
+            float(gray[:h//2, :w//2].mean()),
+            float(gray[:h//2, w//2:].mean()),
+            float(gray[h//2:, :w//2].mean()),
+            float(gray[h//2:, w//2:].mean()),
+        ]
+        lighting_variance = float(np.var(q))
+
+        # ── 4. Decision ───────────────────────────────────────────────────
+        if lighting_variance > 500:
+            # Non-uniform lighting → Adaptive Gaussian
+            result = cv2.adaptiveThreshold(
+                gray, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY, 31, 5
+            )
+            logger.info(
+                f"[SmartThreshold] Adaptive Gaussian "
+                f"(lighting_var={lighting_variance:.0f})"
+            )
+
+        elif fg_ratio < 0.05:
+            # Very small foreground (logo / watermark) → Triangle
+            _, result = cv2.threshold(
+                gray, 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE
+            )
+            logger.info(
+                f"[SmartThreshold] Triangle "
+                f"(fg_ratio={fg_ratio:.1%})"
+            )
+
+        elif mid_ratio < 0.15 and (dark_ratio > 0.1 or light_ratio > 0.1):
+            # Clear bimodal histogram → Otsu
+            _, result = cv2.threshold(
+                gray, 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            )
+            logger.info(
+                f"[SmartThreshold] Otsu "
+                f"(mid={mid_ratio:.1%}, dark={dark_ratio:.1%}, "
+                f"light={light_ratio:.1%})"
+            )
+
+        else:
+            # Mixed / unclear → Adaptive Mean
+            result = cv2.adaptiveThreshold(
+                gray, 255,
+                cv2.ADAPTIVE_THRESH_MEAN_C,
+                cv2.THRESH_BINARY, 21, 3
+            )
+            logger.info(
+                f"[SmartThreshold] Adaptive Mean (fallback) "
+                f"(mid={mid_ratio:.1%})"
+            )
+
+        return result
+
     def remove_noise(self, 
                      binary: np.ndarray, 
                      kernel_size: int = 3) -> np.ndarray:

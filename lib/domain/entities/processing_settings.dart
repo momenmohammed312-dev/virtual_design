@@ -111,7 +111,7 @@ class ProcessingSettings {
     this.paperWidthCm = 21.0,
     this.paperHeightCm = 29.7,
     // Advanced Tuning Defaults
-    this.globalThreshold = 127.0,
+    this.globalThreshold = 200.0,
     this.smoothingFactor = 0.25,
     this.cornerThreshold = 45.0,
     this.noiseRemoval = 10,
@@ -365,7 +365,7 @@ class ProcessingSettings {
           (e) => e.name == json['meshPreviewMode'],
           orElse: () => MeshPreviewMode.automatic,
         ),
-        globalThreshold: (json['globalThreshold'] as num?)?.toDouble() ?? 127.0,
+        globalThreshold: (json['globalThreshold'] as num?)?.toDouble() ?? 200.0,
         smoothingFactor: (json['smoothingFactor'] as num?)?.toDouble() ?? 0.25,
         cornerThreshold: (json['cornerThreshold'] as num?)?.toDouble() ?? 45.0,
         noiseRemoval: (json['noiseRemoval'] as int?) ?? 10,

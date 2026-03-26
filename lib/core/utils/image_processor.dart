@@ -91,18 +91,15 @@ class ImageProcessor {
     img.Image rgbImage = decoded;
     if (decoded.numChannels > 3) {
       print('Converting RGBA to RGB (compositing on bg: $bgR,$bgG,$bgB)...');
-      rgbImage = img.Image(width: decoded.width, height: decoded.height);
-      for (int y = 0; y < decoded.height; y++) {
-        for (int x = 0; x < decoded.width; x++) {
-          final pixel = decoded.getPixel(x, y);
-          final a = pixel.a.toDouble() / 255.0;
-          // Alpha-composite onto the background color
-          final r = (pixel.r * a + bgR * (1 - a)).round().clamp(0, 255);
-          final g = (pixel.g * a + bgG * (1 - a)).round().clamp(0, 255);
-          final b = (pixel.b * a + bgB * (1 - a)).round().clamp(0, 255);
-          rgbImage.setPixel(x, y, img.ColorRgb8(r, g, b));
-        }
-      }
+      // Use built-in compositeImage — أأمن من manual loop
+      final background = img.Image(
+        width: decoded.width,
+        height: decoded.height,
+      );
+      // fill background with white
+      img.fill(background, color: img.ColorRgb8(bgR, bgG, bgB));
+      img.compositeImage(background, decoded);
+      rgbImage = background;
       print('Converted to RGB, channels: ${rgbImage.numChannels}');
     }
 
@@ -112,10 +109,10 @@ class ImageProcessor {
     final tmpFile = File(tmpPath);
 
     // Senior Fix: Force RGB (3 channels) output + low compression.
-    // The 'image' library (Dart) automatically optimizes simple black & white 
-    // images into 1-channel Grayscale PNGs to save space. 
+    // The 'image' library (Dart) automatically optimizes simple black & white
+    // images into 1-channel Grayscale PNGs to save space.
     // This optimization confuses the Python K-Means color separator.
-    // By forcing uint8 format and 3 channels, we ensure Python reads 
+    // By forcing uint8 format and 3 channels, we ensure Python reads
     // a consistent (H, W, 3) shape even for simple logos.
     final rgbForced = rgbImage.convert(
       format: img.Format.uint8,
