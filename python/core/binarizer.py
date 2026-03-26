@@ -132,14 +132,16 @@ class Binarizer:
     
     def smart_threshold(self, mask: np.ndarray) -> np.ndarray:
         """
-        Adaptive threshold selection based on image histogram analysis.
+        Adaptive threshold selection with near-binary fast path.
         Automatically picks the best method for each mask.
 
-        Decision logic:
-          1. Non-uniform lighting   → Adaptive Gaussian
-          2. Very small foreground  → Triangle method
-          3. Clear bimodal hist     → Otsu
-          4. Everything else        → Adaptive Mean (fallback)
+        Decision logic (REDESIGNED):
+          1. Already binary? → return as-is
+          2. Near-binary (midtones < 10%)? → Otsu fast path (skip adaptive)
+          3. Very small foreground → Triangle
+          4. Clear bimodal → Otsu
+          5. Non-uniform lighting → Adaptive Gaussian (only for non-near-binary)
+          6. Fallback → Adaptive Mean
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -151,18 +153,45 @@ class Binarizer:
 
         total = gray.size
 
-        # ── 1. Histogram analysis ──────────────────────────────────────────
+        # ── 1. Already binary check ─────────────────────────────────────────
+        unique_vals = np.unique(gray)
+        if len(unique_vals) <= 2 and all(v in [0, 255] for v in unique_vals):
+            logger.info("[SmartThreshold] Already binary — passthrough")
+            return gray
+
+        # ── 2. Histogram analysis ───────────────────────────────────────────
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-        dark_ratio  = float(np.sum(hist[:85]))  / total   # 0-84
+        dark_ratio  = float(np.sum(hist[:85])) / total   # 0-84
         light_ratio = float(np.sum(hist[170:])) / total   # 170-255
         mid_ratio   = 1.0 - dark_ratio - light_ratio
 
-        # ── 2. Foreground ratio via quick Otsu ────────────────────────────
+        # ── 3. Near-binary fast path ────────────────────────────────────────
+        # If midtones are < 10%, the image is near-binary
+        # Use Otsu directly — adaptive methods will collapse on near-binary images
+        if mid_ratio < 0.10:
+            otsu_val, result = cv2.threshold(gray, 0, 255,
+                                            cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # Collapse detection: if result is all-white or all-black, try Triangle
+            white_pct = np.sum(result == 255) / total
+            if white_pct > 0.97 or white_pct < 0.03:
+                logger.warning(f"[SmartThreshold] Otsu collapsed ({white_pct:.1%} white), trying Triangle")
+                _, result = cv2.threshold(gray, 0, 255,
+                                        cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+                white_pct = np.sum(result == 255) / total
+            
+            logger.info(
+                f"[SmartThreshold] Near-binary Otsu "
+                f"(mid={mid_ratio:.1%}, white={white_pct:.1%})"
+            )
+            return result
+
+        # ── 4. Foreground ratio via quick Otsu ──────────────────────────────
         otsu_val, _ = cv2.threshold(gray, 0, 255,
                                     cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         fg_ratio = float(np.sum(gray < otsu_val)) / total
 
-        # ── 3. Lighting uniformity (quad-mean variance) ───────────────────
+        # ── 5. Lighting uniformity (quad-mean variance) ─────────────────────
         h, w = gray.shape
         q = [
             float(gray[:h//2, :w//2].mean()),
@@ -172,9 +201,28 @@ class Binarizer:
         ]
         lighting_variance = float(np.var(q))
 
-        # ── 4. Decision ───────────────────────────────────────────────────
-        if lighting_variance > 500:
-            # Non-uniform lighting → Adaptive Gaussian
+        # ── 6. Decision tree (only for non-near-binary images) ──────────────
+        if fg_ratio < 0.05:
+            # Very small foreground (logo / watermark) → Triangle
+            _, result = cv2.threshold(gray, 0, 255,
+                                    cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+            logger.info(
+                f"[SmartThreshold] Triangle "
+                f"(fg_ratio={fg_ratio:.1%})"
+            )
+
+        elif mid_ratio < 0.15 and (dark_ratio > 0.1 or light_ratio > 0.1):
+            # Clear bimodal histogram → Otsu
+            _, result = cv2.threshold(gray, 0, 255,
+                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            logger.info(
+                f"[SmartThreshold] Otsu "
+                f"(mid={mid_ratio:.1%}, dark={dark_ratio:.1%}, "
+                f"light={light_ratio:.1%})"
+            )
+
+        elif lighting_variance > 500:
+            # Non-uniform lighting → Adaptive Gaussian (only for non-near-binary)
             result = cv2.adaptiveThreshold(
                 gray, 255,
                 cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -183,29 +231,6 @@ class Binarizer:
             logger.info(
                 f"[SmartThreshold] Adaptive Gaussian "
                 f"(lighting_var={lighting_variance:.0f})"
-            )
-
-        elif fg_ratio < 0.05:
-            # Very small foreground (logo / watermark) → Triangle
-            _, result = cv2.threshold(
-                gray, 0, 255,
-                cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE
-            )
-            logger.info(
-                f"[SmartThreshold] Triangle "
-                f"(fg_ratio={fg_ratio:.1%})"
-            )
-
-        elif mid_ratio < 0.15 and (dark_ratio > 0.1 or light_ratio > 0.1):
-            # Clear bimodal histogram → Otsu
-            _, result = cv2.threshold(
-                gray, 0, 255,
-                cv2.THRESH_BINARY + cv2.THRESH_OTSU
-            )
-            logger.info(
-                f"[SmartThreshold] Otsu "
-                f"(mid={mid_ratio:.1%}, dark={dark_ratio:.1%}, "
-                f"light={light_ratio:.1%})"
             )
 
         else:
@@ -219,6 +244,13 @@ class Binarizer:
                 f"[SmartThreshold] Adaptive Mean (fallback) "
                 f"(mid={mid_ratio:.1%})"
             )
+
+        # ── 7. Collapse detection ───────────────────────────────────────────
+        white_pct = np.sum(result == 255) / total
+        if white_pct > 0.97 or white_pct < 0.03:
+            logger.warning(f"[SmartThreshold] Result collapsed ({white_pct:.1%} white), fallback to Otsu")
+            _, result = cv2.threshold(gray, 0, 255,
+                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         return result
 

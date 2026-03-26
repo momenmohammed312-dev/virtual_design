@@ -37,6 +37,15 @@ from core.image_loader import load_image_safely
 from core.mask_generator import MaskGenerator
 from core.edge_cleaner import EdgeCleaner
 
+# Pipeline Controller — centralized polarity and validation
+try:
+    from core.pipeline_controller import PipelineController
+    controller = PipelineController()
+    HAS_CONTROLLER = True
+except ImportError:
+    HAS_CONTROLLER = False
+    print("[WARNING] Pipeline Controller not available", flush=True)
+
 # Smart Analysis import
 try:
     from core.smart_analyzer import SmartAnalyzer
@@ -310,7 +319,7 @@ def step2_separate_colors(
 
     result = separator.separate(
         image,
-        num_colors=max(num_colors, 1) if not auto_detect else 4,
+        num_colors=max(num_colors, 2) if not auto_detect else max(num_colors, 2),
         auto_detect=auto_detect,
         white_threshold=white_threshold,
     )
@@ -559,6 +568,9 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
     threshold_val = getattr(args, 'global_threshold', 200 if not is_halftone else 45)
     noise_min_area = getattr(args, 'noise_removal', 10)
     
+    # Smart binarizer instance (used for solid mode)
+    binarizer = Binarizer() if HAS_BINARIZER else None
+    
     for i, mask in enumerate(masks):
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
@@ -577,14 +589,10 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
             if skip_upscale_blur:
                 # Direct threshold with threshold_val — sharp, no smoothing
                 if binarizer is not None:
-                    # SOLID: Smart adaptive threshold — picks best method per mask
-                    # الـ mask جاي بـ film polarity (design=0, bg=255)
-                    # smart_threshold محتاج يشتغل على الـ ink pixels مش الـ background
-                    # نعكس مؤقتاً عشان يحلل الـ design صح
-                    inv_mask = cv2.bitwise_not(mask)
-                    binary_inv = binarizer.smart_threshold(inv_mask)
-                    binary_mask = cv2.bitwise_not(binary_inv)
-                    logger.info(f"  [Solid] Mask {i+1}: SmartThreshold applied (film polarity corrected)")
+                    # FIXED: Call smart_threshold DIRECTLY on mask (no double inversion)
+                    # smart_threshold handles near-binary images safely now
+                    binary_mask = binarizer.smart_threshold(mask)
+                    logger.info(f"  [Solid] Mask {i+1}: SmartThreshold applied directly")
                 else:
                     _, binary_mask = cv2.threshold(mask, threshold_val, 255, cv2.THRESH_BINARY)
                     logger.info(f"  [Solid] Mask {i+1}: sharp binarization (no upscale-blur) [image_type={img_type}, smooth={cli_smooth:.2f}]")
@@ -602,15 +610,23 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
             safe_thresh = 45  # low threshold to keep tiny halftone dots
             _, binary_mask = cv2.threshold(mask, safe_thresh, 255, cv2.THRESH_BINARY)
         
-        # --- Inversion Guard (Coverage-based, safe for film polarity) ---
+        # --- Enforce polarity via PipelineController (single source of truth) ---
+        if HAS_CONTROLLER:
+            binary_mask = controller.enforce_polarity(binary_mask, stage=f"step7.5/{i+1}")
+        
+        # --- Inversion Guard (FIXED thresholds) ---
         # In film polarity: design=BLACK (0), background=WHITE (255)
-        # Invert if design coverage is suspiciously low (< 2%) OR suspiciously high (> 60%)
+        # Invert ONLY if design coverage is suspiciously low (< 1%) OR suspiciously high (> 85%)
         total_px = binary_mask.size
         design_coverage = np.sum(binary_mask == 0) / total_px  # Count BLACK pixels as design
         
-        if design_coverage > 0.60 or design_coverage < 0.02:
+        if design_coverage > 0.85 or design_coverage < 0.01:
             logger.warning(f"  [Guard:Inversion] Inverting mask {i+1} (coverage={design_coverage:.1%})")
             binary_mask = cv2.bitwise_not(binary_mask)
+        
+        # Audit via PipelineController
+        if HAS_CONTROLLER:
+            controller.audit(binary_mask, stage=f"step7.5/{i+1}")
         
         # Noise removal (Area opening) — يشتغل على الـ design pixels (الأبيض بعد الـ invert للـ CC)
         if noise_min_area > 0:
@@ -869,10 +885,16 @@ def step9_export(
                 # Exporter logic (findContours) needs design pixels as 255
                 # But our current mask has design as 0 (black ink on white paper)
                 # So we re-invert for the vector tracing
-                if len(mask.shape) == 3:
-                    ink_mask = cv2.bitwise_not(cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+                # FIXED: Enforce polarity first via PipelineController
+                if HAS_CONTROLLER:
+                    film_mask = controller.enforce_polarity(mask, stage=f"export/svg/{i+1}")
                 else:
-                    ink_mask = cv2.bitwise_not(mask)
+                    film_mask = mask
+                
+                if len(film_mask.shape) == 3:
+                    ink_mask = cv2.bitwise_not(cv2.cvtColor(film_mask, cv2.COLOR_BGR2GRAY))
+                else:
+                    ink_mask = cv2.bitwise_not(film_mask)
                     
                 svg_filename = f"film_{i+1}.svg"
                 svg_filepath = os.path.join(output_dir, svg_filename)
@@ -891,27 +913,20 @@ def step9_export(
                 pdf_filename = f"film_{i+1}.pdf"
                 pdf_filepath = os.path.join(output_dir, pdf_filename)
                 
-                # Quality check before adding to combined PDF
-                ink_mask_pdf = cv2.bitwise_not(
-                    mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-                )
-                
-                # Check design coverage to detect empty/inverted masks
-                design_coverage = np.sum(ink_mask_pdf > 128) / ink_mask_pdf.size
-                if design_coverage < 0.001:
-                    logger.warning(f"Mask {i+1} appears empty after inversion, skipping from combined PDF")
-                elif design_coverage > 0.98:
-                    logger.warning(f"Mask {i+1} appears inverted (coverage={design_coverage:.1%}), auto-fixing")
-                    ink_mask_pdf = cv2.bitwise_not(ink_mask_pdf)
-                    # Add the corrected mask to combined PDF
-                    all_masks_for_pdf.append(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
-                    all_colors_for_pdf.append(color_entry)
-                    all_names_for_pdf.append(name_entry)
+                # FIXED: Enforce polarity via PipelineController before inversion
+                if HAS_CONTROLLER:
+                    film_gray = controller.enforce_polarity(mask, stage=f"export/pdf/{i+1}")
+                    film_gray = controller.validate_mask(film_gray, mask_id=i+1)
                 else:
-                    # Normal case - add to combined PDF
-                    all_masks_for_pdf.append(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
-                    all_colors_for_pdf.append(color_entry)
-                    all_names_for_pdf.append(name_entry)
+                    film_gray = mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+                
+                # Single reliable inversion for vector tracing
+                ink_mask_pdf = cv2.bitwise_not(film_gray)
+                
+                # Add to combined PDF
+                all_masks_for_pdf.append(film_gray)
+                all_colors_for_pdf.append(color_entry)
+                all_names_for_pdf.append(name_entry)
                 
                 export_vector_pdf(
                     masks=[ink_mask_pdf],
@@ -948,7 +963,14 @@ def step9_export(
             combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
             
             # Re-invert all masks for vector_exporter (needs design=255)
-            ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
+            # Safety: enforce polarity on each mask before inversion
+            if HAS_CONTROLLER:
+                ink_masks_combined = [
+                    cv2.bitwise_not(controller.enforce_polarity(m, stage="export/combined"))
+                    for m in all_masks_for_pdf
+                ]
+            else:
+                ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
             
             export_vector_pdf(
                 masks=ink_masks_combined,

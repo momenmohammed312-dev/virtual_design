@@ -71,8 +71,10 @@ class MaskGenerator:
                 # لا نطبق cleanup على الـ grayscale masks لأنه يغير الـ intensities
                 mask = self._cleanup_mask(mask, morph_kernel_size, min_area)
 
-            pixel_count = int(np.sum(mask > 0)) if not grayscale_output else int(np.sum(mask > 0))
-            logger.info(f"[MaskGenerator] Mask {i+1}/{num_colors}: {pixel_count} pixels")
+            # Count INK pixels (black=0) not background pixels (white=255)
+            # In film polarity: ink=0, background=255
+            pixel_count = int(np.sum(mask == 0))
+            logger.info(f"[MaskGenerator] Mask {i+1}/{num_colors}: {pixel_count} ink pixels")
             masks.append(mask)
 
         return masks
@@ -122,14 +124,20 @@ class MaskGenerator:
         # 2. Create clean output mask
         smooth = np.zeros_like(mask)
         
-        # 3. Draw contours with epsilon simplification
+        # 3. Draw contours with adaptive epsilon simplification
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area < 20:  # Skip tiny contours (noise)
                 continue
             
-            # Epsilon: 0.5% of perimeter = preserves more detail
-            epsilon = 0.005 * cv2.arcLength(cnt, True)
+            # Adaptive epsilon: smaller for small contours (preserve Arabic dots, hamza)
+            # Small contours (area < 500): epsilon = 0.2% of perimeter
+            # Large contours: epsilon = 0.5% of perimeter
+            perimeter = cv2.arcLength(cnt, True)
+            if area < 500:
+                epsilon = 0.002 * perimeter  # preserve fine details
+            else:
+                epsilon = 0.005 * perimeter  # standard simplification
             approx = cv2.approxPolyDP(cnt, epsilon, True)
             
             # Draw filled contour

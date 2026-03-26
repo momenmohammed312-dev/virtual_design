@@ -100,11 +100,26 @@ class SmartAnalyzer:
         min_dim = min(h, w)
         is_low_res = (min_dim < 300) or (dpi < 72)
         
+        # 5. Mid-tone ratio (bimodality) — NEW
+        # Low midtones = bimodal = logo/text on clean background
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        total_pixels = h * w
+        mid_pixels = np.sum(hist[85:170])  # mid-tone band
+        mid_ratio = mid_pixels / total_pixels
+        
+        # 6. Shape ratio (perimeter-based) — NEW
+        # Better than edge_density for filled silhouettes
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        total_perimeter = sum(cv2.arcLength(c, True) for c in contours)
+        shape_ratio = total_perimeter / (h * w)
+        
         return {
             "edge_density": round(edge_density, 4),
             "color_count_estimate": color_count_estimate,
             "noise_level": round(noise_level, 2),
             "is_low_res": is_low_res,
+            "mid_ratio": round(mid_ratio, 4),
+            "shape_ratio": round(shape_ratio, 4),
             "confidence": 0.0,  # Will be set in _get_params
         }
     
@@ -113,12 +128,26 @@ class SmartAnalyzer:
         edge_d = m["edge_density"]
         colors = m["color_count_estimate"]
         noise  = m["noise_level"]
+        mid_ratio = m.get("mid_ratio", 0.5)
+        shape_ratio = m.get("shape_ratio", 0.0)
         
         # Low quality detection
         if m["is_low_res"] or noise > 2000:
             return ImageClass.LOW_QUALITY
         
-        # Text/Logo detection: حواف كثيرة + ألوان قليلة
+        # Level 1 — PRIMARY TEXT_LOGO signal: bimodality (filled silhouettes)
+        # Low midtones = bimodal histogram = logo/text on clean background
+        # This catches Puma-style logos (edge_density too low for old check)
+        if mid_ratio < 0.05 and colors <= 6:
+            return ImageClass.TEXT_LOGO
+        
+        # Level 2 — SECONDARY TEXT_LOGO signal: shape-based
+        # Perimeter ratio detects filled shapes even with low edge density
+        if shape_ratio > 0.001 and colors <= 4:
+            return ImageClass.TEXT_LOGO
+        
+        # Level 3 — TERTIARY TEXT_LOGO signal (old logic, preserved for compatibility)
+        # High edge density + few colors = vector-like design
         if edge_d > 0.08 and colors <= 4:
             return ImageClass.TEXT_LOGO
         
@@ -152,7 +181,7 @@ class SmartAnalyzer:
         if cls == ImageClass.ARTWORK:
             return {
                 **base_params,
-                "smoothing_factor": 0.15,
+                "smoothing_factor": 0.20,    # Changed from 0.15 to ensure upscale path
                 "corner_threshold": 45.0,
                 "global_threshold": 180,
                 "use_halftone": False,

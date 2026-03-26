@@ -280,7 +280,16 @@ class ColorSeparator:
         # ════════════════════════════════════════════════════════════
 
         # ترتيب من الأغمق للأفتح
-        brightness = [int(np.mean(cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_RGB2GRAY))) for c in centers]
+        # Fix: Convert LAB→RGB first if using LAB color space
+        if use_lab:
+            centers_for_brightness = np.array([
+                cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_LAB2RGB)[0][0]
+                for c in centers
+            ])
+        else:
+            centers_for_brightness = centers
+        
+        brightness = [int(np.mean(cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_RGB2GRAY))) for c in centers_for_brightness]
         sorted_indices = np.argsort(brightness)
         centers = centers[sorted_indices]
 
