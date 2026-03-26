@@ -1518,7 +1518,7 @@ class _SetupPageState extends State<SetupPage> {
                             const Text('Smoothing Factor',
                                 style: TextStyle(fontSize: 14)),
                             Text(
-                              '${ctrl.smoothingFactor.value.toStringAsFixed(2)}',
+                              ctrl.smoothingFactor.value.toStringAsFixed(2),
                               style: TextStyle(
                                   fontSize: 12,
                                   color: isAuto ? Colors.grey : Colors.green),

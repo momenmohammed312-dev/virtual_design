@@ -37,6 +37,14 @@ from core.image_loader import load_image_safely
 from core.mask_generator import MaskGenerator
 from core.edge_cleaner import EdgeCleaner
 
+# Smart Analysis import
+try:
+    from core.smart_analyzer import SmartAnalyzer
+    HAS_SMART_ANALYZER = True
+except ImportError:
+    HAS_SMART_ANALYZER = False
+    print("[WARNING] Smart Analyzer not available", flush=True)
+
 # Try importing optional modules (halftone, binarizer, etc.)
 try:
     from core.halftone_generator import HalftoneGenerator
@@ -88,7 +96,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TOTAL_STEPS = 9
+TOTAL_STEPS = 10
 
 
 def _step(n: int, name: str) -> None:
@@ -331,19 +339,41 @@ def step3_generate_masks(image: np.ndarray, separation_result: dict, halftone_mo
     return masks
 
 
-def step4_clean_edges(masks: list) -> list:
-    _step(4, "Cleaning edges (small kernel, noise-only)")
-    # Small kernel: removes scattered noise without merging Arabic diacritics
-    kernel_noise = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+def step4_clean_edges(masks: list, image_class=None) -> list:
+    _step(5, "Cleaning edges (adaptive kernel)")
+    
+    # Adaptive kernel sizing based on image class
+    if image_class and hasattr(image_class, 'value'):
+        if image_class.value == 'text_logo':
+            # TEXT_LOGO: kernel صغير جداً — يحافظ على التفاصيل الدقيقة
+            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
+            kernel_desc = "1x1 (text preservation)"
+        elif image_class.value == 'photo':
+            # PHOTO: kernel أكبر — noise أكثر
+            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            kernel_desc = "3x3 (photo noise reduction)"
+        else:
+            # Default (ARTWORK / LOW_QUALITY)
+            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+            kernel_desc = "2x2 (balanced)"
+    else:
+        # Fallback to original behavior
+        k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        kernel_desc = "2x2 (default)"
+    
     result = []
     for mask in masks:
         # Remove small scattered noise pixels
-        clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_noise)
-        # Close tiny gaps (2x2 only — avoids merging Arabic dots/strokes)
-        clean = cv2.morphologyEx(clean, cv2.MORPH_CLOSE, kernel_close)
+        clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k_open)
+        # Close tiny gaps
+        clean = cv2.morphologyEx(clean, cv2.MORPH_CLOSE, k_close)
         result.append(clean)
-    logger.info(f"  Cleaned {len(masks)} masks (kernel=2x2 open + 2x2 close)")
+    
+    logger.info(f"  Cleaned {len(masks)} masks (kernel={kernel_desc})")
     return result
 
 
@@ -392,27 +422,57 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
         # CLAHE for contrast enhancement before halftoning
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         
+        # Auto-select dot shape based on image class if not explicitly set
+        if not hasattr(args, 'dot_shape') or args.dot_shape == 'round':
+            image_class = getattr(args, '_image_class', None)
+            if image_class and hasattr(image_class, 'value'):
+                if HAS_SMART_ANALYZER:
+                    from core.smart_analyzer import SmartAnalyzer
+                    analyzer = SmartAnalyzer()
+                    effective_dot_shape = analyzer.get_dot_shape(image_class)
+                else:
+                    # Fallback logic
+                    dot_shape_map = {
+                        'text_logo': 'square',   # تفاصيل حادة
+                        'artwork':   'round',    # طبيعي
+                        'photo':     'round',    # صور
+                    }
+                    effective_dot_shape = dot_shape_map.get(image_class.value, 'round')
+                logger.info(f"  Auto-selected dot shape: {effective_dot_shape} for {image_class.value}")
+            else:
+                effective_dot_shape = 'round'
+        else:
+            effective_dot_shape = args.dot_shape
+        
         for i, mask in enumerate(masks):
             # Check if mask is mostly solid (should not be halftoned)
             total_pixels = mask.size
             design_pixels = np.sum(mask < 128)  # design=0 (ink), background=255
             coverage_percentage = (design_pixels / total_pixels) * 100
             
+            # Skip CLAHE for solid masks (no gradients)
+            should_use_clahe = 5.0 <= coverage_percentage <= 85.0
+            
             if coverage_percentage > 95.0:
                 logger.info(f"  Skipping halftone for mask {i+1} ({coverage_percentage:.1f}% coverage) - too dense")
                 result.append(mask)
             else:
-                # Contrast enhancement: CLAHE pushes shadows darker and highlights whiter
+                # Contrast enhancement: CLAHE only for masks with gradients
                 if mask.dtype != np.uint8:
                     enhanced = mask.astype(np.uint8)
                 else:
                     enhanced = mask.copy()
-                enhanced = clahe.apply(enhanced)
+                
+                if should_use_clahe:
+                    enhanced = clahe.apply(enhanced)
+                    logger.info(f"  Applied CLAHE to mask {i+1} (coverage={coverage_percentage:.1f}%)")
+                else:
+                    logger.info(f"  Skipped CLAHE for mask {i+1} (coverage={coverage_percentage:.1f}%)")
                 
                 # Use CMYK angle for this color index, fallback to default
                 angle = cmyk_angles[i] if i < len(cmyk_angles) else args.angle
                 ht = generator.generate(enhanced, lpi=effective_lpi, angle=angle, 
-                                       dot_shape=args.dot_shape, dpi=args.dpi, gamma=halftone_gamma)
+                                       dot_shape=effective_dot_shape, dpi=args.dpi, gamma=halftone_gamma)
                 result.append(ht)
                 logger.info(f"  Halftoned mask {i+1} ({coverage_percentage:.1f}%) angle={angle}° LPI={effective_lpi} gamma={halftone_gamma}")
             
@@ -534,12 +594,12 @@ def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
         
         # --- Inversion Guard (Coverage-based, safe for film polarity) ---
         # In film polarity: design=BLACK (0), background=WHITE (255)
-        # Only invert if design (black) coverage is suspiciously low (< 2%)
+        # Invert if design coverage is suspiciously low (< 2%) OR suspiciously high (> 60%)
         total_px = binary_mask.size
         design_coverage = np.sum(binary_mask == 0) / total_px  # Count BLACK pixels as design
         
-        if design_coverage < 0.02:
-            logger.warning(f"  [Guard:Inversion] Very low design coverage ({design_coverage:.1%}), inverting mask {i+1}")
+        if design_coverage > 0.60 or design_coverage < 0.02:
+            logger.warning(f"  [Guard:Inversion] Inverting mask {i+1} (coverage={design_coverage:.1%})")
             binary_mask = cv2.bitwise_not(binary_mask)
         
         # Noise removal (Area opening)
@@ -818,10 +878,27 @@ def step9_export(
                 pdf_filename = f"film_{i+1}.pdf"
                 pdf_filepath = os.path.join(output_dir, pdf_filename)
                 
-                # Vector exporter expects design pixels as 255
+                # Quality check before adding to combined PDF
                 ink_mask_pdf = cv2.bitwise_not(
                     mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
                 )
+                
+                # Check design coverage to detect empty/inverted masks
+                design_coverage = np.sum(ink_mask_pdf > 128) / ink_mask_pdf.size
+                if design_coverage < 0.001:
+                    logger.warning(f"Mask {i+1} appears empty after inversion, skipping from combined PDF")
+                elif design_coverage > 0.98:
+                    logger.warning(f"Mask {i+1} appears inverted (coverage={design_coverage:.1%}), auto-fixing")
+                    ink_mask_pdf = cv2.bitwise_not(ink_mask_pdf)
+                    # Add the corrected mask to combined PDF
+                    all_masks_for_pdf.append(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+                    all_colors_for_pdf.append(color_entry)
+                    all_names_for_pdf.append(name_entry)
+                else:
+                    # Normal case - add to combined PDF
+                    all_masks_for_pdf.append(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+                    all_colors_for_pdf.append(color_entry)
+                    all_names_for_pdf.append(name_entry)
                 
                 export_vector_pdf(
                     masks=[ink_mask_pdf],
@@ -837,10 +914,19 @@ def step9_export(
                 exported_paths.append(pdf_filepath)
                 logger.info(f"  Exported {pdf_filename} (PDF Vector)")
 
-            # Add to collection for combined PDF
-            all_masks_for_pdf.append(mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
-            all_colors_for_pdf.append(color_entry)
-            all_names_for_pdf.append(name_entry)
+            else:
+                # If no PDF export, still add to combined PDF with basic check
+                if len(mask.shape) == 3:
+                    gray_mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+                else:
+                    gray_mask = mask
+                
+                # Simple check for completely empty masks
+                design_coverage = np.sum(gray_mask < 128) / gray_mask.size
+                if design_coverage > 0.001:  # Only add if there's some design content
+                    all_masks_for_pdf.append(gray_mask)
+                    all_colors_for_pdf.append(color_entry)
+                    all_names_for_pdf.append(name_entry)
 
             _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
         
@@ -1049,17 +1135,46 @@ def main() -> int:
     logger.info(f"Root Output Directory: {output_dir}")
 
     try:
-        # Step 1 — Load
+        # Step 2 — Load
         image = step1_load_image(args.input)
         
-        # Step 1.5 — Auto Crop (Senior Optimization)
+        # Step 0 — Smart Analysis (NEW)
+        if HAS_SMART_ANALYZER and img_type == 'auto':
+            _step(0, "Smart Image Analysis")
+            analyzer = SmartAnalyzer()
+            analysis = analyzer.analyze(image, dpi=args.dpi)
+            
+            # Override args based on analysis (only if user didn't set manually)
+            args.smoothing_factor = analysis.smoothing_factor
+            args.corner_threshold = analysis.corner_threshold
+            args.global_threshold = analysis.global_threshold
+            args.halftone = analysis.use_halftone
+            args.lpi = analysis.lpi
+            
+            # Store image class for later use in pipeline steps
+            args._image_class = analysis.image_class
+            args._analysis_confidence = analysis.confidence
+            
+            # Auto-detect colors if not specified
+            if args.colors == 0:
+                args.colors = analysis.num_colors  # 0 = auto-detect
+            
+            logger.info(f"[SmartAnalyzer] Class: {analysis.image_class.value} | "
+                       f"Confidence: {analysis.confidence:.0%} | "
+                       f"Halftone: {args.halftone} | Smooth: {args.smoothing_factor}")
+        else:
+            # Fallback to existing logic for non-auto modes
+            args._image_class = None
+            args._analysis_confidence = 0.0
+        
+        # Step 2.5 — Auto Crop (Senior Optimization)
         if args.auto_crop:
             image = step0_auto_crop(image)
 
-        # Step 1.75 — Pre-processing (sharpen + contrast boost)
+        # Step 2.75 — Pre-processing (sharpen + contrast boost)
         image = step1_5_preprocess(image)
 
-        # Step 2 — Color Separation
+        # Step 3 — Color Separation
         separation_result = step2_separate_colors(
             image,
             args.colors if args.colors > 0 else 4,
@@ -1067,14 +1182,14 @@ def main() -> int:
             white_threshold=getattr(args, 'white_threshold', 240),
         )
 
-        # Step 2.5 — Automatic Underbase Creation
+        # Step 3.5 — Automatic Underbase Creation
         if args.underbase_mode == 'automatic' and HAS_PANTONE:
             separation_result = step2_5_underbase_creation(separation_result, args)
 
-        # Step 3 — Mask Generation (with grayscale if halftone enabled)
+        # Step 4 — Mask Generation (with grayscale if halftone enabled)
         masks = step3_generate_masks(image, separation_result, halftone_mode=args.halftone)
         
-        # Step 3.5 — Automatic Trapping
+        # Step 4.5 — Automatic Trapping
         if args.trapping_mode == 'automatic' and HAS_PANTONE:
             masks = step3_5_trapping(masks, separation_result, args)
 
@@ -1084,28 +1199,28 @@ def main() -> int:
         #     cv2.imwrite(debug_path, mask)
         #     logger.info(f"DEBUG: Saved mask {idx+1} after generation: {debug_path}")
 
-        # Step 4 — Edge Cleaning (always enabled for solid, skip for halftone)
+        # Step 5 — Edge Cleaning (always enabled for solid, skip for halftone)
         if not args.halftone:
-            masks = step4_clean_edges(masks)
+            masks = step4_clean_edges(masks, getattr(args, '_image_class', None))
         else:
-            _step(4, "Edge cleaning (skipped for halftone)")
+            _step(5, "Edge cleaning (skipped for halftone)")
 
-        # Step 5 — Halftone (applied to grayscale masks)
+        # Step 6 — Halftone (applied to grayscale masks)
         masks = step5_halftone(masks, args)
 
-        # Step 6 — Binarize (after halftone if enabled)
+        # Step 7 — Binarize (after halftone if enabled)
         if args.halftone:
             masks = step6_binarize(masks, args)
         else:
-            _step(6, "Binarizing (skipped - masks already binary)")
+            _step(7, "Binarizing (skipped - masks already binary)")
 
-        # Step 7 — Stroke Validation
+        # Step 8 — Stroke Validation
         masks = step7_validate_strokes(masks, args)
 
-        # Step 7.5 — Strict Binarization (prevents false halftoning)
+        # Step 8.5 — Strict Binarization (prevents false halftoning)
         masks = step7_5_strict_binarization(masks, args)
 
-        # Step 8 — Registration Marks
+        # Step 9 — Registration Marks
         masks = step8_registration_marks(masks, output_dir, args)
         
         # DEBUG: Save masks after registration marks
@@ -1114,7 +1229,7 @@ def main() -> int:
             cv2.imwrite(debug_path, mask)
             logger.info(f"DEBUG: Saved mask {idx+1} after registration marks: {debug_path}")
 
-        # Step 9 — Export
+        # Step 10 — Export
         exported = step9_export(masks, separation_result, output_dir, args)
 
         elapsed = round(time.time() - start_time, 1)

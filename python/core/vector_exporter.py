@@ -211,11 +211,17 @@ def export_vector_pdf(
                 return
             
             perimeter = cv2.arcLength(contour_arr, True)
-            # Epsilon: balanced for text and logos
+            area = cv2.contourArea(contour_arr)
+            
+            # Epsilon: adaptive for text sharpness
             if smooth_factor <= 0.15:
-                epsilon = 0.20  # preserves fine details
+                # For text: larger epsilon for small contours to reduce jaggedness
+                if area < 500:
+                    epsilon = max(0.5, 0.008 * perimeter)   # small text — simplify more
+                else:
+                    epsilon = max(0.3, 0.004 * perimeter)   # large text — moderate simplification
             else:
-                epsilon = max(0.20, min(0.40, 0.002 * perimeter))  # slightly more simplification
+                epsilon = max(0.20, min(0.40, 0.002 * perimeter))  # normal smoothing
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
             
             if len(approx) < 3:
