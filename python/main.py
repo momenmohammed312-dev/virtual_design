@@ -1211,9 +1211,17 @@ def main() -> int:
         image = step1_5_preprocess(image)
 
         # Step 3 — Color Separation
+        # FIXED: Respect num_colors from SmartAnalyzer, don't force 4 for auto_detect
+        if args.colors > 0:
+            target_colors = args.colors
+        elif HAS_SMART_ANALYZER and img_type == 'auto' and hasattr(args, '_analysis_confidence') and args._analysis_confidence > 0:
+            target_colors = analysis.num_colors
+        else:
+            target_colors = 4
+            
         separation_result = step2_separate_colors(
             image,
-            args.colors if args.colors > 0 else 4,
+            target_colors,
             auto_detect=(args.colors == 0) or args.auto_colors,
             white_threshold=getattr(args, 'white_threshold', 240),
         )

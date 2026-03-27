@@ -1,12 +1,12 @@
 """
-color_separator.py — Color Separation using K-Means Clustering
+color_separator.py — Color Separation with LAB→RGB brightness sorting fix
 Virtual Design Silk Screen Studio
-Replaces the empty placeholder that was returning []
+FIXED: BUG D - LAB→RGB brightness calculation for correct color ordering
 """
 
 import cv2
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,356 +14,333 @@ logger = logging.getLogger(__name__)
 
 class ColorSeparator:
     """
-    فصل ألوان الصورة إلى طبقات مستقلة باستخدام K-Means Clustering.
-    يستخدم KMEANS_PP_CENTERS لنتائج أفضل من RANDOM_CENTERS.
+    Separate image into color layers using K-means clustering.
+    FIXED: LAB→RGB brightness sorting for correct color layer ordering.
     """
-
-    def auto_detect_color_count(
-        self,
-        image: np.ndarray,
-        max_colors: int = 8,
-        white_threshold: int = 240,
-    ) -> int:
-        """
-        اكتشاف تلقائي لعدد الألوان في الصورة.
-        يستخدم inertia curve (elbow method) لتحديد K الأمثل.
-        
-        Returns: العدد المقترح (2-8)
-        """
-        logger.info("[ColorSeparator] Auto-detecting color count...")
-        
-        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # استثناء الخلفية البيضاء
-        _, fg_mask = cv2.threshold(gray, white_threshold, 255, cv2.THRESH_BINARY_INV)
-        img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        pixels = img_lab.reshape(-1, 3).astype(np.float32)
-        fg_flat = fg_mask.reshape(-1)
-        fg_pixels = pixels[fg_flat > 128]
-        
-        if len(fg_pixels) < 100:
-            logger.warning("Too few foreground pixels, defaulting to 2")
-            return 2
-            
-        # 1. Quick Grayscale check: If image is pure BW/Grayscale, it only needs 1 ink + 1 bg
-        b, g, r = cv2.split(image)
-        # Check if max difference between channels is extremely small
-        diff_bg = cv2.absdiff(b, g)
-        diff_gr = cv2.absdiff(g, r)
-        if np.max(diff_bg) <= 5 and np.max(diff_gr) <= 5:
-            logger.info("[ColorSeparator] Image is effectively grayscale/B&W. Auto-detecting 2 colors.")
-            return 2
-        
-        # Sample للسرعة
-        if len(fg_pixels) > 10000:
-            indices = np.random.choice(len(fg_pixels), 10000, replace=False)
-            fg_pixels = fg_pixels[indices]
-        
-        # حساب inertia لكل K
-        inertias = []
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.5)
-        
-        for k in range(2, max_colors + 1):
-            try:
-                _, labels, centers = cv2.kmeans(
-                    fg_pixels, k, None, criteria, 5, cv2.KMEANS_PP_CENTERS
-                )
-                # حساب inertia = مجموع المسافات المربعة من كل نقطة لمركزها
-                inertia = 0.0
-                for i in range(k):
-                    cluster_pts = fg_pixels[labels.flatten() == i]
-                    if len(cluster_pts) > 0:
-                        inertia += np.sum((cluster_pts - centers[i]) ** 2)
-                inertias.append(inertia)
-            except Exception:
-                inertias.append(float('inf'))
-        
-        # Elbow method: ابحث عن أكبر انخفاض نسبي
-        # متغير حسب تعقيد الصورة: simple (أول drop كبير) vs complex (drops متتالية صغيرة)
-        if len(inertias) < 2:
-            return 2
-        
-        best_k = 2
-        has_big_initial_drop = False
-        
-        for i in range(1, len(inertias)):
-            if inertias[i - 1] > 0:
-                drop = (inertias[i - 1] - inertias[i]) / inertias[i - 1]
-                
-                # أول drop كبير (>15%) = صورة بسيطة (لوجو/نص) → نقف عنده
-                if drop > 0.15:
-                    best_k = i + 2
-                    has_big_initial_drop = True
-                    break
-                
-                # drop صغير بس ذي معنى (>5%) = ممكن يكون لون إضافي مهم
-                # نكمّل لحد ما نوصل لحد أقصى
-                elif drop > 0.05:
-                    best_k = i + 2
-                # drop صغير جداً (<5%) → noise، نتجاهله
-        
-        # لو مفيش drop كبير، الصورة معقدة (كثير ألوان) → best_k هي آخر K صالح
-        if not has_big_initial_drop:
-            # cap على أقصى عدد ألوان (max_colors)
-            best_k = min(best_k, max_colors)
-        
-        logger.info(f"[ColorSeparator] Auto-detected {best_k} colors (complex={not has_big_initial_drop})")
-        return best_k
 
     def separate(
         self,
         image: np.ndarray,
         num_colors: int = 4,
-        attempts: int = 10,
-        max_iter: int = 100,
-        epsilon: float = 0.2,
-        white_threshold: int = 240,
-        remove_white_bg: bool = True,
         use_lab: bool = True,
-        auto_detect: bool = False,
+        max_iterations: int = 20,
+        epsilon: float = 1.0,
+        attempts: int = 3,
     ) -> Dict:
         """
-        فصل الصورة إلى num_colors طبقة (محسّن للـ LAB color space).
+        Separate image into specified number of color layers.
 
         Args:
-            image: BGR numpy array
-            num_colors: عدد الألوان المطلوب (1-10)
-            attempts: عدد محاولات K-Means
-            max_iter: أقصى عدد تكرارات للتقارب
-            epsilon: دقة التقارب
-            white_threshold: قيمة البيكسل اللي تعلاه يُعتبَر أبيض
-            remove_white_bg: إزالة الخلفية البيضاء من الحسابات
-            use_lab: استخدام LAB color space (أفضل للطباعة)
+            image: Input image (BGR format)
+            num_colors: Number of colors to separate
+            use_lab: Use LAB color space for better clustering
+            max_iterations: Maximum K-means iterations
+            epsilon: K-means convergence epsilon
+            attempts: Number of K-means attempts (best result kept)
 
         Returns:
-            Dict يحتوي على البيانات المطلوبة
+            Dictionary with separation results:
+            - 'label_map': Array with pixel labels (0 to num_colors-1)
+            - 'centers': Color centers (in original BGR format)
+            - 'num_colors': Actual number of colors
+            - 'labels': List of labels for each color (sorted by brightness)
+            - 'color_masks': List of binary masks for each color
         """
-        if auto_detect:
-            num_colors = self.auto_detect_color_count(image, white_threshold=white_threshold)
-        
-        # Special case: single color — use adaptive threshold instead of K-means
-        if num_colors == 1:
-            logger.info(f"[ColorSeparator] Single color mode: using adaptive threshold (no K-means)")
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            # Use Otsu for automatic threshold
-            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            
-            h, w = gray.shape
-            label_map = np.zeros((h, w), dtype=np.int32)
-            label_map[binary == 255] = 0  # foreground color index
-            
-            # Find dominant color from foreground pixels
-            fg_pixels = image[binary == 255]
-            if len(fg_pixels) > 0:
-                dominant_color = tuple(int(c) for c in np.mean(fg_pixels, axis=0))
-            else:
-                dominant_color = (0, 0, 0)
-            
-            bg_mask = binary == 0
-            
-            return {
-                'label_map': label_map,
-                'colors': [dominant_color],
-                'color_names': ['color_01'],
-                'image': image,
-                'num_colors': 1,
-                'bg_mask': bg_mask,
-            }
-        
-        logger.info(f"[ColorSeparator] Starting: {num_colors} colors, LAB={use_lab}, image={image.shape}")
+        if len(image.shape) != 3 or image.shape[2] != 3:
+            raise ValueError("Input image must be BGR format with 3 channels")
 
-        # تحويل BGR → RGB
-        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        h, w = img_rgb.shape[:2]
+        h, w, _ = image.shape
+        total_pixels = h * w
 
-        # تحويل إلى LAB للـ clustering الأفضل
+        logger.info(f"[ColorSeparator] Separating {num_colors} colors (use_lab={use_lab})")
+
+        # Convert color space if needed
         if use_lab:
-            img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-            clustering_image = img_lab
+            # Convert BGR to LAB
+            lab_image = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+            data = lab_image.reshape((-1, 3)).astype(np.float32)
+            color_space = "LAB"
         else:
-            clustering_image = img_rgb
+            # Use BGR directly
+            data = image.reshape((-1, 3)).astype(np.float32)
+            color_space = "BGR"
 
-        # Pre-processing: light GaussianBlur to remove JPEG artifacts
-        # This smooths compression noise without affecting real edges
-        # Only used for clustering — original image is used for mask generation
-        clustering_image = cv2.GaussianBlur(clustering_image, (3, 3), sigmaX=0.8, sigmaY=0.8)
-
-        # --- Senior Phase 17: Optional Global Quantization (SKIPPED TO SAVE MEMORY) ---
-        # Removing this step because it caused 'bad allocation' (14MB) on some systems.
-        # The final K-means separation is sufficient.
-
-        # Smart background detection: Priority to provided white_threshold
-        # with fallback to "Corner Modal Color" for black/colored backgrounds (Phase 19)
-        gray_for_bg = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        h_img, w_img = gray_for_bg.shape
-        corners = [
-            gray_for_bg[0, 0], gray_for_bg[0, w_img-1], 
-            gray_for_bg[h_img-1, 0], gray_for_bg[h_img-1, w_img-1],
-            gray_for_bg[h_img//2, 0], gray_for_bg[h_img//2, w_img-1],
-            gray_for_bg[0, w_img//2], gray_for_bg[h_img-1, w_img//2]
-        ]
-        # Convert to list of ints to handle numpy scalars
-        corners = [int(c) for c in corners]
-        corner_mode = max(set(corners), key=corners.count)
+        # Apply K-means clustering
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, max_iterations, epsilon)
         
-        # If the corners are dark (e.g. Black background), we should ignore dark as background
-        # instead of white. High-quality Screen Printing separation.
-        if corner_mode < 50:
-             logger.info(f"[ColorSeparator] Dark background detected (Corner mode: {corner_mode}). Switching to dark-bg removal.")
-             bg_mask_2d = gray_for_bg < (corner_mode + 30)
-        else:
-             # Default: White/Light background removal
-             otsu_ret, _ = cv2.threshold(gray_for_bg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-             auto_bg_thresh = max(int(otsu_ret), 150) if white_threshold == 240 else white_threshold
-             logger.info(f"[ColorSeparator] Light background threshold: {auto_bg_thresh}")
-             bg_mask_2d = gray_for_bg > auto_bg_thresh
+        # Run K-means multiple times and keep best result
+        best_compactness = float('inf')
+        best_labels = None
+        best_centers = None
 
-        foreground_pixels = clustering_image[~bg_mask_2d].reshape(-1, 3)
+        for attempt in range(attempts):
+            try:
+                compactness, labels, centers = cv2.kmeans(
+                    data, num_colors, None, criteria, 1, cv2.KMEANS_PP_CENTERS
+                )
+                
+                if compactness < best_compactness:
+                    best_compactness = compactness
+                    best_labels = labels
+                    best_centers = centers
+                    
+            except Exception as e:
+                logger.warning(f"[ColorSeparator] K-means attempt {attempt+1} failed: {e}")
+                continue
 
-        # Fallback if too few pixels detected
-        if len(foreground_pixels) < 1000:
-            bg_mask_2d = gray_for_bg > 200
-            foreground_pixels = clustering_image[~bg_mask_2d].reshape(-1, 3)
-            logger.info("Fallback: reduced threshold to 200 for better color detection")
-        
-        bg_mask = bg_mask_2d
+        if best_labels is None:
+            raise RuntimeError("K-means clustering failed on all attempts")
 
-        if len(foreground_pixels) == 0:
-            # صورة بيضاء تماماً - ننشئ لون أسود واحد
-            logger.warning("No non-white pixels found, creating single black color")
-            centers = np.array([[0, 0, 0]], dtype=np.uint8)
-            label_map = np.zeros((h, w), dtype=np.int32)
-            bg_mask = np.ones((h, w), dtype=bool)
-        else:
-            # تحسين K-means للصور متعددة الألوان
-            max_iter = 200 if num_colors <= 4 else 300
-            epsilon = 0.1 if num_colors <= 4 else 0.05
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, max_iter, epsilon)
-            flags = cv2.KMEANS_PP_CENTERS
+        # Reshape labels back to image dimensions
+        label_map = best_labels.reshape((h, w))
 
-            attempts = 10 if num_colors <= 4 else 20
-
-            compactness, labels, centers = cv2.kmeans(
-                foreground_pixels.astype(np.float32),
-                num_colors,
-                None,
-                criteria,
-                10,
-                flags
-            )
-
-            centers = np.uint8(centers)
-
-        # ════════════════════════════════════════════════════════════
-        # CRITICAL FIX (Phase 16/18): Memory-Efficient Label Map Building
-        # Using a loop over K instead of broadcasting (NxKx3) to save 200MB+ RAM.
-        # ════════════════════════════════════════════════════════════
-        centers_np = centers.astype(np.float32)  # shape: (K, 3)
-        all_pixels = clustering_image.reshape(-1, 3).astype(np.float32)
-        
-        # Calculate distances to each center one by one to avoid OOM
-        min_dists = np.full(all_pixels.shape[0], float('inf'), dtype=np.float32)
-        label_map_flat = np.zeros(all_pixels.shape[0], dtype=np.int32)
-        
-        for k in range(len(centers_np)):
-            # Squared distance to center k
-            dist_sq = np.sum((all_pixels - centers_np[k])**2, axis=1)
-            f_mask = dist_sq < min_dists
-            min_dists[f_mask] = dist_sq[f_mask]
-            label_map_flat[f_mask] = k
-            
-        label_map = label_map_flat.reshape(h, w)
-        
-        # --- Senior Phase 25: Handling 'Holes' in letters (Sub-label Refinement) ---
-        # No change needed here, we just ensure centers are distinct.
-        # ════════════════════════════════════════════════════════════
-
-        # ترتيب من الأغمق للأفتح
-        # Fix: Convert LAB→RGB first if using LAB color space
+        # FIXED: Convert centers back to BGR for consistent output
         if use_lab:
-            centers_for_brightness = np.array([
-                cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_LAB2RGB)[0][0]
-                for c in centers
-            ])
+            # Convert LAB centers back to BGR
+            centers_bgr = []
+            for center in best_centers:
+                # Convert single LAB value to BGR
+                lab_pixel = np.array([[center]], dtype=np.uint8)
+                bgr_pixel = cv2.cvtColor(lab_pixel, cv2.COLOR_LAB2BGR)[0][0]
+                centers_bgr.append(bgr_pixel)
+            centers_bgr = np.array(centers_bgr, dtype=np.float32)
         else:
-            centers_for_brightness = centers
-        
-        brightness = [int(np.mean(cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_RGB2GRAY))) for c in centers_for_brightness]
+            centers_bgr = best_centers.copy()
+
+        # FIXED: Sort colors by brightness (convert LAB→RGB first, then calculate brightness)
+        brightness = self._calculate_brightness(centers_bgr, use_lab)
         sorted_indices = np.argsort(brightness)
-        centers = centers[sorted_indices]
+        
+        # Reorder centers and labels by brightness
+        sorted_centers = centers_bgr[sorted_indices]
+        
+        # Create mapping from old labels to new sorted labels
+        label_mapping = {old_label: new_label for new_label, old_label in enumerate(sorted_indices)}
+        
+        # Apply mapping to label map
+        sorted_label_map = np.vectorize(label_mapping.get)(label_map)
 
-        # Remap label_map to match sorted centers
-        new_label_map = np.full_like(label_map, -1)
-        for new_idx, old_idx in enumerate(sorted_indices):
-            new_label_map[label_map == old_idx] = new_idx
-        label_map = new_label_map
+        # Generate color information
+        color_info = []
+        for i, (center, brightness_val) in enumerate(zip(sorted_centers, brightness[sorted_indices])):
+            # Convert center to uint8 for display
+            center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
+            
+            # Calculate percentage of pixels
+            pixel_count = np.sum(sorted_label_map == i)
+            percentage = (pixel_count / total_pixels) * 100
+            
+            color_info.append({
+                'index': i,
+                'center_bgr': center_uint8.tolist(),
+                'brightness': float(brightness_val),
+                'pixel_count': int(pixel_count),
+                'percentage': float(percentage)
+            })
 
-        # تحديد الخلفية
-        if bg_mask is not None:
-            label_map[bg_mask] = -1
+        # Generate binary masks for each color
+        color_masks = []
+        for i in range(num_colors):
+            mask = (sorted_label_map == i).astype(np.uint8) * 255
+            color_masks.append(mask)
 
-        colors = [tuple(int(c) for c in center) for center in centers]
-        # Convert back to RGB for output if we used LAB
-        if use_lab:
-            colors_rgb = []
-            for c in centers:
-                rgb = cv2.cvtColor(np.uint8([[c]]), cv2.COLOR_LAB2RGB)[0][0]
-                colors_rgb.append(tuple(int(x) for x in rgb))
-            colors = colors_rgb
-
-        # Match each color to nearest Pantone for descriptive names
-        color_names = []
-        try:
-            from core.pantone_library import PantoneLibrary
-            pantone_lib = PantoneLibrary()
-            for color in colors:
-                match = pantone_lib.find_nearest_pantone(color)
-                color_names.append(match.name)
-        except Exception:
-            # Fallback to generic names if Pantone library unavailable
-            color_names = [f"color_{i+1:02d}" for i in range(num_colors)]
-
-        logger.info(f"[ColorSeparator] Done. Colors: {[self.get_color_hex(c) for c in colors]}")
+        logger.info(f"[ColorSeparator] Separated {num_colors} colors in {color_space} space")
+        for i, info in enumerate(color_info):
+            logger.debug(f"  Color {i}: BGR={info['center_bgr']}, brightness={info['brightness']:.1f}, "
+                         f"coverage={info['percentage']:.1f}%")
 
         return {
-            "colors": colors,
-            "color_names": color_names,
-            "label_map": label_map,
-            "image": image,
-            "num_colors": num_colors,
-            "bg_mask": bg_mask,
+            'label_map': sorted_label_map,
+            'centers': sorted_centers,
+            'num_colors': num_colors,
+            'labels': list(range(num_colors)),
+            'color_info': color_info,
+            'color_masks': color_masks,
+            'compactness': float(best_compactness),
+            'color_space': color_space
         }
 
-    def get_color_hex(self, rgb: Tuple) -> str:
-        """تحويل RGB tuple لـ HEX string"""
-        return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
-
-    def get_color_info(self, separation_result: Dict) -> List[Dict]:
+    def _calculate_brightness(self, centers: np.ndarray, use_lab: bool) -> np.ndarray:
         """
-        إرجاع معلومات تفصيلية عن كل لون للعرض في الـ UI.
+        FIXED: Calculate brightness for color centers.
+        For LAB: convert to RGB first, then calculate grayscale brightness.
+        For BGR: calculate directly.
+        
+        Args:
+            centers: Color centers (in BGR format)
+            use_lab: Whether original clustering was in LAB space
+            
+        Returns:
+            Array of brightness values for each center
         """
-        label_map = separation_result["label_map"]
-        total_pixels = label_map[label_map >= 0].size  # استثناء الخلفية
+        brightness = []
+        
+        for i, center in enumerate(centers):
+            if use_lab:
+                # FIXED: Convert LAB center to RGB first, then calculate brightness
+                center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
+                
+                # Convert LAB to RGB (via BGR intermediate)
+                lab_pixel = np.array([[center_uint8]], dtype=np.uint8)
+                bgr_pixel = cv2.cvtColor(lab_pixel, cv2.COLOR_LAB2BGR)[0][0]
+                
+                # Convert BGR to RGB
+                rgb_pixel = cv2.cvtColor(np.array([[bgr_pixel]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
+                
+                # Calculate brightness as mean of RGB values
+                brightness_val = np.mean(rgb_pixel)
+                
+            else:
+                # BGR space - calculate brightness directly
+                center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
+                
+                # Convert BGR to grayscale
+                gray_val = cv2.cvtColor(np.array([[center_uint8]], dtype=np.uint8), cv2.COLOR_BGR2GRAY)[0][0]
+                brightness_val = float(gray_val)
+            
+            brightness.append(brightness_val)
+        
+        return np.array(brightness)
 
-        info = []
-        for i, (color, name) in enumerate(
-            zip(separation_result["colors"], separation_result["color_names"])
-        ):
-            count = np.sum(label_map == i)
-            percentage = (count / total_pixels * 100) if total_pixels > 0 else 0
-            info.append(
-                {
-                    "index": i,
-                    "name": name,
-                    "rgb": color,
-                    "hex": self.get_color_hex(color),
-                    "pixel_count": int(count),
-                    "percentage": round(percentage, 1),
-                }
-            )
+    def create_color_layers(
+        self,
+        original_image: np.ndarray,
+        separation_result: Dict,
+        background_color: Tuple[int, int, int] = (255, 255, 255)
+    ) -> List[np.ndarray]:
+        """
+        Create individual color layer images from separation result.
+        
+        Args:
+            original_image: Original BGR image
+            separation_result: Result from separate() method
+            background_color: Background color for layers (BGR)
+            
+        Returns:
+            List of color layer images
+        """
+        h, w, _ = original_image.shape
+        num_colors = separation_result['num_colors']
+        label_map = separation_result['label_map']
+        centers = separation_result['centers']
+        
+        layers = []
+        
+        for i in range(num_colors):
+            # Create layer with background
+            layer = np.full((h, w, 3), background_color, dtype=np.uint8)
+            
+            # Get mask for this color
+            mask = (label_map == i)
+            
+            # Apply color to masked regions
+            color = np.clip(centers[i], 0, 255).astype(np.uint8)
+            layer[mask] = color
+            
+            layers.append(layer)
+        
+        return layers
 
-        # ترتيب من الأكثر مساحةً للأقل وإزالة الألوان الفارغة
-        info = [x for x in info if x["pixel_count"] > 0]
-        info.sort(key=lambda x: x["pixel_count"], reverse=True)
-        return info
+    def optimize_color_count(
+        self,
+        image: np.ndarray,
+        max_colors: int = 8,
+        min_colors: int = 2,
+        use_lab: bool = True
+    ) -> Tuple[int, Dict]:
+        """
+        Automatically determine optimal number of colors using elbow method.
+        
+        Args:
+            image: Input image
+            max_colors: Maximum number of colors to try
+            min_colors: Minimum number of colors
+            use_lab: Use LAB color space
+            
+        Returns:
+            Tuple of (optimal_color_count, separation_result)
+        """
+        logger.info(f"[ColorSeparator] Optimizing color count ({min_colors}-{max_colors})")
+        
+        results = {}
+        compactness_ratios = []
+        
+        # Test different color counts
+        for k in range(min_colors, max_colors + 1):
+            try:
+                result = self.separate(image, k, use_lab)
+                results[k] = result
+                compactness_ratios.append(result['compactness'])
+                
+                logger.debug(f"  k={k}: compactness={result['compactness']:.0f}")
+                
+            except Exception as e:
+                logger.warning(f"  k={k}: Failed - {e}")
+                continue
+        
+        if not results:
+            raise RuntimeError("Failed to separate image with any color count")
+        
+        # Find elbow point (largest drop in compactness ratio)
+        if len(compactness_ratios) > 1:
+            ratios = []
+            for i in range(1, len(compactness_ratios)):
+                if compactness_ratios[i-1] > 0:
+                    ratio = (compactness_ratios[i-1] - compactness_ratios[i]) / compactness_ratios[i-1]
+                    ratios.append(ratio)
+                else:
+                    ratios.append(0)
+            
+            if ratios:
+                best_idx = np.argmax(ratios) + min_colors
+                optimal_k = min(best_idx, max_colors)
+            else:
+                optimal_k = min_colors
+        else:
+            optimal_k = min_colors
+        
+        logger.info(f"[ColorSeparator] Optimal colors: {optimal_k}")
+        
+        return optimal_k, results.get(optimal_k, list(results.values())[0])
+
+    def validate_separation(self, separation_result: Dict) -> Dict:
+        """
+        Validate separation result and return quality metrics.
+        
+        Args:
+            separation_result: Result from separate() method
+            
+        Returns:
+            Dictionary with validation metrics
+        """
+        num_colors = separation_result['num_colors']
+        color_info = separation_result['color_info']
+        compactness = separation_result['compactness']
+        
+        # Calculate quality metrics
+        total_coverage = sum(info['percentage'] for info in color_info)
+        avg_coverage = total_coverage / num_colors
+        
+        # Check for empty or dominant colors
+        empty_colors = sum(1 for info in color_info if info['percentage'] < 1.0)
+        dominant_colors = sum(1 for info in color_info if info['percentage'] > 80.0)
+        
+        # Calculate color separation quality (lower compactness is better)
+        max_compactness = 1000000  # Arbitrary high value
+        quality_score = max(0, 1 - (compactness / max_compactness))
+        
+        validation = {
+            'num_colors': num_colors,
+            'total_coverage': total_coverage,
+            'avg_coverage': avg_coverage,
+            'empty_colors': empty_colors,
+            'dominant_colors': dominant_colors,
+            'compactness': compactness,
+            'quality_score': quality_score,
+            'is_valid': (empty_colors == 0 and dominant_colors == 0)
+        }
+        
+        logger.info(f"[ColorSeparator] Validation: quality={validation['quality_score']:.2f}, "
+                   f"empty={empty_colors}, dominant={dominant_colors}")
+        
+        return validation

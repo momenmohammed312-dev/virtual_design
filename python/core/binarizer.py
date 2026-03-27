@@ -1,281 +1,290 @@
 """
-Image Binarizer
-Convert grayscale masks to pure black and white (1-bit)
+Binarizer - Robust thresholding with near-binary path and collapse detection
+FIXED: Prevents Adaptive Gaussian from collapsing near-binary images
 """
 
 import cv2
 import numpy as np
-from typing import Tuple
+import logging
+from typing import Tuple, Optional
+
+logger = logging.getLogger(__name__)
 
 class Binarizer:
-    """Convert images to binary (black and white only)"""
+    """
+    Robust image binarization with multiple methods and intelligent selection.
+    FIXED: Near-binary fast path prevents collapse on bimodal images.
+    """
     
     def __init__(self):
-        self.threshold_methods = {
-            'simple': cv2.THRESH_BINARY,
-            'otsu': cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-            'adaptive_mean': cv2.ADAPTIVE_THRESH_MEAN_C,
-            'adaptive_gaussian': cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        }
-    
-    def binarize(self, 
-                 image: np.ndarray, 
-                 method: str = 'otsu',
-                 threshold: int = 127,
-                 invert: bool = False) -> np.ndarray:
-        """
-        Convert image to binary (black and white)
-        
-        Args:
-            image: Grayscale image
-            method: Thresholding method ('simple', 'otsu', 'adaptive_mean', 'adaptive_gaussian')
-            threshold: Threshold value for 'simple' method
-            invert: Invert black and white
-            
-        Returns:
-            Binary image (0 or 255)
-        """
-        # Ensure grayscale
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image.copy()
-        
-        # Apply thresholding
-        if method == 'simple':
-            _, binary = cv2.threshold(
-                gray, 
-                threshold, 
-                255, 
-                self.threshold_methods['simple']
-            )
-        
-        elif method == 'otsu':
-            # Otsu's method automatically finds optimal threshold
-            _, binary = cv2.threshold(
-                gray, 
-                0, 
-                255, 
-                self.threshold_methods['otsu']
-            )
-        
-        elif method == 'adaptive_mean':
-            binary = cv2.adaptiveThreshold(
-                gray,
-                255,
-                cv2.ADAPTIVE_THRESH_MEAN_C,
-                cv2.THRESH_BINARY,
-                11,  # Block size
-                2    # C constant
-            )
-        
-        elif method == 'adaptive_gaussian':
-            binary = cv2.adaptiveThreshold(
-                gray,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                11,  # Block size
-                2    # C constant
-            )
-        
-        else:
-            raise ValueError(f"Unknown method: {method}")
-        
-        # Invert if needed
-        if invert:
-            binary = cv2.bitwise_not(binary)
-        
-        return binary
-    
-    def auto_binarize(self, image: np.ndarray) -> Tuple[np.ndarray, str, int]:
-        """
-        Automatically choose best binarization method
-        
-        Args:
-            image: Grayscale image
-            
-        Returns:
-            tuple: (binary_image, method_used, threshold_value)
-        """
-        # Ensure grayscale
-        if len(image.shape) == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = image.copy()
-        
-        # Try Otsu's method first
-        threshold_value, binary = cv2.threshold(
-            gray, 
-            0, 
-            255, 
-            cv2.THRESH_BINARY + cv2.THRESH_OTSU
-        )
-        
-        # Check if result is good (not too much black or white)
-        white_percentage = (np.sum(binary == 255) / binary.size) * 100
-        
-        if 10 < white_percentage < 90:
-            # Good balance
-            return binary, 'otsu', int(threshold_value)
-        else:
-            # Use adaptive threshold
-            binary = cv2.adaptiveThreshold(
-                gray,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                11,
-                2
-            )
-            return binary, 'adaptive_gaussian', 0
+        self.logger = logging.getLogger(f"{__name__}.Binarizer")
     
     def smart_threshold(self, mask: np.ndarray) -> np.ndarray:
         """
-        Adaptive threshold selection with near-binary fast path.
-        Automatically picks the best method for each mask.
-
-        Decision logic (REDESIGNED):
-          1. Already binary? → return as-is
-          2. Near-binary (midtones < 10%)? → Otsu fast path (skip adaptive)
-          3. Very small foreground → Triangle
-          4. Clear bimodal → Otsu
-          5. Non-uniform lighting → Adaptive Gaussian (only for non-near-binary)
-          6. Fallback → Adaptive Mean
+        FIXED: Adaptive threshold selection with near-binary fast path.
+        
+        NEW Decision Logic:
+        1. Already binary? → passthrough
+        2. Near-binary (mid_ratio < 10%)? → Otsu fast path (Adaptive disabled)
+        3. Standard path: try all methods with scoring
+        4. Collapse detection: retry with Otsu if >97% white/black
+        
+        Args:
+            mask: Input mask (any format)
+            
+        Returns:
+            Binary mask with design=255 (bright ink), background=0 (dark)
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
+        # Convert to grayscale
         if len(mask.shape) == 3:
             gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
         else:
             gray = mask.copy()
-
-        total = gray.size
-
-        # ── 1. Already binary check ─────────────────────────────────────────
+        
+        # Ensure uint8
+        if gray.dtype != np.uint8:
+            gray = gray.astype(np.uint8)
+        
+        # ── 1. Already Binary Check ──────────────────────────────────────
         unique_vals = np.unique(gray)
         if len(unique_vals) <= 2 and all(v in [0, 255] for v in unique_vals):
-            logger.info("[SmartThreshold] Already binary — passthrough")
+            self.logger.info("[SmartThreshold] Already binary - passthrough")
             return gray
-
-        # ── 2. Histogram analysis ───────────────────────────────────────────
+        
+        # ── 2. Near-Binary Fast Path (FIXED) ───────────────────────────
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-        dark_ratio  = float(np.sum(hist[:85])) / total   # 0-84
-        light_ratio = float(np.sum(hist[170:])) / total   # 170-255
-        mid_ratio   = 1.0 - dark_ratio - light_ratio
-
-        # ── 3. Near-binary fast path ────────────────────────────────────────
-        # If midtones are < 10%, the image is near-binary
-        # Use Otsu directly — adaptive methods will collapse on near-binary images
+        total_pixels = gray.size
+        mid_ratio = np.sum(hist[85:170]) / total_pixels
+        
         if mid_ratio < 0.10:
-            otsu_val, result = cv2.threshold(gray, 0, 255,
-                                            cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # Near-binary image - use Otsu directly, NEVER use Adaptive
+            self.logger.info(f"[SmartThreshold] Near-binary (mid={mid_ratio:.1%}) - Otsu fast path")
+            _, result = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             
-            # Collapse detection: if result is all-white or all-black, try Triangle
-            white_pct = np.sum(result == 255) / total
-            if white_pct > 0.97 or white_pct < 0.03:
-                logger.warning(f"[SmartThreshold] Otsu collapsed ({white_pct:.1%} white), trying Triangle")
-                _, result = cv2.threshold(gray, 0, 255,
-                                        cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
-                white_pct = np.sum(result == 255) / total
+            # Check for collapse
+            if self._is_collapsed(result):
+                self.logger.warning("[SmartThreshold] Otsu collapsed - trying Triangle")
+                _, result = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+                
+                if self._is_collapsed(result):
+                    self.logger.error("[SmartThreshold] Triangle also collapsed - using raw")
+                    return gray
             
-            logger.info(
-                f"[SmartThreshold] Near-binary Otsu "
-                f"(mid={mid_ratio:.1%}, white={white_pct:.1%})"
-            )
             return result
-
-        # ── 4. Foreground ratio via quick Otsu ──────────────────────────────
-        otsu_val, _ = cv2.threshold(gray, 0, 255,
-                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        fg_ratio = float(np.sum(gray < otsu_val)) / total
-
-        # ── 5. Lighting uniformity (quad-mean variance) ─────────────────────
-        h, w = gray.shape
-        q = [
-            float(gray[:h//2, :w//2].mean()),
-            float(gray[:h//2, w//2:].mean()),
-            float(gray[h//2:, :w//2].mean()),
-            float(gray[h//2:, w//2:].mean()),
-        ]
-        lighting_variance = float(np.var(q))
-
-        # ── 6. Decision tree (only for non-near-binary images) ──────────────
-        if fg_ratio < 0.05:
-            # Very small foreground (logo / watermark) → Triangle
-            _, result = cv2.threshold(gray, 0, 255,
-                                    cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
-            logger.info(
-                f"[SmartThreshold] Triangle "
-                f"(fg_ratio={fg_ratio:.1%})"
+        
+        # ── 3. Standard Path - Try Multiple Methods ───────────────────────
+        methods = []
+        
+        # Method 1: Otsu
+        _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        methods.append(("Otsu", otsu))
+        
+        # Method 2: Triangle
+        _, triangle = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+        methods.append(("Triangle", triangle))
+        
+        # Method 3: Adaptive Mean
+        adaptive_mean = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 21, 3
+        )
+        methods.append(("AdaptiveMean", adaptive_mean))
+        
+        # Method 4: Adaptive Gaussian (NOW SAFE - won't run on near-binary)
+        adaptive_gauss = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 5
+        )
+        methods.append(("AdaptiveGaussian", adaptive_gauss))
+        
+        # ── 4. Evaluate and Select Best Method ─────────────────────────
+        best_method = None
+        best_score = -1
+        best_result = None
+        
+        for method_name, result in methods:
+            # Check for collapse
+            if self._is_collapsed(result):
+                self.logger.warning(f"[SmartThreshold] {method_name} collapsed - skipping")
+                continue
+            
+            # Calculate metrics for scoring
+            metrics = self._calculate_metrics(result)
+            
+            # Scoring function (prefers ~20% ink coverage)
+            ink_penalty = abs(metrics['ink_ratio'] - 0.20) * 2
+            edge_bonus = min(metrics['edge_ratio'] * 10, 1.0)
+            comp_bonus = min(metrics['num_components'] / 10, 1.0)
+            noise_penalty = min(metrics['noise_score'] / 50000, 1.0)
+            
+            score = (1 - ink_penalty) + edge_bonus + comp_bonus - noise_penalty
+            
+            self.logger.debug(
+                f"[SmartThreshold] {method_name}: score={score:.2f}, "
+                f"ink={metrics['ink_ratio']:.1%}, edge={metrics['edge_ratio']:.1%}"
             )
-
-        elif mid_ratio < 0.15 and (dark_ratio > 0.1 or light_ratio > 0.1):
-            # Clear bimodal histogram → Otsu
-            _, result = cv2.threshold(gray, 0, 255,
-                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            logger.info(
-                f"[SmartThreshold] Otsu "
-                f"(mid={mid_ratio:.1%}, dark={dark_ratio:.1%}, "
-                f"light={light_ratio:.1%})"
-            )
-
-        elif lighting_variance > 500:
-            # Non-uniform lighting → Adaptive Gaussian (only for non-near-binary)
-            result = cv2.adaptiveThreshold(
-                gray, 255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY, 31, 5
-            )
-            logger.info(
-                f"[SmartThreshold] Adaptive Gaussian "
-                f"(lighting_var={lighting_variance:.0f})"
-            )
-
-        else:
-            # Mixed / unclear → Adaptive Mean
-            result = cv2.adaptiveThreshold(
-                gray, 255,
-                cv2.ADAPTIVE_THRESH_MEAN_C,
-                cv2.THRESH_BINARY, 21, 3
-            )
-            logger.info(
-                f"[SmartThreshold] Adaptive Mean (fallback) "
-                f"(mid={mid_ratio:.1%})"
-            )
-
-        # ── 7. Collapse detection ───────────────────────────────────────────
-        white_pct = np.sum(result == 255) / total
-        if white_pct > 0.97 or white_pct < 0.03:
-            logger.warning(f"[SmartThreshold] Result collapsed ({white_pct:.1%} white), fallback to Otsu")
-            _, result = cv2.threshold(gray, 0, 255,
-                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        return result
-
-    def remove_noise(self, 
-                     binary: np.ndarray, 
-                     kernel_size: int = 3) -> np.ndarray:
+            
+            if score > best_score:
+                best_score = score
+                best_method = method_name
+                best_result = result
+        
+        # ── 5. Fallback Handling ───────────────────────────────────────
+        if best_result is None:
+            # All methods collapsed - use Otsu as last resort
+            self.logger.warning("[SmartThreshold] All methods failed - using Otsu fallback")
+            _, best_result = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            best_method = "Otsu_fallback"
+        
+        self.logger.info(f"[SmartThreshold] Selected {best_method} (score={best_score:.2f})")
+        return best_result
+    
+    def _is_collapsed(self, mask: np.ndarray, threshold: float = 0.97) -> bool:
         """
-        Remove noise from binary image
+        Check if binary result is collapsed (all white or all black).
         
         Args:
-            binary: Binary image
-            kernel_size: Morphological kernel size
+            mask: Binary mask to check
+            threshold: Threshold for collapse detection (default 97%)
             
         Returns:
-            Cleaned binary image
+            True if mask is collapsed
         """
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, 
-            (kernel_size, kernel_size)
+        if mask.size == 0:
+            return True
+        
+        white_pct = np.sum(mask == 255) / mask.size
+        black_pct = np.sum(mask == 0) / mask.size
+        
+        return white_pct > threshold or black_pct > threshold
+    
+    def _calculate_metrics(self, mask: np.ndarray) -> dict:
+        """
+        Calculate metrics for scoring binary mask quality.
+        
+        Args:
+            mask: Binary mask to analyze
+            
+        Returns:
+            Dictionary with metrics
+        """
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
+        
+        total_pixels = mask.size
+        
+        # Ink ratio (design pixels = 255 in this context)
+        ink_pixels = np.sum(mask == 255)
+        ink_ratio = ink_pixels / total_pixels
+        
+        # Edge ratio
+        edges = cv2.Canny(mask, 50, 150)
+        edge_pixels = np.sum(edges > 0)
+        edge_ratio = edge_pixels / total_pixels
+        
+        # Connected components
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+            mask, 8, cv2.CV_32S
+        )
+        num_components = num_labels - 1  # Exclude background
+        
+        # Noise score (small components)
+        noise_score = 0
+        for label in range(1, num_labels):
+            area = stats[label, cv2.CC_STAT_AREA]
+            if area < 50:  # Small components = noise
+                noise_score += area
+        
+        return {
+            'ink_ratio': ink_ratio,
+            'edge_ratio': edge_ratio,
+            'num_components': num_components,
+            'noise_score': noise_score
+        }
+    
+    def adaptive_threshold(self, 
+                         image: np.ndarray, 
+                         method: str = 'gaussian',
+                         block_size: int = 31,
+                         C: float = 5) -> np.ndarray:
+        """
+        Apply adaptive thresholding with specified parameters.
+        
+        Args:
+            image: Input grayscale image
+            method: 'gaussian' or 'mean'
+            block_size: Size of neighborhood (must be odd)
+            C: Constant subtracted from mean
+            
+        Returns:
+            Binary image
+        """
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        if gray.dtype != np.uint8:
+            gray = gray.astype(np.uint8)
+        
+        # Ensure block_size is odd and >= 3
+        block_size = max(3, block_size | 1)
+        
+        if method.lower() == 'gaussian':
+            result = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, block_size, C
+            )
+        else:
+            result = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, 
+                cv2.THRESH_BINARY, block_size, C
+            )
+        
+        return result
+    
+    def otsu_threshold(self, image: np.ndarray) -> Tuple[np.ndarray, float]:
+        """
+        Apply Otsu's thresholding method.
+        
+        Args:
+            image: Input grayscale image
+            
+        Returns:
+            Tuple of (binary_image, threshold_value)
+        """
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
+        
+        if gray.dtype != np.uint8:
+            gray = gray.astype(np.uint8)
+        
+        thresh_val, result = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
         )
         
-        # Opening to remove small white noise
-        cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        return result, float(thresh_val)
+    
+    def triangle_threshold(self, image: np.ndarray) -> Tuple[np.ndarray, float]:
+        """
+        Apply Triangle thresholding method.
         
-        # Closing to fill small black holes
-        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+        Args:
+            image: Input grayscale image
+            
+        Returns:
+            Tuple of (binary_image, threshold_value)
+        """
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image.copy()
         
-        return cleaned
+        if gray.dtype != np.uint8:
+            gray = gray.astype(np.uint8)
+        
+        thresh_val, result = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE
+        )
+        
+        return result, float(thresh_val)

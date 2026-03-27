@@ -31,6 +31,10 @@ class AnalysisResult:
     noise_level: float
     is_low_res: bool
     confidence: float        # 0.0 - 1.0
+    
+    # NEW: Additional diagnostic fields for bimodality detection
+    mid_ratio: float        # histogram midtones ratio (85-169)
+    shape_ratio: float      # perimeter/area ratio
 
 class SmartAnalyzer:
     def analyze(self, image: np.ndarray, dpi: int = 300) -> AnalysisResult:

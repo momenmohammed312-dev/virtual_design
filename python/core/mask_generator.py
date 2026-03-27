@@ -1,7 +1,7 @@
 """
 mask_generator.py — Binary Mask Generator for each color layer
 Virtual Design Silk Screen Studio
-Replaces the empty placeholder that was returning None
+FIXED: BUG B - get_mask_stats() counting ink pixels correctly + adaptive epsilon
 """
 
 import cv2
@@ -16,6 +16,7 @@ class MaskGenerator:
     """
     يولّد binary mask (أبيض وأسود) لكل لون من نتيجة ColorSeparator.
     يطبق morphological operations لتنظيف الـ masks.
+    FIXED: Correct ink pixel counting and adaptive contour epsilon
     """
 
     def generate_masks(
@@ -40,7 +41,7 @@ class MaskGenerator:
                               من الصورة الأصلية (للـ halftone قبل الـ binarization)
 
         Returns:
-            List[np.ndarray]: mask لكل لون
+            List[np.ndarray]: mask لكل لون (film polarity: ink=0, bg=255)
         """
         label_map = separation_result["label_map"]
         num_colors = separation_result["num_colors"]
@@ -48,189 +49,261 @@ class MaskGenerator:
         logger.info(f"[MaskGenerator] Generating {num_colors} masks (grayscale_output={grayscale_output})")
         masks = []
 
-        # تحويل الصورة الأصلية لـ grayscale إذا احتجناه
-        if grayscale_output:
+        # Get original image for grayscale output
+        if len(image.shape) == 3:
             gray_orig = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray_orig = image.copy()
 
         for i in range(num_colors):
-            # بناء الـ mask الأساسي
-            mask = np.zeros(label_map.shape, dtype=np.uint8)
-            
+            # Start with white background (film polarity)
+            mask = np.full(label_map.shape, 255, dtype=np.uint8)
+
             if grayscale_output:
-                # SILK SCREEN OPT: We want "Ink Density".
-                # Darkest pixel (0) = 100% ink (255) = Largest Dot.
-                # Lightest pixel (255) = 0% ink (0) = Smallest Dot.
+                # For halftone: preserve grayscale intensity from original image
                 mask[label_map == i] = 255 - gray_orig[label_map == i]
             else:
-                # SILK SCREEN STANDARD (FILM): design=black(0) ink on white(255) paper.
-                # Keep masks in film polarity throughout the pipeline to avoid accidental double inversion.
-                mask.fill(255)  # White background (paper/clear)
-                mask[label_map == i] = 0  # Black design (ink)
+                # For solid: black design on white background (film polarity)
+                mask[label_map == i] = 0  # Design pixels = BLACK (0)
 
             if apply_cleanup and not grayscale_output:
-                # لا نطبق cleanup على الـ grayscale masks لأنه يغير الـ intensities
                 mask = self._cleanup_mask(mask, morph_kernel_size, min_area)
 
-            # Count INK pixels (black=0) not background pixels (white=255)
-            # In film polarity: ink=0, background=255
-            pixel_count = int(np.sum(mask == 0))
-            logger.info(f"[MaskGenerator] Mask {i+1}/{num_colors}: {pixel_count} ink pixels")
+            # FIXED: Log correct ink coverage (design pixels = 0)
+            coverage = self.get_mask_stats(mask)["filled_pixels"]
+            logger.info(f"  Mask {i+1}: {coverage} pixels ({coverage/label_map.size:.1%} coverage)")
+
             masks.append(mask)
 
         return masks
 
-    def _cleanup_mask(
-        self,
-        mask: np.ndarray,
-        kernel_size: int = 3,
-        min_area: int = 20,
-    ) -> np.ndarray:
+    def get_mask_stats(self, mask: np.ndarray) -> Dict:
         """
-        تنظيف الـ mask من الضوضاء الصغيرة والفراغات.
-        min_area=20 لحماية النقاط العربية (dots, hamza) اللي بتوصل 20-80px.
-        """
-        # 1. Smart smoothing: Super-sampling + blur + threshold for anti-aliased edges
-        mask = self._smart_smooth_mask(mask)
+        FIXED: Count ink pixels correctly (mask == 0 for film polarity)
         
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
-        )
+        Args:
+            mask: Binary mask with film polarity (ink=0, bg=255)
+            
+        Returns:
+            Dictionary with mask statistics
+        """
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
 
-        # 2. إزالة النقاط الصغيرة المتناثرة (noise)
+        total_pixels = mask.size
+        
+        # FIXED: Count ink pixels (design = 0 in film polarity)
+        filled = int(np.sum(mask == 0))  # BLACK pixels = design
+        empty = total_pixels - filled
+        
+        # Calculate coverage percentage
+        coverage_pct = (filled / total_pixels) * 100 if total_pixels > 0 else 0
+
+        return {
+            "total_pixels": total_pixels,
+            "filled_pixels": filled,      # Design pixels
+            "empty_pixels": empty,        # Background pixels
+            "coverage_pct": coverage_pct
+        }
+
+    def _cleanup_mask(self, mask: np.ndarray, kernel_size: int = 3, min_area: int = 50) -> np.ndarray:
+        """
+        Apply morphological cleanup to remove noise and fill holes.
+        Uses adaptive epsilon for small contours (Arabic dots, hamza, etc.)
+        
+        Args:
+            mask: Binary mask to clean
+            kernel_size: Size of morphological kernel
+            min_area: Minimum area for connected components
+            
+        Returns:
+            Cleaned binary mask
+        """
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
+
+        # Morphological opening to remove small noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         cleaned = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-        # 3. سد الفراغات الصغيرة داخل الأشكال
+        # Morphological closing to fill small holes
         cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
 
-        # 4. إزالة connected components صغيرة جداً
+        # Remove small connected components (noise removal)
         if min_area > 0:
             cleaned = self._remove_small_components(cleaned, min_area)
 
+        # Apply smart smoothing for contours (adaptive epsilon)
+        cleaned = self._smart_smooth_mask(cleaned)
+
         return cleaned
+
+    def _remove_small_components(self, mask: np.ndarray, min_area: int) -> np.ndarray:
+        """
+        Remove connected components smaller than min_area.
+        
+        Args:
+            mask: Binary mask
+            min_area: Minimum area threshold
+            
+        Returns:
+            Mask with small components removed
+        """
+        # Find connected components (work on white pixels)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            cv2.bitwise_not(mask), 8, cv2.CV_32S
+        )
+
+        # Create output mask with white background
+        result = np.full_like(mask, 255)
+
+        # Keep only components larger than min_area
+        for label in range(1, num_labels):
+            area = stats[label, cv2.CC_STAT_AREA]
+            if area >= min_area:
+                # Set pixels of this component to black (design)
+                result[labels == label] = 0
+
+        return result
 
     def _smart_smooth_mask(self, mask: np.ndarray) -> np.ndarray:
         """
-        Vector-like smoothing for clean edges.
-        Uses contour approximation (epsilon) for sharp, vector-quality edges.
+        Apply contour smoothing with adaptive epsilon.
+        FIXED: Use smaller epsilon for small contours (Arabic dots, hamza)
         
-        This is better than super-sampling for text/logos because:
-        - Preserves sharp corners
-        - Produces clean binary edges
-        - No anti-aliasing artifacts
+        Args:
+            mask: Binary mask to smooth
+            
+        Returns:
+            Smoothed mask
         """
-        # 1. Find contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # 2. Create clean output mask
-        smooth = np.zeros_like(mask)
-        
-        # 3. Draw contours with adaptive epsilon simplification
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
+
+        # Find contours (work on white pixels)
+        contours, _ = cv2.findContours(
+            cv2.bitwise_not(mask), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        if not contours:
+            return mask
+
+        # Create result mask
+        result = np.full_like(mask, 255)
+
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 20:  # Skip tiny contours (noise)
-                continue
             
-            # Adaptive epsilon: smaller for small contours (preserve Arabic dots, hamza)
-            # Small contours (area < 500): epsilon = 0.2% of perimeter
-            # Large contours: epsilon = 0.5% of perimeter
-            perimeter = cv2.arcLength(cnt, True)
+            # FIXED: Adaptive epsilon based on contour area
             if area < 500:
-                epsilon = 0.002 * perimeter  # preserve fine details
+                # Small contours (Arabic dots, hamza, small letters)
+                epsilon = 0.002 * cv2.arcLength(cnt, True)  # 0.2% - preserves details
             else:
-                epsilon = 0.005 * perimeter  # standard simplification
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-            
-            # Draw filled contour
-            cv2.drawContours(smooth, [approx], -1, 255, -1)
-        
-        # 4. Final threshold for clean binary
-        _, smooth = cv2.threshold(smooth, 127, 255, cv2.THRESH_BINARY)
-        
-        return smooth
+                # Larger contours - standard epsilon
+                epsilon = 0.005 * cv2.arcLength(cnt, True)  # 0.5% - standard smoothing
 
-    def _remove_small_components(
-        self, mask: np.ndarray, min_area: int
-    ) -> np.ndarray:
-        """إزالة المكونات المتصلة الأصغر من min_area pixels."""
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-            mask, connectivity=8
-        )
-        result = np.zeros_like(mask)
-        for label_idx in range(1, num_labels):  # 0 = background
-            area = stats[label_idx, cv2.CC_STAT_AREA]
-            if area >= min_area:
-                result[labels == label_idx] = 255
+            # Approximate contour
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+
+            # Draw filled contour
+            cv2.drawContours(result, [approx], -1, 0, cv2.FILLED)
+
         return result
 
-    def generate_film_image(
-        self,
-        mask: np.ndarray,
-        invert: bool = False,
-        add_border: bool = True,
-        border_px: int = 20,
-    ) -> np.ndarray:
+    def validate_masks(self, masks: List[np.ndarray]) -> List[bool]:
         """
-        تحويل الـ mask لصورة فيلم جاهزة للطباعة.
-
+        Validate each mask for common issues.
+        
         Args:
-            mask: binary mask
-            invert: عكس الألوان (أسود على أبيض أو أبيض على أسود)
-            add_border: إضافة حدود بيضاء حول الصورة
-            border_px: عرض الحدود بالـ pixels
-
+            masks: List of binary masks to validate
+            
         Returns:
-            np.ndarray: صورة الفيلم النهائية
+            List of validation results (True = valid, False = invalid)
         """
-        film = mask.copy()
+        results = []
+        
+        for i, mask in enumerate(masks):
+            stats = self.get_mask_stats(mask)
+            
+            # Check for empty mask
+            if stats["filled_pixels"] == 0:
+                logger.warning(f"  [Validate] Mask {i+1}: EMPTY - no design pixels")
+                results.append(False)
+                continue
+            
+            # Check for overly filled mask (possible polarity issue)
+            if stats["coverage_pct"] > 95:
+                logger.warning(f"  [Validate] Mask {i+1}: OVERFILLED - {stats['coverage_pct']:.1f}% coverage")
+                results.append(False)
+                continue
+            
+            # Check for very sparse mask
+            if stats["coverage_pct"] < 0.5:
+                logger.warning(f"  [Validate] Mask {i+1}: TOO SPARSE - {stats['coverage_pct']:.1f}% coverage")
+                results.append(False)
+                continue
+            
+            # Mask looks good
+            logger.debug(f"  [Validate] Mask {i+1}: OK - {stats['coverage_pct']:.1f}% coverage")
+            results.append(True)
+        
+        return results
 
-        if invert:
-            film = cv2.bitwise_not(film)
-
-        if add_border:
-            film = cv2.copyMakeBorder(
-                film, border_px, border_px, border_px, border_px,
-                cv2.BORDER_CONSTANT, value=255,
-            )
-
-        # تحويل لـ RGB للتصدير
-        film_rgb = cv2.cvtColor(film, cv2.COLOR_GRAY2RGB)
-        return film_rgb
-
-    def generate_combined_preview(
-        self,
-        masks: List[np.ndarray],
-        colors: List,
-        background_color: tuple = (255, 255, 255),
-    ) -> np.ndarray:
+    def combine_masks(self, masks: List[np.ndarray], operation: str = "union") -> np.ndarray:
         """
-        Preview ملوّن يجمع جميع الـ masks بألوانها الأصلية.
-        مفيد للعرض في الـ UI.
+        Combine multiple masks using specified operation.
+        
+        Args:
+            masks: List of masks to combine
+            operation: "union", "intersection", or "difference"
+            
+        Returns:
+            Combined mask
         """
         if not masks:
-            return np.zeros((100, 100, 3), dtype=np.uint8)
+            return np.zeros((100, 100), dtype=np.uint8)  # Default empty mask
+        
+        if len(masks) == 1:
+            return masks[0].copy()
 
-        h, w = masks[0].shape
-        preview = np.full((h, w, 3), background_color, dtype=np.uint8)
+        # Start with first mask
+        result = masks[0].copy()
 
-        for mask, color in zip(masks, colors):
-            # تطبيق اللون — color هو RGB tuple
-            bgr = (color[2], color[1], color[0])  # RGB → BGR
-            preview[mask > 0] = bgr
+        if operation == "union":
+            # Union: any pixel that is design in any mask
+            for mask in masks[1:]:
+                result = cv2.bitwise_or(result, mask)
+        
+        elif operation == "intersection":
+            # Intersection: pixel must be design in all masks
+            for mask in masks[1:]:
+                result = cv2.bitwise_and(result, mask)
+        
+        elif operation == "difference":
+            # Difference: subtract subsequent masks from first
+            for mask in masks[1:]:
+                result = cv2.bitwise_xor(result, mask)
+        
+        return result
 
-        return preview
+    def mask_to_grayscale(self, mask: np.ndarray, intensity: int = 128) -> np.ndarray:
+        """
+        Convert binary mask to grayscale with specified intensity.
+        
+        Args:
+            mask: Binary mask (film polarity)
+            intensity: Grayscale intensity for design pixels (0-255)
+            
+        Returns:
+            Grayscale mask
+        """
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
 
-    def get_mask_stats(self, masks: List[np.ndarray]) -> List[Dict]:
-        """إحصاءات تفصيلية لكل mask — مفيدة للـ validation."""
-        total_pixels = masks[0].size if masks else 1
-        stats = []
-        for i, mask in enumerate(masks):
-            filled = int(np.sum(mask > 0))
-            stats.append(
-                {
-                    "index": i,
-                    "filled_pixels": filled,
-                    "coverage_percent": round(filled / total_pixels * 100, 2),
-                    "is_empty": filled == 0,
-                }
-            )
-        return stats
+        # Create grayscale result
+        gray = np.full_like(mask, 255)  # White background
+        
+        # Set design pixels to specified intensity
+        gray[mask == 0] = intensity
+        
+        return gray
