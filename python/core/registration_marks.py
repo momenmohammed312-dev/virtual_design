@@ -700,11 +700,7 @@ class RegistrationMarksGenerator:
         config: RegistrationConfig
     ):
         """
-        Draw L-shaped corner marks at image boundaries
-        
-        ┌─────
-        │
-        │
+        Draw L-shaped corner marks at image boundaries (with safety gap to prevent overlap)
         """
         h, w = canvas.shape[:2]
         b = config.border_size
@@ -712,35 +708,36 @@ class RegistrationMarksGenerator:
         color = style.color
         thickness = style.line_thickness
         length = 40  # Length of corner mark lines
+        gap = 10     # Safety gap to ensure no overlap with design
         
         corners = [
             # Top-left
             {
-                'h_start': (b - length, b),
-                'h_end': (b + length, b),
-                'v_start': (b, b - length),
-                'v_end': (b, b + length),
+                'h_start': (b - length - gap, b - gap),
+                'h_end': (b - gap, b - gap),
+                'v_start': (b - gap, b - length - gap),
+                'v_end': (b - gap, b - gap),
             },
             # Top-right
             {
-                'h_start': (w - b - length, b),
-                'h_end': (w - b + length, b),
-                'v_start': (w - b, b - length),
-                'v_end': (w - b, b + length),
+                'h_start': (w - b + gap, b - gap),
+                'h_end': (w - b + gap + length, b - gap),
+                'v_start': (w - b + gap, b - length - gap),
+                'v_end': (w - b + gap, b - gap),
             },
             # Bottom-left
             {
-                'h_start': (b - length, h - b),
-                'h_end': (b + length, h - b),
-                'v_start': (b, h - b - length),
-                'v_end': (b, h - b + length),
+                'h_start': (b - length - gap, h - b + gap),
+                'h_end': (b - gap, h - b + gap),
+                'v_start': (b - gap, h - b + gap),
+                'v_end': (b - gap, h - b + gap + length),
             },
             # Bottom-right
             {
-                'h_start': (w - b - length, h - b),
-                'h_end': (w - b + length, h - b),
-                'v_start': (w - b, h - b - length),
-                'v_end': (w - b, h - b + length),
+                'h_start': (w - b + gap, h - b + gap),
+                'h_end': (w - b + gap + length, h - b + gap),
+                'v_start': (w - b + gap, h - b + gap),
+                'v_end': (w - b + gap, h - b + gap + length),
             },
         ]
         

@@ -108,11 +108,27 @@ logger = logging.getLogger(__name__)
 TOTAL_STEPS = 10
 
 
-def _step(n: int, name: str) -> None:
-    """
-    طباعة تقدم الخطوة على stdout — Dart يقرأ هذا real-time.
-    FATAL #4 fix: flush=True ضروري لضمان وصول السطر فوراً.
-    """
+def _check_modules() -> None:
+    """Check module availability."""
+    optional = {
+        'SmartAnalyzer': HAS_SMART_ANALYZER,
+        'HalftoneGenerator': HAS_HALFTONE,
+        'Binarizer': HAS_BINARIZER,
+        'StrokeValidator': HAS_STROKE_VALIDATOR,
+        'RegistrationMarks': HAS_REG_MARKS,
+        'Exporter': HAS_EXPORTER,
+        'PantoneLibrary': HAS_PANTONE,
+        'PipelineController': HAS_CONTROLLER,
+    }
+    missing_optional = [name for name, available in optional.items() if not available]
+    if missing_optional:
+        logger.warning(f"[Modules] Optional modules NOT available: {', '.join(missing_optional)}")
+    else:
+        logger.info("[Modules] All optional modules loaded OK.")
+
+
+def _step(n: float, name: str) -> None:
+    """Print step progress for Dart."""
     print(f"Step {n}/{TOTAL_STEPS}: {name}", flush=True)
 
 
@@ -242,12 +258,13 @@ def step1_load_image(input_path: str) -> np.ndarray:
         
         # Auto upscale small images to prevent stroke validation failures
         h, w = image.shape[:2]
-        min_width = 1500
-        if w < min_width:
-            scale_factor = min_width / w
+        # Professional standard: Target ~2000px width for reliable analysis
+        target_width = 2000
+        if w < target_width:
+            scale_factor = target_width / w
             new_w = int(w * scale_factor)
             new_h = int(h * scale_factor)
-            # Phase 16: Use Lanczos4 for high-quality upscaling (prevents jagged logo edges)
+            # Use INTER_LANCZOS4 for maximal detail preservation
             image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
             logger.info(f"Auto-upscaled small image: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [LANCZOS4]")
         
@@ -310,18 +327,22 @@ def step1_5_preprocess(image: np.ndarray) -> np.ndarray:
 def step2_separate_colors(
     image: np.ndarray,
     num_colors: int,
-    auto_detect: bool = False,
-    white_threshold: int = 240,
 ) -> dict:
-    _step(2, f"Color separation {'(auto-detect)' if auto_detect else f'{num_colors} colors'}")
+    """
+    Wrapper around ColorSeparator.separate().
+    num_colors is the effective count determined by the caller.
+    auto_detect and white_threshold are NOT passed to separate() —
+    they are caller-level concerns, not K-means parameters.
+    """
+    _step(2, f"Color separation ({num_colors} colors)")
     separator = ColorSeparator()
     _progress((2 - 1) / TOTAL_STEPS + 0.1, 'K-means starting')
 
+    # FIX: Remove auto_detect + white_threshold — they are not in separate() signature.
+    # Both branches of the old ternary computed max(num_colors, 2) identically — simplified.
     result = separator.separate(
         image,
-        num_colors=max(num_colors, 2) if not auto_detect else max(num_colors, 2),
-        auto_detect=auto_detect,
-        white_threshold=white_threshold,
+        num_colors=max(num_colors, 2),
     )
     _progress((2 - 1) / TOTAL_STEPS + 0.9, f'K-means complete: {result["num_colors"]} colors')
     return result
@@ -337,42 +358,50 @@ def step3_generate_masks(image: np.ndarray, separation_result: dict, halftone_mo
         grayscale_output=halftone_mode,
         apply_cleanup=not halftone_mode  # Skip cleanup for grayscale to preserve intensities
     )
-    stats = generator.get_mask_stats(masks)
+    
     total = max(1, len(masks))
-    for i, s in enumerate(stats):
+    for i, m in enumerate(masks):
+        m_stats = generator.get_mask_stats(m)
         # emit subprogress across this step
         sub = (i + 1) / total
         overall = ((3 - 1) + sub) / TOTAL_STEPS
         _progress(overall, f"Mask {i+1}/{total} generated")
-        logger.info(f"  Mask {s['index']+1}: {s['coverage_percent']}% coverage")
+        logger.info(f"  Mask {i+1}: {m_stats['coverage_pct']:.1f}% coverage")
+        
     return masks
 
 
-def step4_clean_edges(masks: list, image_class=None) -> list:
-    _step(5, "Cleaning edges (adaptive kernel)")
+def step4_clean_edges(masks: list, image_class=None, dpi: int = 300) -> list:
+    _step(6, "Cleaning edges (adaptive cleanup)")
+    
+    # Dynamic kernel size: 0.1mm relative to DPI
+    # ~1.2px at 300dpi, ~2.4px at 600dpi
+    base_size = max(1, int(dpi * 0.1 / 25.4))
     
     # Adaptive kernel sizing based on image class
     if image_class and hasattr(image_class, 'value'):
         if image_class.value == 'text_logo':
-            # TEXT_LOGO: kernel صغير جداً — يحافظ على التفاصيل الدقيقة
-            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
-            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
-            kernel_desc = "1x1 (text preservation)"
+            # TEXT_LOGO: minimal cleanup to preserve sharp serifs
+            sz = max(1, base_size)
+            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+            kernel_desc = f"{sz}x{sz} (text)"
         elif image_class.value == 'photo':
-            # PHOTO: kernel أكبر — noise أكثر
-            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            kernel_desc = "3x3 (photo noise reduction)"
+            # PHOTO: larger cleanup to suppress halftone-like noise
+            sz = max(3, base_size + 1)
+            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+            kernel_desc = f"{sz}x{sz} (photo)"
         else:
-            # Default (ARTWORK / LOW_QUALITY)
-            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-            kernel_desc = "2x2 (balanced)"
+            sz = max(2, base_size)
+            k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+            k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+            kernel_desc = f"{sz}x{sz} (balanced)"
     else:
-        # Fallback to original behavior
-        k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        kernel_desc = "2x2 (default)"
+        sz = max(2, base_size)
+        k_open  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (sz, sz))
+        kernel_desc = f"{sz}x{sz} (default)"
     
     result = []
     for mask in masks:
@@ -515,7 +544,7 @@ def step6_binarize(masks: list, args: argparse.Namespace) -> list:
 
 
 def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
-    _step(7, "Validating & fixing thin strokes")
+    _step(7.5, "Validating & fixing thin strokes")
     
     if not HAS_STROKE_VALIDATOR:
         logger.info("  StrokeValidator not available, skipping")
@@ -527,11 +556,13 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
     
     result = []
     for i, mask in enumerate(masks):
-        if mask.dtype != np.uint8:
-            mask = mask.astype(np.uint8)
-        
-        # Find connected components
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8, cv2.CV_32S)
+        # Ensure mask is binary for CC analysis
+        if len(mask.shape) == 3: gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        else: gray = mask.copy()
+        _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+
+        # Find connected components on binary mask
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8, cv2.CV_32S)
         
         thin_found = False
         for lbl in range(1, num_labels):
@@ -545,7 +576,8 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
         
         if thin_found:
             logger.warning(f"  Mask {i+1}: thin strokes detected (<{min_stroke_px}px), auto-thickening")
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (min_stroke_px * 2 + 1, min_stroke_px * 2 + 1))
+            # Dynamic iterations based on how thin it is
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             mask = cv2.dilate(mask, kernel, iterations=1)
         
         result.append(mask)
@@ -554,98 +586,64 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
     return result
 
 
-def step7_5_strict_binarization(masks: list, args: argparse.Namespace) -> list:
+def step7_final_binarization(masks: list, args: argparse.Namespace) -> list:
     """
-    Apply strict binarization and noise removal to ensure clean solid films.
+    MERGED PRODUCTION BINARIZATION (Phase 16 Audit Fix).
+    Replaces old step6 and step7.5 to prevent detail loss.
+    Uses Binarizer.auto_threshold() with recursive fallback.
     """
-    is_halftone = args.halftone and not getattr(args, 'skip_halftone', False)
-    _step(7.5, f"Strict binarization ({'halftone' if is_halftone else 'solid'} mode)")
+    _step(7, "Production Binarization & Validation")
     
-    result = []
-    total = max(1, len(masks))
-    
-    # Use global-threshold if provided, fallback to 200 for solid, 45 for halftone
-    threshold_val = getattr(args, 'global_threshold', 200 if not is_halftone else 45)
-    noise_min_area = getattr(args, 'noise_removal', 10)
-    
-    # Smart binarizer instance (used for solid mode)
-    binarizer = Binarizer() if HAS_BINARIZER else None
-    
-    for i, mask in enumerate(masks):
-        if mask.dtype != np.uint8:
-            mask = mask.astype(np.uint8)
+    if not HAS_BINARIZER:
+        logger.warning("Binarizer not found. Falling back to simple Otsu.")
+        result = []
+        for m in masks:
+            _, b = cv2.threshold(m, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            result.append(b)
+        return result
 
-        # ── BINARY MASK GUARD: Ensure clean edges and preserved dots ──────
+    binarizer = Binarizer()
+    out = []
+    total = len(masks)
+    start_bin = time.time()
+    
+    for i, m in enumerate(masks):
+        # Use auto mode to select best method
+        image_class = getattr(args, '_image_class', None)
+        image_class_val = image_class.value if image_class and hasattr(image_class, 'value') else 'auto'
         
-        is_solid = not is_halftone
+        m_start = time.time()
+        binary = binarizer.binarize(m, method='auto', image_class=image_class_val, global_threshold=getattr(args, 'global_threshold', 200))
+        m_elapsed = (time.time() - m_start) * 1000
         
-        if is_solid:
-            # NEW: Skip upscale+blur for text/logo (simple type or low smooth_factor)
-            # This preserves razor-sharp edges and prevents dot merging in Arabic/Latin text
-            img_type = getattr(args, 'image_type', 'auto')
-            cli_smooth = getattr(args, 'smoothing_factor', 0.3)
-            skip_upscale_blur = (img_type == 'simple') or (cli_smooth <= 0.15)
-            
-            if skip_upscale_blur:
-                # Direct threshold with threshold_val — sharp, no smoothing
-                if binarizer is not None:
-                    # FIXED: Call smart_threshold DIRECTLY on mask (no double inversion)
-                    # smart_threshold handles near-binary images safely now
-                    binary_mask = binarizer.smart_threshold(mask)
-                    logger.info(f"  [Solid] Mask {i+1}: SmartThreshold applied directly")
-                else:
-                    _, binary_mask = cv2.threshold(mask, threshold_val, 255, cv2.THRESH_BINARY)
-                    logger.info(f"  [Solid] Mask {i+1}: sharp binarization (no upscale-blur) [image_type={img_type}, smooth={cli_smooth:.2f}]")
-            else:
-                # Standard: upscale 2x + blur(3x3) + threshold + downscale
-                h_m, w_m = mask.shape[:2]
-                up = cv2.resize(mask, (w_m * 2, h_m * 2), interpolation=cv2.INTER_CUBIC)
-                up = cv2.GaussianBlur(up, (3, 3), 0)
-                _, binary_mask = cv2.threshold(up, threshold_val, 255, cv2.THRESH_BINARY)
-                binary_mask = cv2.resize(binary_mask, (w_m, h_m), interpolation=cv2.INTER_AREA)
-                _, binary_mask = cv2.threshold(binary_mask, 127, 255, cv2.THRESH_BINARY)
-                logger.info(f"  [Solid] Mask {i+1}: upscale-blur binarization (smooth edges)")
+        # Check if binarizer rejected the mask (returned a white/blank mask)
+        total_px = binary.size
+        white_px = np.count_nonzero(binary == 255)
+        if white_px / total_px > 0.999:
+            logger.warning(f"  [Binarizer] Mask {i+1} REJECTED (Method Cache: {'YES' if image_class_val in binarizer._method_cache else 'NO'})")
         else:
-            # HALFTONE MODE: NO smoothing — raw dot preservation
-            safe_thresh = 45  # low threshold to keep tiny halftone dots
-            _, binary_mask = cv2.threshold(mask, safe_thresh, 255, cv2.THRESH_BINARY)
+            logger.info(f"  [Binarizer] Mask {i+1} PROCESSED in {m_elapsed:.0f}ms (EDA-Score applied)")
         
-        # --- Enforce polarity via PipelineController (single source of truth) ---
+        # Final Guard: Enforce polarity and audit
         if HAS_CONTROLLER:
-            binary_mask = controller.enforce_polarity(binary_mask, stage=f"step7.5/{i+1}")
-        
-        # --- Inversion Guard (FIXED thresholds) ---
-        # In film polarity: design=BLACK (0), background=WHITE (255)
-        # Invert ONLY if design coverage is suspiciously low (< 1%) OR suspiciously high (> 85%)
-        total_px = binary_mask.size
-        design_coverage = np.sum(binary_mask == 0) / total_px  # Count BLACK pixels as design
-        
-        if design_coverage > 0.85 or design_coverage < 0.01:
-            logger.warning(f"  [Guard:Inversion] Inverting mask {i+1} (coverage={design_coverage:.1%})")
-            binary_mask = cv2.bitwise_not(binary_mask)
-        
-        # Audit via PipelineController
-        if HAS_CONTROLLER:
-            controller.audit(binary_mask, stage=f"step7.5/{i+1}")
-        
-        # Noise removal (Area opening) — يشتغل على الـ design pixels (الأبيض بعد الـ invert للـ CC)
+            binary = controller.enforce_polarity(binary, stage=f"final_bin/{i+1}")
+            controller.audit(binary, stage=f"final_bin_audit/{i+1}")
+
+        # Noise removal (Area opening)
+        noise_min_area = getattr(args, 'noise_removal', 3)
         if noise_min_area > 0:
-            # connectedComponents يشتغل على الأبيض — الـ design عندنا أسود (0)
-            # نعكس مؤقتاً للـ noise removal فقط
-            inv_for_cc = cv2.bitwise_not(binary_mask)
-            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-                inv_for_cc, 8, cv2.CV_32S
-            )
-            clean = np.full_like(binary_mask, 255)  # ابدأ بخلفية بيضاء
-            for lbl in range(1, num_labels):
+            inv = cv2.bitwise_not(binary)
+            num, labels, stats, _ = cv2.connectedComponentsWithStats(inv, 8, cv2.CV_32S)
+            clean = np.full_like(binary, 255)
+            for lbl in range(1, num):
                 if stats[lbl, cv2.CC_STAT_AREA] >= noise_min_area:
-                    clean[labels == lbl] = 0  # الـ design أسود
-            binary_mask = clean
+                    clean[labels == lbl] = 0
+            binary = clean
+            
+        out.append(binary)
+        _progress(((7 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Binarized {i+1}/{total}")
         
-        result.append(binary_mask)
-        _progress(((7.5 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Processed {i+1}/{total} [BINARY-GUARD]")
-        
-    return result
+    return out
 
 
 
@@ -819,6 +817,10 @@ def step9_export(
     try:
         total = max(1, len(masks))
         
+        if HAS_CONTROLLER:
+            from core.pipeline_controller import PipelineController
+            controller = PipelineController()
+            
         # Conditional smoothing: use CLI arg if provided, else auto-detect based on colors
         cli_smooth = getattr(args, 'smoothing_factor', None)
         if cli_smooth is not None and cli_smooth > 0:
@@ -1127,6 +1129,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     start_time = time.time()
+    _check_modules()
 
     # ═══ Auto-set parameters based on image type ═══
     # When image_type is simple/mixed/complex, override all related params unconditionally.
@@ -1211,19 +1214,16 @@ def main() -> int:
         image = step1_5_preprocess(image)
 
         # Step 3 — Color Separation
-        # FIXED: Respect num_colors from SmartAnalyzer, don't force 4 for auto_detect
+        # args.colors is always > 0 here because SmartAnalyzer already overrides it
+        # when args.colors == 0 (see Step 0 above). The elif was dead code.
         if args.colors > 0:
             target_colors = args.colors
-        elif HAS_SMART_ANALYZER and img_type == 'auto' and hasattr(args, '_analysis_confidence') and args._analysis_confidence > 0:
-            target_colors = analysis.num_colors
         else:
-            target_colors = 4
+            target_colors = 4  # fallback if SmartAnalyzer was unavailable
             
         separation_result = step2_separate_colors(
             image,
             target_colors,
-            auto_detect=(args.colors == 0) or args.auto_colors,
-            white_threshold=getattr(args, 'white_threshold', 240),
         )
 
         # Step 3.5 — Automatic Underbase Creation
@@ -1245,39 +1245,41 @@ def main() -> int:
 
         # Step 5 — Edge Cleaning (always enabled for solid, skip for halftone)
         if not args.halftone:
-            masks = step4_clean_edges(masks, getattr(args, '_image_class', None))
+            masks = step4_clean_edges(masks, getattr(args, '_image_class', None), dpi=args.dpi)
         else:
             _step(5, "Edge cleaning (skipped for halftone)")
 
         # Step 6 — Halftone (applied to grayscale masks)
         masks = step5_halftone(masks, args)
 
-        # Step 7 — Binarize (after halftone if enabled)
-        if args.halftone:
-            masks = step6_binarize(masks, args)
-        else:
-            _step(7, "Binarizing (skipped - masks already binary)")
-
-        # Step 8 — Stroke Validation
+        # Step 7 — Final Binarization (Production merged)
+        masks = step7_final_binarization(masks, args)
+        
+        # Step 7.5 — Stroke Validation (ensure printability)
         masks = step7_validate_strokes(masks, args)
 
-        # Step 8.5 — Strict Binarization (prevents false halftoning)
-        masks = step7_5_strict_binarization(masks, args)
-
-        # Step 9 — Registration Marks
+        # Step 8 — Registration Marks
         masks = step8_registration_marks(masks, output_dir, args)
         
-        # DEBUG: Save masks after registration marks
-        for idx, mask in enumerate(masks):
-            debug_path = os.path.join(output_dir, f"debug_mask_{idx+1}_after_registration.png")
-            cv2.imwrite(debug_path, mask)
-            logger.info(f"DEBUG: Saved mask {idx+1} after registration marks: {debug_path}")
+        # Debug output removed — was writing unconditional debug_mask_* files to output dir.
+        # Re-enable with --debug flag if needed in future.
 
         # Step 10 — Export
         exported = step9_export(masks, separation_result, output_dir, args)
 
         elapsed = round(time.time() - start_time, 1)
         logger.info(f"Pipeline complete in {elapsed}s. {len(exported)} films exported.")
+
+        # Output validation: warn if no files were exported or files are 0 bytes
+        valid_exports = [p for p in exported if os.path.exists(p) and os.path.getsize(p) > 0]
+        if not valid_exports:
+            logger.error("[Validation] No valid output files produced! All masks may have been empty.")
+            # Still exit 0 so Flutter gets the OUTPUT_DIR signal, but user sees warning in logs
+        else:
+            logger.info(f"[Validation] {len(valid_exports)}/{len(exported)} files valid (non-empty).")
+        zero_byte = [p for p in exported if os.path.exists(p) and os.path.getsize(p) == 0]
+        if zero_byte:
+            logger.warning(f"[Validation] {len(zero_byte)} zero-byte file(s): {zero_byte}")
 
         # FATAL #3 FIX: آخر سطر دائماً — Dart يقرأه ليعرف مسار الـ output
         _output_dir_signal(output_dir)

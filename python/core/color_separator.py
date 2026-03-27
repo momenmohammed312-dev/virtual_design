@@ -52,22 +52,47 @@ class ColorSeparator:
         h, w, _ = image.shape
         total_pixels = h * w
 
-        logger.info(f"[ColorSeparator] Separating {num_colors} colors (use_lab={use_lab})")
+        # ── White Background Filtering ────────────────────────────────────────
+        # Near-white pixels (added by Flutter's ImageProcessor padding) are excluded
+        # from K-means so they don't waste a color slot.
+        # Pixels with ALL channels > white_threshold are marked as background.
+        white_threshold = 240  # pixels with R, G, B all above this are "white"
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        bg_mask = (gray >= white_threshold)          # True = white/near-white background
+        fg_mask = ~bg_mask                            # True = actual design pixels
+        fg_pixel_count = int(np.sum(fg_mask))
 
-        # Convert color space if needed
+        logger.info(f"[ColorSeparator] Separating {num_colors} colors (use_lab={use_lab}, "
+                    f"fg_pixels={fg_pixel_count}/{total_pixels} = "
+                    f"{fg_pixel_count/total_pixels*100:.1f}%)")
+
+        # Convert color space for clustering
         if use_lab:
-            # Convert BGR to LAB
             lab_image = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-            data = lab_image.reshape((-1, 3)).astype(np.float32)
+            full_data = lab_image.reshape((-1, 3)).astype(np.float32)
             color_space = "LAB"
         else:
-            # Use BGR directly
-            data = image.reshape((-1, 3)).astype(np.float32)
+            full_data = image.reshape((-1, 3)).astype(np.float32)
             color_space = "BGR"
+
+        # Only cluster foreground pixels
+        fg_flat = fg_mask.reshape(-1)
+        if fg_pixel_count < 100:
+            # Degenerate case: nearly all-white image — cluster everything
+            logger.warning("[ColorSeparator] Too few foreground pixels, clustering all pixels")
+            cluster_data = full_data
+            using_fg_only = False
+        else:
+            cluster_data = full_data[fg_flat]
+            using_fg_only = True
 
         # Apply K-means clustering
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, max_iterations, epsilon)
-        
+
+        # Seed for determinism: same image + same settings = same output every time.
+        np.random.seed(42)
+        cv2.setRNGSeed(42)
+
         # Run K-means multiple times and keep best result
         best_compactness = float('inf')
         best_labels = None
@@ -76,14 +101,14 @@ class ColorSeparator:
         for attempt in range(attempts):
             try:
                 compactness, labels, centers = cv2.kmeans(
-                    data, num_colors, None, criteria, 1, cv2.KMEANS_PP_CENTERS
+                    cluster_data, num_colors, None, criteria, 1, cv2.KMEANS_PP_CENTERS
                 )
-                
+
                 if compactness < best_compactness:
                     best_compactness = compactness
                     best_labels = labels
                     best_centers = centers
-                    
+
             except Exception as e:
                 logger.warning(f"[ColorSeparator] K-means attempt {attempt+1} failed: {e}")
                 continue
@@ -91,8 +116,28 @@ class ColorSeparator:
         if best_labels is None:
             raise RuntimeError("K-means clustering failed on all attempts")
 
-        # Reshape labels back to image dimensions
-        label_map = best_labels.reshape((h, w))
+        # Build full label map: assign every pixel to nearest center
+        if using_fg_only:
+            # Assign all full-resolution pixels to nearest center by Euclidean distance
+            label_map_flat = np.zeros(total_pixels, dtype=np.int32)
+            for k_idx in range(num_colors):
+                # Distance from every pixel to center k
+                diff = full_data - best_centers[k_idx].astype(np.float32)
+                # Initialise with large value on first iteration
+                if k_idx == 0:
+                    min_dist = np.sum(diff ** 2, axis=1)
+                    label_map_flat[:] = 0
+                else:
+                    dist = np.sum(diff ** 2, axis=1)
+                    closer = dist < min_dist
+                    min_dist = np.where(closer, dist, min_dist)
+                    label_map_flat[closer] = k_idx
+
+            label_map = label_map_flat.reshape((h, w)).astype(np.int32)
+            # Mark white/background pixels as -1 (excluded from color layers)
+            label_map[bg_mask] = -1
+        else:
+            label_map = best_labels.reshape((h, w)).astype(np.int32)
 
         # FIXED: Convert centers back to BGR for consistent output
         if use_lab:
@@ -116,9 +161,12 @@ class ColorSeparator:
         
         # Create mapping from old labels to new sorted labels
         label_mapping = {old_label: new_label for new_label, old_label in enumerate(sorted_indices)}
-        
+
         # Apply mapping to label map
-        sorted_label_map = np.vectorize(label_mapping.get)(label_map)
+        # IMPORTANT: label_mapping only covers 0..K-1. Background pixels have label=-1.
+        # Using lambda with default=-1 preserves background pixels correctly.
+        # (np.vectorize(label_mapping.get) would return None for -1 → object array → crash)
+        sorted_label_map = np.vectorize(lambda x: label_mapping.get(x, -1))(label_map)
 
         # Generate color information
         color_info = []
@@ -149,6 +197,28 @@ class ColorSeparator:
             logger.debug(f"  Color {i}: BGR={info['center_bgr']}, brightness={info['brightness']:.1f}, "
                          f"coverage={info['percentage']:.1f}%")
 
+        # Build 'colors' (RGB tuples) and 'color_names' expected by the rest of the pipeline
+        # (step9_export, step2_5_underbase_creation, _save_color_info all use these keys).
+        colors_rgb = []
+        color_names = []
+        for i, center in enumerate(sorted_centers):
+            # sorted_centers are already in BGR format (converted back after LAB clustering)
+            bgr = np.clip(center, 0, 255).astype(np.uint8)
+            rgb_pixel = cv2.cvtColor(np.array([[bgr]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
+            colors_rgb.append(tuple(int(x) for x in rgb_pixel))
+            color_names.append(f"color_{i+1:02d}")
+
+        # Optionally enrich color names with Pantone matches
+        try:
+            from core.pantone_library import PantoneLibrary
+            pantone_lib = PantoneLibrary()
+            color_names = []
+            for rgb in colors_rgb:
+                match = pantone_lib.find_nearest_pantone(rgb)
+                color_names.append(match.name)
+        except Exception:
+            pass  # fallback names already set above
+
         return {
             'label_map': sorted_label_map,
             'centers': sorted_centers,
@@ -157,7 +227,11 @@ class ColorSeparator:
             'color_info': color_info,
             'color_masks': color_masks,
             'compactness': float(best_compactness),
-            'color_space': color_space
+            'color_space': color_space,
+            # Keys required by the rest of the pipeline:
+            'colors': colors_rgb,           # List of RGB tuples, light→dark sorted
+            'color_names': color_names,     # Pantone name or 'color_NN'
+            'image': None,                  # Placeholder (image not stored to save memory)
         }
 
     def _calculate_brightness(self, centers: np.ndarray, use_lab: bool) -> np.ndarray:
@@ -201,6 +275,55 @@ class ColorSeparator:
             brightness.append(brightness_val)
         
         return np.array(brightness)
+
+    def get_color_hex(self, rgb: tuple) -> str:
+        """Convert an RGB tuple to a hex string like #RRGGBB."""
+        return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+
+    def get_color_info(self, separation_result: Dict) -> List[Dict]:
+        """
+        Return detailed per-color info for the UI / color_info.json.
+        Works with both the new (color_info key) and old (colors+color_names keys) formats.
+        """
+        # Prefer the rich color_info list built during separate()
+        if 'color_info' in separation_result:
+            base = separation_result['color_info']
+            colors = separation_result.get('colors', [])
+            names  = separation_result.get('color_names', [])
+            result = []
+            for i, entry in enumerate(base):
+                rgb = colors[i] if i < len(colors) else (0, 0, 0)
+                name = names[i] if i < len(names) else f"color_{i+1:02d}"
+                result.append({
+                    'index': entry.get('index', i),
+                    'name': name,
+                    'rgb': rgb,
+                    'hex': self.get_color_hex(rgb),
+                    'pixel_count': entry.get('pixel_count', 0),
+                    'percentage': round(entry.get('percentage', 0.0), 1),
+                })
+            return result
+
+        # Fallback: build from colors + color_names + label_map
+        label_map = separation_result.get('label_map')
+        colors = separation_result.get('colors', [])
+        names  = separation_result.get('color_names', [])
+        total_pixels = label_map[label_map >= 0].size if label_map is not None else 1
+        info = []
+        for i, (color, name) in enumerate(zip(colors, names)):
+            count = int(np.sum(label_map == i)) if label_map is not None else 0
+            pct = (count / total_pixels * 100) if total_pixels > 0 else 0
+            info.append({
+                'index': i,
+                'name': name,
+                'rgb': color,
+                'hex': self.get_color_hex(color),
+                'pixel_count': count,
+                'percentage': round(pct, 1),
+            })
+        info = [x for x in info if x['pixel_count'] > 0]
+        info.sort(key=lambda x: x['pixel_count'], reverse=True)
+        return info
 
     def create_color_layers(
         self,

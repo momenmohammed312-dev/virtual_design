@@ -233,10 +233,10 @@ class PythonProcessor {
       settings.strokeWidthMm.toString(),
     ];
 
-    // Color count: if 0, use auto-colors flag
+    // Color count: if 0 (auto), send --auto-colors flag so Python activates auto-detect.
     if (settings.colorCount == 0) {
-      // Auto mode: ابدأ بـ 2 ألوان — أأمن من auto-detect
-      args.addAll(['--colors', '2']);
+      args.add('--auto-colors');
+      args.addAll(['--colors', '0']); // Python reads 0 as "use SmartAnalyzer result"
     } else {
       // Allow 1 color if explicitly requested
       final safeColorCount = settings.colorCount < 1 ? 1 : settings.colorCount;
@@ -311,22 +311,13 @@ class PythonProcessor {
   }
 
   /// Make path safe for Windows command line.
-  /// Escapes internal double-quotes and wraps in quotes if needed.
+  /// NOTE: Process.start() with runInShell=false passes args as a list,
+  /// so the OS handles spaces in paths natively. Do NOT wrap in quotes —
+  /// they would become literal quote characters inside the path string.
   String _safePath(String path) {
     if (Platform.isWindows) {
-      // Escape any existing double quotes inside the path
-      var escaped = path.replaceAll('"', r'\"');
-      // Replace backslashes with forward slashes to prevent escape issues in Python strings
-      escaped = escaped.replaceAll('\\', '/');
-
-      // Wrap in quotes if path contains spaces or special characters
-      if (escaped.contains(' ') ||
-          escaped.contains('&') ||
-          escaped.contains('(') ||
-          escaped.contains(')')) {
-        return '"$escaped"';
-      }
-      return escaped;
+      // Normalise to forward slashes for Python's os.path compatibility
+      return path.replaceAll('\\', '/');
     }
     return path;
   }

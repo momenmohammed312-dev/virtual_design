@@ -301,7 +301,7 @@ class ProcessingSettings {
         'gradientMeshMode': gradientMeshMode.name,
         'typographyMode': typographyMode.name,
         'meshPreviewMode': meshPreviewMode.name,
-        'googleThreshold': globalThreshold,
+        'globalThreshold': globalThreshold,
         'smoothingFactor': smoothingFactor,
         'cornerThreshold': cornerThreshold,
         'noiseRemoval': noiseRemoval,

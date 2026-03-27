@@ -218,6 +218,23 @@ class SetupController extends GetxController {
       Get.log(
         '✅ Settings built: DPI=${settings.dpi}, mesh=${settings.meshCount}, edge=${settings.edgeEnhancement.name}',
       );
+
+      // Validate settings before sending to Python
+      final validationErrors = settings.validate();
+      if (validationErrors.isNotEmpty) {
+        Get.log('❌ Settings validation failed: $validationErrors');
+        isProcessing.value = false;
+        Get.snackbar(
+          'Invalid Settings',
+          validationErrors.join('\n'),
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.orange.withAlpha((0.15 * 255).round()),
+          colorText: Colors.orange,
+          duration: const Duration(seconds: 5),
+        );
+        return;
+      }
+
       await _repository.saveSettings(settings);
 
       Get.log('🔄 Starting image processing...');
