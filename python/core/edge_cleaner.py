@@ -53,14 +53,10 @@ class EdgeCleaner:
             # 2. سد الفراغات الصغيرة داخل الشكل (holes)
             result = cv2.morphologyEx(result, cv2.MORPH_CLOSE, kernel)
 
-        if smooth:
-            # 3. Gaussian blur لتنعيم الحواف المتعرجة
-            ksize = kernel_size * 2 + 1  # يجب أن يكون فردي
-            result = cv2.GaussianBlur(result, (ksize, ksize), smooth_sigma)
-
-            # 4. إعادة threshold بعد الـ blur
-            _, result = cv2.threshold(result, 127, 255, cv2.THRESH_BINARY)
-
+        # TASK 12: Gaussian blur and secondary thresholding removed.
+        # Vector paths benefit from clean morphological edges; raster blur is destructive.
+        # Parameters 'smooth' and 'smooth_sigma' are kept for API compatibility (no-op).
+        
         return result
 
     def clean_all(

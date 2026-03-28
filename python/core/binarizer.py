@@ -45,6 +45,11 @@ class Binarizer:
         rid = kwargs.get('request_id', 'unknown')
         self._health["total"] += 1
         
+        # TASK 11: RESET CACHE TO PREVENT CROSS-IMAGE POLLUTION
+        # Only preserve cache if this is a nested retry call for the SAME image.
+        if preferred_method == 'auto' and not kwargs.get('_retry_call', False):
+            self._method_cache = {}
+
         # 1. PREP & DENSITY
         if len(image.shape) == 3: gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else: gray = image.copy()

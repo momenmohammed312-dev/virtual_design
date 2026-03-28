@@ -167,15 +167,25 @@ def export_vector_pdf(
         # ═══ رسم الـ vector paths ═══
         # 1. Pre-trace blur: optional, only for complex images.
         # Use --no-vector-blur to disable even for complex.
-        if not no_vector_blur and smooth_factor > 0.3:
-            blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
-            if blur_k % 2 == 0:
-                blur_k += 1
+        # 1. Edge Smoothing: Apply slight blur to binary mask to "straighten" jagged edges
+        # especially important for upscaled small logos (like Nike 570px -> 2000px)
+        if not no_vector_blur:
+            # For logos (low smooth_factor), use a small kernel for minor jaggy removal
+            # For artwork (high smooth_factor), use a larger kernel for smoother curves
+            if smooth_factor <= 0.2:
+                blur_k = 3
+            else:
+                blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
+            
+            if blur_k % 2 == 0: blur_k += 1
             blur_k = max(3, min(7, blur_k))
-            bw = cv2.GaussianBlur(mask, (blur_k, blur_k), 0)
+            
+            # Median blur first to remove pixel salt-and-pepper noise
+            bw = cv2.medianBlur(mask, 3)
+            bw = cv2.GaussianBlur(bw, (blur_k, blur_k), 0)
+            _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
         else:
             bw = mask.copy()
-        _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
         
         # 2. Contour Extraction: TC89_KCOS for better curve approximation
         contours, hierarchy = cv2.findContours(
@@ -214,14 +224,16 @@ def export_vector_pdf(
             area = cv2.contourArea(contour_arr)
             
             # Epsilon: adaptive for text sharpness
+            # Epsilon: adaptive for text sharpness
             if smooth_factor <= 0.15:
-                # For text: larger epsilon for small contours to reduce jaggedness
-                if area < 500:
-                    epsilon = max(0.5, 0.008 * perimeter)   # small text — simplify more
+                # For text: calculate epsilon based on detail level
+                # Small text with lots of points -> needs more simplification to prevent wobble
+                if area < 800:
+                    epsilon = max(0.6, 0.01 * perimeter)   # small text — simplify more aggressively
                 else:
-                    epsilon = max(0.3, 0.004 * perimeter)   # large text — moderate simplification
+                    epsilon = max(0.4, 0.005 * perimeter)   # large text — moderate simplification
             else:
-                epsilon = max(0.20, min(0.40, 0.002 * perimeter))  # normal smoothing
+                epsilon = max(0.25, min(0.50, 0.003 * perimeter))  # normal smoothing
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
             
             if len(approx) < 3:

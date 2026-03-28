@@ -116,6 +116,12 @@ class ColorSeparator:
         if best_labels is None:
             raise RuntimeError("K-means clustering failed on all attempts")
 
+        # TASK 15: SILHOUETTE VALIDATION & AUTO-RETRY
+        # If separation quality is poor, try reducing K to find a more distinct clustering.
+        best_compactness, best_labels, best_centers, num_colors = self._validate_and_retry_kmeans(
+            cluster_data, num_colors, best_compactness, best_labels, best_centers, criteria
+        )
+
         # Build full label map: assign every pixel to nearest center
         if using_fg_only:
             # Assign all full-resolution pixels to nearest center by Euclidean distance
@@ -467,3 +473,62 @@ class ColorSeparator:
                    f"empty={empty_colors}, dominant={dominant_colors}")
         
         return validation
+
+    def _validate_and_retry_kmeans(
+        self, 
+        data: np.ndarray, 
+        k: int, 
+        best_comp: float, 
+        best_lbls: np.ndarray, 
+        best_cntrs: np.ndarray,
+        criteria: Tuple
+    ) -> Tuple[float, np.ndarray, np.ndarray, int]:
+        """
+        Computes silhouette-like quality score and retries with k-1 if poor.
+        Returns: (compactness, labels, centers, k)
+        """
+        if k <= 2:
+            return best_comp, best_lbls, best_cntrs, k
+            
+        # Calculate mean intra-cluster distance (Compactness / N)
+        avg_intra = best_comp / data.shape[0]
+        
+        # Calculate mean inter-cluster distance (distance between centers)
+        inter_dists = []
+        for i in range(len(best_cntrs)):
+            for j in range(i + 1, len(best_cntrs)):
+                inter_dists.append(np.linalg.norm(best_cntrs[i] - best_cntrs[j]))
+        avg_inter = np.mean(inter_dists) if inter_dists else 1.0
+        
+        # Quality Score (lower is better separation)
+        quality_score = avg_intra / avg_inter
+        logger.info(f"[ColorSeparator] Silhouette Score (k={k}): {quality_score:.3f}")
+        
+        # If score >= 0.5 (poor separation) and K > 2, try K-1
+        if quality_score >= 0.5:
+            logger.warning(f"[ColorSeparator] Poor separation (score={quality_score:.3f}). Retrying with k={k-1}...")
+            try:
+                comp_alt, lbls_alt, cntrs_alt = cv2.kmeans(
+                    data, k - 1, None, criteria, 3, cv2.KMEANS_PP_CENTERS
+                )
+                
+                # Check k-1 quality
+                avg_intra_alt = comp_alt / data.shape[0]
+                inter_dists_alt = []
+                for i in range(len(cntrs_alt)):
+                    for j in range(i + 1, len(cntrs_alt)):
+                        inter_dists_alt.append(np.linalg.norm(cntrs_alt[i] - cntrs_alt[j]))
+                avg_inter_alt = np.mean(inter_dists_alt) if inter_dists_alt else 1.0
+                quality_score_alt = avg_intra_alt / avg_inter_alt
+                
+                logger.info(f"[ColorSeparator] Silhouette Score (k={k-1}): {quality_score_alt:.3f}")
+                
+                if quality_score_alt < quality_score:
+                    logger.info(f"[ColorSeparator] Accepting k={k-1} results (improved from {quality_score:.3f} to {quality_score_alt:.3f})")
+                    return comp_alt, lbls_alt, cntrs_alt, k - 1
+                else:
+                    logger.info(f"[ColorSeparator] Keeping k={k} results (k={k-1} was not better)")
+            except Exception as e:
+                logger.warning(f"[ColorSeparator] Retry k={k-1} failed: {e}")
+        
+        return best_comp, best_lbls, best_cntrs, k

@@ -69,11 +69,10 @@ class HalftoneGenerator:
         norm = gray[iy, ix] / 255.0
         
         # Gamma correction: controls dot growth curve
-        # gamma > 1.0 = dots grow faster in shadows (more ink in dark areas)
-        # gamma < 1.0 = dots grow faster in highlights
-        intensities = (1.0 - norm) ** (1.0 / gamma)
-        
-        radii = intensities * (dot_spacing / 2.0) * 0.95
+        # TASK 16: Shadow relief (15% gap)
+        # 0.85 multiplier ensures dots do not touch neighbors at 100% intensity,
+        # preventing ink bridging/flooding on the screen.
+        radii = intensities * (dot_spacing / 2.0) * 0.85
 
         # 5. Build dot list
         dots = [

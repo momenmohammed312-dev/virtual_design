@@ -16,8 +16,8 @@ POLARITY_INK = 0    # ink/design pixels = BLACK
 POLARITY_BG = 255   # background pixels = WHITE
 
 # Coverage bounds
-MIN_INK_COVERAGE = 0.005  # 0.5% — below = blank film
-MAX_INK_COVERAGE = 0.97   # 97%  — above = inverted mask
+MIN_INK_COVERAGE = 0.001  # 0.1% — below = blank film
+MAX_INK_COVERAGE = 0.98   # 98%  — above = inverted mask
 
 
 @dataclass
@@ -46,6 +46,12 @@ class PipelineController:
         
         Decision: if mean(mask) <= 127 → polarity is wrong → invert
         """
+        if mask is None:
+            return None
+            
+        if len(mask.shape) == 3:
+            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
 
@@ -66,6 +72,12 @@ class PipelineController:
         Evaluate binary mask quality.
         Returns metrics for decision-making.
         """
+        if mask is None:
+            raise ValueError(f"Mask is None at {stage}")
+            
+        if len(mask.shape) == 3:
+            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
 
@@ -133,8 +145,8 @@ class PipelineController:
 
         # Cannot fix
         raise ValueError(
-            f"Mask {mask_id} is invalid: ink_ratio={metrics:.1%}, "
-            f"flipped={flipped_metrics:.1%}. Cannot export."
+            f"Mask {mask_id} is invalid: ink_ratio={metrics.ink_ratio:.1%}, "
+            f"flipped={flipped_metrics.ink_ratio:.1%}. Cannot export."
         )
 
     def audit(self, mask: np.ndarray, stage: str) -> None:
@@ -161,6 +173,36 @@ class PipelineController:
             logger.warning(f"  [Audit] {stage}: ink={ink_ratio:.1%} mean={mean_val:.1f} ⚠️")
         else:
             logger.debug(f"  [Audit] {stage}: ink={ink_ratio:.1%} mean={mean_val:.1f} ✓")
+
+    def validate_mask_coverage(
+        self, 
+        mask: np.ndarray, 
+        stage: str, 
+        min_coverage: float = MIN_INK_COVERAGE, 
+        max_coverage: float = MAX_INK_COVERAGE
+    ) -> None:
+        """
+        Hard guard against blank or fully-flooded masks.
+        Raises ValueError if coverage is outside safe bounds.
+        """
+        if mask.dtype != np.uint8:
+            mask = mask.astype(np.uint8)
+
+        total_px = mask.size
+        ink_px = int(np.sum(mask == POLARITY_INK))
+        ink_ratio = ink_px / total_px
+
+        if ink_ratio < min_coverage:
+            msg = f"BLANK_MASK: {stage} ink coverage {ink_ratio:.4%} < {min_coverage:.4%}"
+            logger.error(f"  [Safety] {msg}")
+            raise ValueError(msg)
+        
+        if ink_ratio > max_coverage:
+            msg = f"OVER_FLOODED: {stage} ink coverage {ink_ratio:.4%} > {max_coverage:.4%}"
+            logger.error(f"  [Safety] {msg}")
+            raise ValueError(msg)
+
+        logger.info(f"  [Safety] {stage} coverage verified: {ink_ratio:.2%}")
 
     def get_audit_log(self) -> list:
         """Return the audit log for debugging."""

@@ -142,6 +142,18 @@ class PythonProcessor {
           return;
         }
 
+        // Detect Dependency Errors early
+        if (line.startsWith('FATAL:DEPENDENCY_MISSING:')) {
+          final parts = line.split(':');
+          final pkg = parts.length > 2 ? parts[2] : 'unknown';
+          stderrBuffer.writeln('Missing Python requirement: $pkg. Please run the setup script or pip install $pkg.');
+          debugPrint('[PythonProcessor] FOUND FATAL ERROR: $line');
+          return;
+        }
+
+        // Print all other output to console for debugging
+        debugPrint('[PythonPipe] $line');
+
         // FATAL #4 FIX: تحديث progress من "Step X/9: ..."
         final stepMatch = RegExp(
           r'Step (\d+)/(\d+):\s*(.*)',
@@ -162,7 +174,10 @@ class PythonProcessor {
     );
 
     process.stderr.transform(utf8.decoder).listen(
-      (chunk) => stderrBuffer.write(chunk),
+      (chunk) {
+        stderrBuffer.write(chunk);
+        debugPrint('[PythonErr] $chunk');
+      },
       onDone: () {
         if (!stderrCompleter.isCompleted) stderrCompleter.complete();
       },
@@ -258,6 +273,9 @@ class PythonProcessor {
       args.add('--skip-halftone');
     }
 
+    // Always send mesh count for LPI clamping (Task 2/3)
+    args.addAll(['--mesh-count', settings.meshCount.toString()]);
+
     // Professional Features — all enabled by default as automatic
     args.addAll(['--pantone-matching', settings.pantoneMatching.name]);
     // Underbase: disabled by default حتى لو المستخدم اختار automatic
@@ -300,6 +318,10 @@ class PythonProcessor {
   /// Parse error from exit code and stderr output
   String _parseError(int exitCode, String stderr) {
     switch (exitCode) {
+      case 5:
+        return 'PDF Generation Failed: One or more PDF files were requested but could not be produced. Check Python console for details. Stderr: $stderr';
+      case 4:
+        return 'Missing PDF Dependency: reportlab. Please install it using "pip install reportlab" elsewhere or run the configuration setup. Stderr: $stderr';
       case 2:
         return 'File not found error: $stderr';
       case 3:

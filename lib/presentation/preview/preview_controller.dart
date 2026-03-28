@@ -239,6 +239,10 @@ class PreviewController extends GetxController {
       final dir = Directory(outputDirectory.value);
       if (await dir.exists()) {
         final allFiles = dir.listSync().whereType<File>().toList();
+        Get.log('🔎 Found ${allFiles.length} files in output directory.');
+        for (var f in allFiles) {
+          Get.log('   📄 ${f.path.split(Platform.pathSeparator).last}');
+        }
 
         // Load PNG previews (sorted)
         previewPaths.value = allFiles

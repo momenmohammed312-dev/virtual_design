@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import time
+import gc
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
@@ -24,10 +25,11 @@ try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A4
     REPORTLAB_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     REPORTLAB_AVAILABLE = False
-    print("ERROR:reportlab_missing:PDF export requires: pip install reportlab", flush=True)
-    # Don't exit yet, fallback may be possible for PNG.
+    # Use a specific signal that the bridge can detect
+    print(f"\nFATAL:DEPENDENCY_MISSING:reportlab:PDF export requires: pip install reportlab. Error: {e}", flush=True)
+    print(f"FATAL:DEPENDENCY_MISSING:reportlab", flush=True)
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -45,6 +47,9 @@ try:
 except ImportError:
     HAS_CONTROLLER = False
     print("[WARNING] Pipeline Controller not available", flush=True)
+
+from core.print_job_config import PrintJobConfig
+from core.pipeline_router import PipelineRouter
 
 # Smart Analysis import
 try:
@@ -119,6 +124,7 @@ def _check_modules() -> None:
         'Exporter': HAS_EXPORTER,
         'PantoneLibrary': HAS_PANTONE,
         'PipelineController': HAS_CONTROLLER,
+        'ReportLab': REPORTLAB_AVAILABLE,
     }
     missing_optional = [name for name, available in optional.items() if not available]
     if missing_optional:
@@ -249,6 +255,9 @@ def step1_load_image(input_path: str) -> np.ndarray:
     
     logger.info(f"Attempting to load: {input_path}")
     
+    # TASK 20: Proactive garbage collection to prevent memory errors with large images
+    gc.collect()
+    
     # Use robust image loader (no extension reliance)
     try:
         image = load_image_safely(input_path)
@@ -301,27 +310,38 @@ def step0_auto_crop(image: np.ndarray) -> np.ndarray:
         return image
 
 
+def preprocess_text_logo(image: np.ndarray) -> np.ndarray:
+    """[TASK 19] Enhanced sharpening for pure logos/text: Bilateral + Sharpening."""
+    # 1. Bilateral filter removes noise
+    bilat = cv2.bilateralFilter(image, 5, 50, 50)
+    
+    # 2. Sharpening kernel (Senior Standard for sharp vector lines)
+    # Re-sharpens edges that might have been blurred by upscaling (LANCZOS4)
+    kernel_sharpen = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+    sharpened = cv2.filter2D(bilat, -1, kernel_sharpen)
+    return sharpened
+
+def preprocess_artwork(image: np.ndarray) -> np.ndarray:
+    """[TASK 8] Balanced preprocessing for illustrations: Bilateral + Contrast."""
+    bilat = cv2.bilateralFilter(image, 9, 75, 75)
+    # alpha=1.3: moderate enhancement for K-means separating neighboring colors.
+    return cv2.convertScaleAbs(bilat, alpha=1.3, beta=0)
+
+def preprocess_photo(image: np.ndarray) -> np.ndarray:
+    """[TASK 8] Shadow/Texture-preserving preprocessing for photographs."""
+    # Strong bilateral for halftone-smooth gradients. grayscale + unsharp mask.
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    bilat = cv2.bilateralFilter(gray, 15, 75, 75)
+    
+    # Gaussian Unsharp Mask (Senior standard)
+    blurred = cv2.GaussianBlur(bilat, (5, 5), 1.0)
+    unsharp = cv2.addWeighted(bilat, 1.5, blurred, -0.5, 0)
+    return unsharp
+
 def step1_5_preprocess(image: np.ndarray) -> np.ndarray:
-    """
-    Pre-processing: sharpen + contrast boost for better color separation.
-    - Sharpen: enhances edges and details
-    - Contrast boost: makes colors more distinct for K-means
-    """
-    _step(1.5, "Pre-processing (sharpen + contrast)")
-    
-    # 1. Sharpen: Laplacian kernel for edge enhancement
-    sharpen_kernel = np.array([[0, -1, 0],
-                               [-1,  5, -1],
-                               [0, -1, 0]], dtype=np.float32)
-    sharpened = cv2.filter2D(image, -1, sharpen_kernel)
-    
-    # 2. Contrast boost: alpha=1.3 for moderate enhancement
-    alpha = 1.3  # contrast control (1.0 = no change)
-    beta = 0     # brightness control (0 = no change)
-    contrasted = cv2.convertScaleAbs(sharpened, alpha=alpha, beta=beta)
-    
-    logger.info(f"  Applied sharpen + contrast (alpha={alpha})")
-    return contrasted
+    """[DEPRECATED WORKER] Wraps artwork preprocess for old callers."""
+    _step(1.5, "[Legacy] Pre-processing")
+    return preprocess_artwork(image)
 
 
 def step2_separate_colors(
@@ -435,6 +455,12 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
     _step(5, "Halftone generation" if is_halftone_enabled else "Halftone (skipped)")
     
     if not is_halftone_enabled or not HAS_HALFTONE:
+        return masks
+
+    # TASK 7: Hard gate for TEXT_LOGO (never halftone vector-style logos)
+    image_class = getattr(args, '_image_class', None)
+    if image_class and hasattr(image_class, 'value') and image_class.value == 'text_logo':
+        logger.info("  [Halftone] Hard gate triggered: TEXT_LOGO images bypass halftoning.")
         return masks
     
     # Auto-calculate LPI based on DPI if user didn't set it explicitly
@@ -650,8 +676,8 @@ def step7_final_binarization(masks: list, args: argparse.Namespace) -> list:
 
 def step3_5_trapping(masks: list, separation_result: dict, args: argparse.Namespace) -> list:
     """
-    Automatic color trapping to prevent registration issues between colors.
-    Adds small overlaps between adjacent colors to ensure proper printing.
+    [TASK 5 FIX] Automatic color trapping (Polarity-Aware).
+    Adds small overlaps (ink=0) between adjacent colors.
     """
     _step(3.5, "Trapping (automatic)")
     try:
@@ -659,30 +685,58 @@ def step3_5_trapping(masks: list, separation_result: dict, args: argparse.Namesp
             logger.info("Only one color layer, skipping trapping")
             return masks
         
-        trapping_pixels = max(1, int(args.dpi * 0.1 / 25.4))
-        logger.info(f"Applying trapping with {trapping_pixels} pixel overlap")
+        trapping_px = max(1, int(args.dpi * 0.1 / 25.4))
+        logger.info(f"Applying trapping with {trapping_px}px overlap [Pol-Corrected]")
         
-        kernel_size = trapping_pixels * 2 + 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (trapping_px * 2 + 1, trapping_px * 2 + 1))
         trapped_masks = []
         
         for i, mask in enumerate(masks):
             trapped = mask.copy()
             for j, other_mask in enumerate(masks):
-                if i == j:
-                    continue
-                overlap = cv2.bitwise_and(mask, other_mask)
-                if np.any(overlap > 127):
-                    dilated_overlap = cv2.dilate(overlap, kernel, iterations=1)
-                    trapped = cv2.bitwise_or(trapped, dilated_overlap)
-                    logger.info(f"Added trapping between color {i+1} and {j+1}")
+                if i == j: continue
+                # Both pixels are ink (0) in film polarity
+                overlap = (mask == 0) & (other_mask == 0)
+                if np.any(overlap):
+                    # Dilate ink zone
+                    dilated = cv2.dilate(overlap.astype(np.uint8), kernel, iterations=1)
+                    # Expand ink (set pixels to 0) wherever dilated > 0
+                    trapped[dilated > 0] = 0
             trapped_masks.append(trapped)
         
-        logger.info(f"Trapping applied to {len(trapped_masks)} layers")
         return trapped_masks
     except Exception as e:
-        logger.warning(f"Trapping failed, continuing without trapping: {e}")
+        logger.warning(f"Trapping failed: {e}")
         return masks
+
+def _make_single_color_separation(image: np.ndarray, white_threshold: int = 240) -> dict:
+    """[TASK 10] Bypasses K-means for TEXT_LOGO / monochrome images."""
+    h, w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Label mapping: bg >= white_threshold → -1, design < white_threshold → 0
+    label_map = np.full((h, w), -1, dtype=np.int32)
+    label_map[gray < white_threshold] = 0
+    
+    ink_pixels = int(np.sum(label_map == 0))
+    coverage = (ink_pixels / label_map.size) * 100
+    
+    # Calculate average color of ink pixels
+    if ink_pixels > 0:
+        center_bgr = np.mean(image[label_map == 0], axis=0).astype(np.float32)
+    else:
+        center_bgr = np.array([0, 0, 0], dtype=np.float32)
+    
+    # Build minimalist separation result
+    return {
+        'label_map': label_map,
+        'centers': np.array([center_bgr]),
+        'num_colors': 1,
+        'colors': [(0, 0, 0)], # Default to black ink
+        'color_names': ["Black"],
+        'compactness': 0.0,
+        'color_info': [{'index': 0, 'pixel_count': ink_pixels, 'percentage': coverage}]
+    }
 
 
 def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
@@ -836,6 +890,8 @@ def step9_export(
         from core.vector_exporter import export_vector_pdf
         from core.exporter import Exporter, SVGWRITE_AVAILABLE
         
+        logger.info(f"  [Export] Modules status: ReportLab={REPORTLAB_AVAILABLE}, SVGWrite={SVGWRITE_AVAILABLE}")
+        
         # We collect all valid masks for the combined PDF
         all_masks_for_pdf = []
         all_colors_for_pdf = []
@@ -910,70 +966,77 @@ def step9_export(
                 exported_paths.append(svg_filepath)
                 logger.info(f"  Exported {svg_filename} (SVG Vector)")
             
-            # 3. Save individual PDF (True Vector)
+            # 3. Save individual PDF
             if REPORTLAB_AVAILABLE:
                 pdf_filename = f"film_{i+1}.pdf"
                 pdf_filepath = os.path.join(output_dir, pdf_filename)
                 
-                # FIXED: Enforce polarity via PipelineController before inversion
+                # FIXED: Ensure 1-channel grayscale
+                mask_gray = mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
                 if HAS_CONTROLLER:
-                    film_gray = controller.enforce_polarity(mask, stage=f"export/pdf/{i+1}")
-                    film_gray = controller.validate_mask(film_gray, mask_id=i+1)
+                    film_gray = controller.enforce_polarity(mask_gray, stage=f"export/pdf/{i+1}")
                 else:
-                    film_gray = mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+                    film_gray = mask_gray
                 
-                # Single reliable inversion for vector tracing
-                ink_mask_pdf = cv2.bitwise_not(film_gray)
-                
-                # Add to combined PDF
+                # Add to combined list
                 all_masks_for_pdf.append(film_gray)
                 all_colors_for_pdf.append(color_entry)
                 all_names_for_pdf.append(name_entry)
                 
-                export_vector_pdf(
-                    masks=[ink_mask_pdf],
-                    colors=[color_entry],
-                    color_names=[name_entry],
-                    output_path=Path(pdf_filepath),
-                    dpi=args.dpi,
-                    smooth_factor=eff_smooth,
-                    corner_threshold=getattr(args, 'corner_threshold', 150.0),
-                    no_vector_blur=getattr(args, 'no_vector_blur', False)
-                )
-                pdf_paths.append(pdf_filepath)
-                exported_paths.append(pdf_filepath)
-                logger.info(f"  Exported {pdf_filename} (PDF Vector)")
-
-            else:
-                # If no PDF export, still add to combined PDF with basic check
-                if len(mask.shape) == 3:
-                    gray_mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-                else:
-                    gray_mask = mask
+                # CHOICE: Raster (Image) for Halftone vs Vector (Bezier) for Solid
+                is_halftone = args.halftone or (HAS_SMART_ANALYZER and analysis.use_halftone)
                 
-                # Simple check for completely empty masks
-                design_coverage = np.sum(gray_mask < 128) / gray_mask.size
-                if design_coverage > 0.001:  # Only add if there's some design content
-                    all_masks_for_pdf.append(gray_mask)
-                    all_colors_for_pdf.append(color_entry)
-                    all_names_for_pdf.append(name_entry)
+                if is_halftone:
+                    logger.info(f"  [Export] Rendering halftone {pdf_filename} as Raster PDF")
+                    from reportlab.pdfgen import canvas as rl_canvas
+                    from reportlab.lib.pagesizes import A4
+                    from reportlab.lib.units import mm
+                    from reportlab.lib.utils import ImageReader
+                    import io
+                    
+                    c = rl_canvas.Canvas(pdf_filepath, pagesize=A4)
+                    w, h = A4
+                    margin = 20 * mm
+                    avail_w, avail_h = w - 2*margin, h - 2*margin
+                    ih, iw = film_gray.shape[:2]
+                    aspect = iw / ih
+                    if avail_w / aspect <= avail_h: dw, dh = avail_w, avail_w / aspect
+                    else: dw, dh = avail_h * aspect, avail_h
+                    
+                    _, buf = cv2.imencode(".png", film_gray)
+                    c.drawImage(ImageReader(io.BytesIO(buf.tobytes())), (w-dw)/2, (h-dh)/2, width=dw, height=dh, mask='auto')
+                    c.save()
+                    exported_paths.append(pdf_filepath)
+                else:
+                    # TRUE VECTOR for solids
+                    from core.vector_exporter import export_vector_pdf
+                    ink_mask_pdf = cv2.bitwise_not(film_gray)
+                    export_vector_pdf(
+                        masks=[ink_mask_pdf],
+                        colors=[color_entry],
+                        color_names=[name_entry],
+                        output_path=Path(pdf_filepath),
+                        dpi=args.dpi,
+                        smooth_factor=eff_smooth,
+                        corner_threshold=getattr(args, 'corner_threshold', 150.0),
+                        no_vector_blur=getattr(args, 'no_vector_blur', False)
+                    )
+                    exported_paths.append(pdf_filepath)
+                
+                logger.info(f"  Exported {pdf_filename}")
 
             _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
         
-        # 4. Save combined PDF (True Vector)
+        # 4. Save combined PDF
         if args.combine_pdf and REPORTLAB_AVAILABLE and all_masks_for_pdf:
             combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
-            
-            # Re-invert all masks for vector_exporter (needs design=255)
-            # Safety: enforce polarity on each mask before inversion
+            from core.vector_exporter import export_vector_pdf
+            # Combined PDF is usually vector for clarity, but we use inversion logic
             if HAS_CONTROLLER:
-                ink_masks_combined = [
-                    cv2.bitwise_not(controller.enforce_polarity(m, stage="export/combined"))
-                    for m in all_masks_for_pdf
-                ]
+                ink_masks_combined = [cv2.bitwise_not(controller.enforce_polarity(m, "combined")) for m in all_masks_for_pdf]
             else:
                 ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
-            
+                
             export_vector_pdf(
                 masks=ink_masks_combined,
                 colors=all_colors_for_pdf,
@@ -985,12 +1048,12 @@ def step9_export(
                 no_vector_blur=getattr(args, 'no_vector_blur', False)
             )
             exported_paths.append(combined_pdf_path)
-            logger.info(f"  Exported all_films_combined.pdf (PDF Vector)")
-            
-        logger.info(f"Export complete: {len(exported_paths)} files saved")
+            logger.info(f"  Exported all_films_combined.pdf")
         
     except Exception as e:
-        logger.error(f"Export failed: {e}", exc_info=True)
+        logger.error(f"  [Export] CRITICAL ERROR: {e}", exc_info=True)
+        # Don't silence the exception - if export fails, we should know
+        raise
 
     # Save color info JSON with metadata
     img = separation_result.get('image')
@@ -1122,6 +1185,10 @@ def parse_args() -> argparse.Namespace:
         "--white-threshold", type=int, default=240,
         help="Pixel value above which is considered white background (0-255)"
     )
+    parser.add_argument(
+        "--mesh-count", type=int, default=160,
+        help="Screen mesh count (e.g. 86, 110, 160, 200, 305). Higher mesh = finer LPI."
+    )
     
     return parser.parse_args()
 
@@ -1172,6 +1239,14 @@ def main() -> int:
     output_dir = args.output
     logger.info(f"Root Output Directory: {output_dir}")
 
+    # TASK 3: Instantiate PrintJobConfig and clamp LPI
+    job_config = PrintJobConfig(
+        mesh_count=args.mesh_count,
+        dpi=args.dpi,
+    )
+    args.lpi = job_config.validate_lpi(args.lpi)
+    logger.info(f"[JobConfig] Mesh: {args.mesh_count} | Effective LPI: {args.lpi}")
+
     try:
         # Step 2 — Load
         image = step1_load_image(args.input)
@@ -1210,55 +1285,47 @@ def main() -> int:
         if args.auto_crop:
             image = step0_auto_crop(image)
 
-        # Step 2.75 — Pre-processing (sharpen + contrast boost)
-        image = step1_5_preprocess(image)
+        # TASK 18: Specialized Pipeline Routing
+        # Replaces steps 2.75 to 7.5 with classes-specific logic.
+        from core.pipeline_router import PipelineRouter
+        router = PipelineRouter(job_config)
+        
+        # Smart analysis needed for routing; analysis_obj is 'analysis' from Step 0
+        analysis_obj = analysis if img_type == 'auto' and HAS_SMART_ANALYZER else None
+        if not analysis_obj:
+            # Create a mock analysis object if SmartAnalyzer was skipped
+            from core.smart_analyzer import SmartResult, ImageClass
+            analysis_obj = SmartResult(image_class=ImageClass.ARTWORK, num_colors=args.colors or 4, confidence=1.0)
 
-        # Step 3 — Color Separation
-        # args.colors is always > 0 here because SmartAnalyzer already overrides it
-        # when args.colors == 0 (see Step 0 above). The elif was dead code.
-        if args.colors > 0:
-            target_colors = args.colors
-        else:
-            target_colors = 4  # fallback if SmartAnalyzer was unavailable
-            
-        separation_result = step2_separate_colors(
-            image,
-            target_colors,
-        )
+        pipeline_result = router.route(image, analysis_obj, args)
+        
+        masks = pipeline_result.masks
+        separation_result = pipeline_result.separation_result
+        _route_class = pipeline_result.image_class
+        skip_binarization = pipeline_result.skip_binarization
 
-        # Step 3.5 — Automatic Underbase Creation
-        if args.underbase_mode == 'automatic' and HAS_PANTONE:
+        # Step 3.5 — Automatic Underbase Creation (Artwork ONLY)
+        if _route_class == 'artwork' and args.underbase_mode == 'automatic' and HAS_PANTONE:
             separation_result = step2_5_underbase_creation(separation_result, args)
 
-        # Step 4 — Mask Generation (with grayscale if halftone enabled)
-        masks = step3_generate_masks(image, separation_result, halftone_mode=args.halftone)
-        
-        # Step 4.5 — Automatic Trapping
-        if args.trapping_mode == 'automatic' and HAS_PANTONE:
+        # Step 4.5 — Automatic Trapping (Artwork ONLY)
+        if _route_class == 'artwork' and args.trapping_mode == 'automatic' and HAS_PANTONE:
             masks = step3_5_trapping(masks, separation_result, args)
 
-        # DEBUG: Save masks after generation (only in debug mode)
-        # for idx, mask in enumerate(masks):
-        #     debug_path = os.path.join(output_dir, f"debug_mask_{idx+1}_after_generation.png")
-        #     cv2.imwrite(debug_path, mask)
-        #     logger.info(f"DEBUG: Saved mask {idx+1} after generation: {debug_path}")
+        # Step 5 — Edge Cleaning (Artwork ONLY, skip for photos/halftone)
+        if _route_class == 'artwork' and not args.halftone:
+            masks = step4_clean_edges(masks, analysis_obj.image_class, dpi=args.dpi)
 
-        # Step 5 — Edge Cleaning (always enabled for solid, skip for halftone)
-        if not args.halftone:
-            masks = step4_clean_edges(masks, getattr(args, '_image_class', None), dpi=args.dpi)
-        else:
-            _step(5, "Edge cleaning (skipped for halftone)")
-
-        # Step 6 — Halftone (applied to grayscale masks)
-        masks = step5_halftone(masks, args)
-
-        # Step 7 — Final Binarization (Production merged)
-        masks = step7_final_binarization(masks, args)
+        # Step 7 — Final Binarization (Artwork ONLY, skip if router already binarized/halftoned)
+        if not skip_binarization and _route_class == 'artwork':
+            # Perform final production binarization only on vector-style artwork
+            masks = step7_final_binarization(masks, args)
         
-        # Step 7.5 — Stroke Validation (ensure printability)
-        masks = step7_validate_strokes(masks, args)
+        # Step 7.5 — Stroke Validation (Logo/Artwork only)
+        if _route_class in ['artwork', 'text_logo']:
+            masks = step7_validate_strokes(masks, args)
 
-        # Step 8 — Registration Marks
+        # Step 8 — Registration Marks (ALL)
         masks = step8_registration_marks(masks, output_dir, args)
         
         # Debug output removed — was writing unconditional debug_mask_* files to output dir.
@@ -1272,6 +1339,21 @@ def main() -> int:
 
         # Output validation: warn if no files were exported or files are 0 bytes
         valid_exports = [p for p in exported if os.path.exists(p) and os.path.getsize(p) > 0]
+        
+        # Professional Guard: If PDFs were requested but none made
+        pdf_exports = [p for p in valid_exports if p.endswith('.pdf')]
+        was_pdf_requested = getattr(args, 'combine_pdf', True)
+        
+        if was_pdf_requested and not pdf_exports:
+            if not REPORTLAB_AVAILABLE:
+                logger.error("[Export] PDF generation requested but failed (reportlab missing).")
+                print("FATAL:PDF_NOT_EXPORTED:Dependency Missing", flush=True)
+                return 4
+            else:
+                logger.error("[Export] PDF generation FAILED despite reportlab being available. Check logs above.")
+                print("FATAL:PDF_NOT_EXPORTED:Generation Failed", flush=True)
+                return 5
+
         if not valid_exports:
             logger.error("[Validation] No valid output files produced! All masks may have been empty.")
             # Still exit 0 so Flutter gets the OUTPUT_DIR signal, but user sees warning in logs
@@ -1280,6 +1362,10 @@ def main() -> int:
         zero_byte = [p for p in exported if os.path.exists(p) and os.path.getsize(p) == 0]
         if zero_byte:
             logger.warning(f"[Validation] {len(zero_byte)} zero-byte file(s): {zero_byte}")
+
+        # 3. Final Content Audit: List every file written to output dir
+        final_files = os.listdir(output_dir)
+        logger.info(f"[FinalAudit] Files in {output_dir}: {final_files}")
 
         # FATAL #3 FIX: آخر سطر دائماً — Dart يقرأه ليعرف مسار الـ output
         _output_dir_signal(output_dir)

@@ -68,7 +68,17 @@ class SmartAnalyzer:
     
     def _extract_metrics(self, image, dpi):
         """Extract image characteristics for classification."""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # SENIOR REFINE: Downsample for metrics to save memory and speed (Task 2/2)
+        # Metrics don't need 2000x2000 resolution. 500px is enough for analysis.
+        h_orig, w_orig = image.shape[:2]
+        analysis_scale = min(1.0, 500.0 / max(h_orig, w_orig))
+        
+        if analysis_scale < 1.0:
+            img_ana = cv2.resize(image, None, fx=analysis_scale, fy=analysis_scale, interpolation=cv2.INTER_AREA)
+        else:
+            img_ana = image.copy()
+
+        gray = cv2.cvtColor(img_ana, cv2.COLOR_BGR2GRAY)
         h, w = gray.shape
         
         # 1. Edge Density (Canny edges / total pixels)
@@ -76,7 +86,7 @@ class SmartAnalyzer:
         edge_density = np.sum(edges > 0) / (h * w)
         
         # 2. Color Count Estimate (K-means quick pass)
-        img_small = cv2.resize(image, (150, 150))
+        img_small = cv2.resize(img_ana, (150, 150))
         pixels = img_small.reshape(-1, 3).astype(np.float32)
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
         inertias = []
@@ -84,8 +94,12 @@ class SmartAnalyzer:
         for k in [2, 4, 6, 8]:
             try:
                 _, _, centers = cv2.kmeans(pixels, k, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
-                inertia = np.sum((pixels - centers[_.flatten()]) ** 2)
-                inertias.append(inertia)
+                # Ensure we have centers before calculating inertia
+                if _ is not None:
+                    inertia = np.sum((pixels - centers[_.flatten()]) ** 2)
+                    inertias.append(inertia)
+                else:
+                    inertias.append(float('inf'))
             except:
                 inertias.append(float('inf'))
         
@@ -97,25 +111,27 @@ class SmartAnalyzer:
                 break
         
         # 3. Noise Level (Laplacian variance)
-        lap = cv2.Laplacian(gray, cv2.CV_64F)
+        # SENIOR REFINE: Use float32 (CV_32F) instead of float64 (CV_64F) to halve memory
+        lap = cv2.Laplacian(gray, cv2.CV_32F)
         noise_level = lap.var()
         
         # 4. Low Resolution Check
-        min_dim = min(h, w)
-        is_low_res = (min_dim < 300) or (dpi < 72)
+        min_dim = min(h_orig, w_orig)
+        is_low_res = (min_dim < 150) or (dpi < 50)
         
-        # 5. Mid-tone ratio (bimodality) — NEW
-        # Low midtones = bimodal = logo/text on clean background
+        # 5. Mid-tone ratio (bimodality)
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
         total_pixels = h * w
         mid_pixels = np.sum(hist[85:170])  # mid-tone band
-        mid_ratio = mid_pixels / total_pixels
+        mid_ratio = mid_pixels / (total_pixels + 1e-6)
         
-        # 6. Shape ratio (perimeter-based) — NEW
-        # Better than edge_density for filled silhouettes
+        # 6. Shape ratio (perimeter-based)
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         total_perimeter = sum(cv2.arcLength(c, True) for c in contours)
-        shape_ratio = total_perimeter / (h * w)
+        shape_ratio = total_perimeter / (h * w + 1e-6)
+        
+        # Clean up
+        del gray, edges, img_small, pixels, lap
         
         return {
             "edge_density": round(edge_density, 4),
@@ -124,7 +140,7 @@ class SmartAnalyzer:
             "is_low_res": is_low_res,
             "mid_ratio": round(mid_ratio, 4),
             "shape_ratio": round(shape_ratio, 4),
-            "confidence": 0.0,  # Will be set in _get_params
+            "confidence": 0.0,
         }
     
     def _classify(self, m: dict) -> ImageClass:
