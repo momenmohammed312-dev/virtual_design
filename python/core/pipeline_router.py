@@ -10,7 +10,7 @@ import argparse
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 
-# Local imports (using absolute paths or relative depending on structure)
+# Local imports
 try:
     from core.print_job_config import PrintJobConfig
     from core.pipeline_controller import PipelineController
@@ -39,46 +39,52 @@ class PipelineResult:
 
 class PipelineRouter:
     """
-    Orchestrates specialized pipelines for different image types:
-    - TEXT_LOGO: High-contrast, Otsu-based, no halftone.
-    - ARTWORK: Multi-color, K-means based, optional halftone.
-    - PHOTO: Grayscale gradients, mandatory halftone.
+    Routes an image to the most appropriate processing pipeline.
+    Based on Task #18: Specialized Processing Tiers.
     """
-    
     def __init__(self, job_config: PrintJobConfig):
         self.job_config = job_config
         self.controller = PipelineController()
         self.separator = ColorSeparator()
         self.mask_gen = MaskGenerator()
-        self.halftone_gen = HalftoneGenerator(dpi=job_config.dpi)
+        self.halftone_gen = HalftoneGenerator()
 
-    def route(self, image: np.ndarray, analysis: any, args: argparse.Namespace) -> PipelineResult:
-        """Entry point for routing the image to the correct pipeline."""
-        img_class = analysis.image_class.value if hasattr(analysis.image_class, 'value') else str(analysis.image_class)
-        logger.info(f"[Router] Routing image as: {img_class}")
-
-        if img_class == 'text_logo':
-            return self._run_text_logo(image, args)
-        elif img_class == 'photo':
-            return self._run_photo(image, args)
-        elif img_class == 'low_quality':
-            logger.warning("[Router] Image quality is low/blurry. Proceeding with ARTWORK pipeline as fallback.")
-            from main import preprocess_artwork
-            return self._run_artwork(image, args)
+    def route(self, image: np.ndarray, analysis, args: argparse.Namespace) -> PipelineResult:
+        """
+        Main entry point for routing.
+        Args:
+            image: Original upscaled image
+            analysis: Result from SmartAnalyzer (or None if auto-detect skipped)
+            args: CLI arguments
+        """
+        img_type = getattr(args, 'image_type', 'auto')
+        
+        # Classification decision
+        if analysis and img_type == 'auto':
+            image_class = analysis.image_class.value
+            logger.info(f"[Router] Auto-routing decision: {image_class} (confidence={analysis.confidence:.2f})")
         else:
-            # Default to artwork for 'mixed', 'unknown', or 'artwork'
+            image_class = img_type
+            logger.info(f"[Router] Manual routing: {image_class}")
+
+        # Execute specific pipeline
+        if image_class == 'text_logo':
+            return self._run_text_logo(image, args)
+        elif image_class == 'photo':
+            return self._run_photo(image, args)
+        else:
+            # Default to artwork (illustrations)
             return self._run_artwork(image, args)
 
     def _run_text_logo(self, image: np.ndarray, args: argparse.Namespace) -> PipelineResult:
-        """Pipeline for pure logos and text: Clean Otsu thresholding."""
-        # SENIOR FIX: If user requested more than 1 color, we MUST separate them!
+        """Pipeline for high-contrast logos/type: Sharpening + Pure Threshold + 1 Color."""
         # pure text_logo pipeline only handles 1 color (binary).
         if args.colors > 1:
             logger.info(f"[Router] Multi-color logo detected ({args.colors} colors). Routing to ARTWORK pipeline for separation.")
             return self._run_artwork(image, args)
             
         logger.info("[Router] Executing TEXT_LOGO pipeline...")
-        from main import preprocess_text_logo, _make_single_color_separation
+        from core.router_utils import preprocess_text_logo, _make_single_color_separation
         
         # 1. Preprocess
         preprocessed = preprocess_text_logo(image)
@@ -112,12 +118,12 @@ class PipelineRouter:
     def _run_artwork(self, image: np.ndarray, args: argparse.Namespace) -> PipelineResult:
         """Pipeline for illustrations: Multi-color K-means."""
         logger.info("[Router] Executing ARTWORK pipeline...")
-        from main import preprocess_artwork
+        from core.router_utils import preprocess_artwork, apply_halftone_pipeline
         
         # 1. Preprocess
         preprocessed = preprocess_artwork(image)
         
-        # 2. Color Separation (Task 15 retry logic inside)
+        # 2. Color Separation
         target_colors = args.colors if args.colors > 0 else 4
         sep_result = self.separator.separate(preprocessed, num_colors=target_colors)
         
@@ -127,8 +133,7 @@ class PipelineRouter:
         
         # 4. Halftone (if requested for artwork)
         if args.halftone:
-            from main import step5_halftone
-            masks = step5_halftone(masks, args)
+            masks = apply_halftone_pipeline(masks, args, self.halftone_gen)
         
         # 5. Polarity & Coverage check per mask
         processed_masks = []
@@ -137,16 +142,11 @@ class PipelineRouter:
             if not args.halftone and len(np.unique(m)) > 2:
                 _, m = cv2.threshold(m, 127, 255, cv2.THRESH_BINARY)
             
-            m = self.controller.enforce_polarity(m, stage=f"artwork_mask_{i}")
-            
-            # Use lenient coverage for individual color layers
             try:
                 self.controller.validate_mask_coverage(m, f"artwork_mask_{i}", min_coverage=0.001)
                 processed_masks.append(m)
             except ValueError:
                 logger.warning(f"[Router] Skipping empty color mask {i}")
-                # We still keep the slot to maintain index syncing? No, better to remove if truly blank.
-                # But sep_result says it exists. We'll keep it but it might fail later.
                 processed_masks.append(m) 
 
         # Task 18 override: cap smoothing for artwork
@@ -161,7 +161,7 @@ class PipelineRouter:
     def _run_photo(self, image: np.ndarray, args: argparse.Namespace) -> PipelineResult:
         """Pipeline for photos: Forced halftone gradients."""
         logger.info("[Router] Executing PHOTO pipeline (Halftone Mandatory)...")
-        from main import preprocess_photo
+        from core.router_utils import preprocess_photo, _make_single_color_separation, apply_halftone_pipeline
         
         # 1. Preprocess (Bilateral + Grayscale + Unsharp)
         preprocessed_gray = preprocess_photo(image)
@@ -170,22 +170,13 @@ class PipelineRouter:
         # Calculate safe LPI
         args.lpi = self.job_config.validate_lpi(args.lpi)
         
-        # Dot Radius Cap (0.85) is inside HalftoneGenerator (Task 16)
-        ht_mask = self.halftone_gen.generate(
-            preprocessed_gray, 
-            lpi=args.lpi, 
-            angle=45.0, 
-            dot_shape=args.dot_shape, 
-            dpi=self.job_config.dpi, 
-            gamma=1.6
-        )
+        masks = apply_halftone_pipeline([preprocessed_gray], args, self.halftone_gen)
+        ht_mask = masks[0]
         
         # 3. Validate coverage (sparse dots OK)
         self.controller.validate_mask_coverage(ht_mask, "photo_halftone", min_coverage=0.0005)
         
         # 4. Synthetic separation (num_colors=1 for photo)
-        # Note: Colors are already represented by dots in a single black film.
-        from main import _make_single_color_separation
         sep_result = _make_single_color_separation(image)
 
         # Skip later binarization/smoothing

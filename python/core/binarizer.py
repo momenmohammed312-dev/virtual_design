@@ -99,16 +99,9 @@ class Binarizer:
             b = results[0]
             best_conf, best_cmd, best_res, best_metrics = b['conf'], b['cmd'], b['res'], b['m']
 
-        # 4. POLARITY (Safeguard 1: Strategic Inversion)
-        ink_ratio = np.count_nonzero(best_res == 0) / best_res.size
-        lcr = best_metrics.get('lcr', 0)
-        # Only invert if ink is high (mostly black) AND no dominant component exists (noisy/background)
-        # Avoid inverting valid large solid shapes (high lcr)
-        if ink_ratio > 0.85 and lcr < 0.4:
-            best_res = cv2.bitwise_not(best_res)
-            self.logger.warning(f"[{rid}] POLARITY_INVERTED(ratio={ink_ratio:.2f},lcr={lcr:.2f})")
 
         # 5. HEALTH & SUMMARY (Safeguard 3 & 4)
+
         tier = "HIGH" if best_conf > 0.8 else ("ACCEPTABLE" if best_conf > 0.45 else "LOW")
         self._health["tiers"][tier] += 1
         total_time = round((time.time() - start_total) * 1000, 2)

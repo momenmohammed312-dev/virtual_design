@@ -168,8 +168,8 @@ class MaskGenerator:
 
     def _smart_smooth_mask(self, mask: np.ndarray) -> np.ndarray:
         """
-        Apply contour smoothing with adaptive epsilon.
-        FIXED: Use smaller epsilon for small contours (Arabic dots, hamza)
+        Apply morphological closing and selective boundary smoothing to eliminate jagged edges.
+        Replaces approxPolyDP which was causing angular artifacts.
         
         Args:
             mask: Binary mask to smooth
@@ -180,35 +180,35 @@ class MaskGenerator:
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
 
-        # Find contours (work on white pixels)
-        contours, _ = cv2.findContours(
-            cv2.bitwise_not(mask), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
+        # Step 1: remove tiny isolated noise components
+        inv = cv2.bitwise_not(mask)
+        num, labels, stats, _ = cv2.connectedComponentsWithStats(inv, 8, cv2.CV_32S)
+        clean_inv = np.zeros_like(inv)
+        for lbl in range(1, num):
+            if stats[lbl, cv2.CC_STAT_AREA] >= 20: # Keep components >= 20px
+                clean_inv[labels == lbl] = 255
 
-        if not contours:
-            return mask
+        # Step 2: morphological closing — fills small holes, smooth edges
+        k_size = 3
+        # Use elliptical kernel for natural rounded edges
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+        smoothed = cv2.morphologyEx(clean_inv, cv2.MORPH_CLOSE, kernel)
 
-        # Create result mask
-        result = np.full_like(mask, 255)
+        # Step 3: gentle Gaussian on the BOUNDARY only (not full image)
+        # This preserves solid fills while smoothing only the edge transitions
+        dilated = cv2.dilate(smoothed, kernel, iterations=1)
+        eroded  = cv2.erode(smoothed,  kernel, iterations=1)
+        boundary = dilated - eroded   # Provides a thin boundary ring
+        
+        # Apply gentle blur only to the boundary pixels
+        blurred_boundary = cv2.GaussianBlur(boundary, (3, 3), 0.8)
+        
+        # Combine eroded core with blurred boundary to get smooth but sharp edges
+        # We need to Ensure bitwise_or works on same types
+        smoothed = cv2.bitwise_or(eroded, blurred_boundary)
 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            
-            # FIXED: Adaptive epsilon based on contour area
-            if area < 500:
-                # Small contours (Arabic dots, hamza, small letters)
-                epsilon = 0.002 * cv2.arcLength(cnt, True)  # 0.2% - preserves details
-            else:
-                # Larger contours - standard epsilon
-                epsilon = 0.005 * cv2.arcLength(cnt, True)  # 0.5% - standard smoothing
+        return cv2.bitwise_not(smoothed)
 
-            # Approximate contour
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-
-            # Draw filled contour
-            cv2.drawContours(result, [approx], -1, 0, cv2.FILLED)
-
-        return result
 
     def validate_masks(self, masks: List[np.ndarray]) -> List[bool]:
         """

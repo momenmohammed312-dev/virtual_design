@@ -22,14 +22,24 @@ import numpy as np
 
 # ─── Optional imports with graceful fallback ─────────────────────────────────
 try:
-    from reportlab.pdfgen import canvas
+    from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
     REPORTLAB_AVAILABLE = True
 except ImportError as e:
     REPORTLAB_AVAILABLE = False
     # Use a specific signal that the bridge can detect
     print(f"\nFATAL:DEPENDENCY_MISSING:reportlab:PDF export requires: pip install reportlab. Error: {e}", flush=True)
     print(f"FATAL:DEPENDENCY_MISSING:reportlab", flush=True)
+
+# Important local imports for vector export
+try:
+    from core.vector_exporter import export_vector_pdf
+    HAS_VECTOR_EXPORTER = True
+except ImportError:
+    HAS_VECTOR_EXPORTER = False
+
 
 # Local imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -90,10 +100,12 @@ except ImportError as e:
     print(f"[WARNING] Registration marks not available: {e}", flush=True)
 
 try:
-    from core.exporter import Exporter
+    from core.exporter import Exporter, SVGWRITE_AVAILABLE
     HAS_EXPORTER = True
 except ImportError:
     HAS_EXPORTER = False
+    SVGWRITE_AVAILABLE = False
+
 
 try:
     from core.pantone_library import PantoneLibrary
@@ -860,6 +872,7 @@ def step9_export(
     separation_result: dict,
     output_dir: str,
     args: argparse.Namespace,
+    analysis = None,
 ) -> list:
     _step(9, "Exporting films (PNG + PDF + SVG)")
     os.makedirs(output_dir, exist_ok=True)
@@ -886,22 +899,16 @@ def step9_export(
             else:
                 eff_smooth = 0.30
         
-        # Import vector exporter
-        from core.vector_exporter import export_vector_pdf
-        from core.exporter import Exporter, SVGWRITE_AVAILABLE
-        
-        logger.info(f"  [Export] Modules status: ReportLab={REPORTLAB_AVAILABLE}, SVGWrite={SVGWRITE_AVAILABLE}")
+        logger.info(f"  [Export] Modules status: ReportLab={REPORTLAB_AVAILABLE}, SVGWrite={SVGWRITE_AVAILABLE}, VectorExporter={HAS_VECTOR_EXPORTER}")
         
         # We collect all valid masks for the combined PDF
         all_masks_for_pdf = []
         all_colors_for_pdf = []
         all_names_for_pdf = []
         
-        # A4 size in points
-        a4_w, a4_h = A4
-        margin = 36  # 0.5 inch margin
-        max_w = a4_w - 2 * margin
-        max_h = a4_h - 2 * margin
+        # A4 margins for PDF layout (points)
+
+
 
         for i, mask in enumerate(masks):
             if mask.dtype != np.uint8:
@@ -944,10 +951,8 @@ def step9_export(
                 # But our current mask has design as 0 (black ink on white paper)
                 # So we re-invert for the vector tracing
                 # FIXED: Enforce polarity first via PipelineController
-                if HAS_CONTROLLER:
-                    film_mask = controller.enforce_polarity(mask, stage=f"export/svg/{i+1}")
-                else:
-                    film_mask = mask
+                film_mask = mask
+
                 
                 if len(film_mask.shape) == 3:
                     ink_mask = cv2.bitwise_not(cv2.cvtColor(film_mask, cv2.COLOR_BGR2GRAY))
@@ -973,10 +978,8 @@ def step9_export(
                 
                 # FIXED: Ensure 1-channel grayscale
                 mask_gray = mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-                if HAS_CONTROLLER:
-                    film_gray = controller.enforce_polarity(mask_gray, stage=f"export/pdf/{i+1}")
-                else:
-                    film_gray = mask_gray
+                film_gray = mask_gray
+
                 
                 # Add to combined list
                 all_masks_for_pdf.append(film_gray)
@@ -984,15 +987,12 @@ def step9_export(
                 all_names_for_pdf.append(name_entry)
                 
                 # CHOICE: Raster (Image) for Halftone vs Vector (Bezier) for Solid
-                is_halftone = args.halftone or (HAS_SMART_ANALYZER and analysis.use_halftone)
+                is_halftone = args.halftone or (HAS_SMART_ANALYZER and analysis is not None and analysis.use_halftone)
                 
                 if is_halftone:
                     logger.info(f"  [Export] Rendering halftone {pdf_filename} as Raster PDF")
-                    from reportlab.pdfgen import canvas as rl_canvas
-                    from reportlab.lib.pagesizes import A4
-                    from reportlab.lib.units import mm
-                    from reportlab.lib.utils import ImageReader
                     import io
+
                     
                     c = rl_canvas.Canvas(pdf_filepath, pagesize=A4)
                     w, h = A4
@@ -1009,8 +1009,8 @@ def step9_export(
                     exported_paths.append(pdf_filepath)
                 else:
                     # TRUE VECTOR for solids
-                    from core.vector_exporter import export_vector_pdf
                     ink_mask_pdf = cv2.bitwise_not(film_gray)
+
                     export_vector_pdf(
                         masks=[ink_mask_pdf],
                         colors=[color_entry],
@@ -1030,12 +1030,11 @@ def step9_export(
         # 4. Save combined PDF
         if args.combine_pdf and REPORTLAB_AVAILABLE and all_masks_for_pdf:
             combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
-            from core.vector_exporter import export_vector_pdf
+
             # Combined PDF is usually vector for clarity, but we use inversion logic
-            if HAS_CONTROLLER:
-                ink_masks_combined = [cv2.bitwise_not(controller.enforce_polarity(m, "combined")) for m in all_masks_for_pdf]
-            else:
-                ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
+            # REMOVE enforce_polarity from here — mask is already correct from step7
+            ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
+
                 
             export_vector_pdf(
                 masks=ink_masks_combined,
@@ -1249,13 +1248,17 @@ def main() -> int:
 
     try:
         # Step 2 — Load
-        image = step1_load_image(args.input)
-        
+        # Step 1.1 — Load original for analysis (NO upscale to avoid artifacts)
+        image_orig = load_image_safely(args.input)
+        if len(image_orig.shape) > 2 and image_orig.shape[2] == 4:
+            image_orig = image_orig[:, :, :3]
+
         # Step 0 — Smart Analysis (NEW)
         if HAS_SMART_ANALYZER and img_type == 'auto':
             _step(0, "Smart Image Analysis")
             analyzer = SmartAnalyzer()
-            analysis = analyzer.analyze(image, dpi=args.dpi)
+            analysis = analyzer.analyze(image_orig, dpi=args.dpi)
+
             
             # Override args based on analysis (only if user didn't set manually)
             args.smoothing_factor = analysis.smoothing_factor
@@ -1280,6 +1283,10 @@ def main() -> int:
             # Fallback to existing logic for non-auto modes
             args._image_class = None
             args._analysis_confidence = 0.0
+        
+        # Now upscale for processing
+        image = step1_load_image(args.input)
+
         
         # Step 2.5 — Auto Crop (Senior Optimization)
         if args.auto_crop:
@@ -1331,8 +1338,8 @@ def main() -> int:
         # Debug output removed — was writing unconditional debug_mask_* files to output dir.
         # Re-enable with --debug flag if needed in future.
 
-        # Step 10 — Export
-        exported = step9_export(masks, separation_result, output_dir, args)
+        # Step 9 — Exporting films (PNG + PDF + SVG)
+        exported = step9_export(masks, separation_result, output_dir, args, analysis=analysis_obj)
 
         elapsed = round(time.time() - start_time, 1)
         logger.info(f"Pipeline complete in {elapsed}s. {len(exported)} films exported.")

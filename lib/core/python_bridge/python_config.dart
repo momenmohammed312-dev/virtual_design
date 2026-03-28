@@ -4,6 +4,7 @@
 // FATAL #1 FIX: getPythonScriptsDir() walks up from exe to find python/ folder
 // HIGH #2 FIX: isPythonAvailable flag blocks processing when Python is absent
 
+import 'package:flutter/foundation.dart';
 import 'dart:io';
 
 /// Exception لما Python مش موجود
@@ -211,12 +212,7 @@ print(",".join(missing))
   }
 
   bool _isDebugMode() {
-    bool debug = false;
-    assert(() {
-      debug = true;
-      return true;
-    }());
-    return debug;
+    return kDebugMode;
   }
 }
 
