@@ -67,8 +67,12 @@ class HalftoneGenerator:
         
         # Invert: dark areas (low gray) = big dots, light areas = small dots
         norm = gray[iy, ix] / 255.0
+        intensities = 1.0 - norm
         
         # Gamma correction: controls dot growth curve
+        if gamma != 1.0:
+            intensities = np.power(intensities, 1.0 / gamma)
+
         # TASK 16: Shadow relief (15% gap)
         # 0.85 multiplier ensures dots do not touch neighbors at 100% intensity,
         # preventing ink bridging/flooding on the screen.

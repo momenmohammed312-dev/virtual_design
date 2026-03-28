@@ -888,16 +888,20 @@ def step9_export(
             from core.pipeline_controller import PipelineController
             controller = PipelineController()
             
-        # Conditional smoothing: use CLI arg if provided, else auto-detect based on colors
+        # PHASE 22: Smart Smoothing Hierarchy (Senior Standard)
+        # Priority: (1) CLI Argument > (2) Smart Analysis Result > (3) Conservative Default (0.15)
+        # This prevents "melted detail" by honoring the auto-detected smooth_factor from Step 0.
         cli_smooth = getattr(args, 'smoothing_factor', None)
+        
         if cli_smooth is not None and cli_smooth > 0:
             eff_smooth = cli_smooth
+        elif analysis is not None:
+            eff_smooth = getattr(analysis, 'smoothing_factor', 0.15)
         else:
-            num_colors = len(masks)
-            if num_colors <= 3:
-                eff_smooth = 0.15
-            else:
-                eff_smooth = 0.30
+            # Last resort fallback: default to artwork level
+            eff_smooth = 0.15
+            
+        logger.info(f"  [Export] Using effective smoothing factor: {eff_smooth}")
         
         logger.info(f"  [Export] Modules status: ReportLab={REPORTLAB_AVAILABLE}, SVGWrite={SVGWRITE_AVAILABLE}, VectorExporter={HAS_VECTOR_EXPORTER}")
         
@@ -989,6 +993,11 @@ def step9_export(
                 # CHOICE: Raster (Image) for Halftone vs Vector (Bezier) for Solid
                 is_halftone = args.halftone or (HAS_SMART_ANALYZER and analysis is not None and analysis.use_halftone)
                 
+                # PHASE 23: Master Vector Tuning (Senior Standard)
+                # We use the analysis results (Step 0) as the "Frozen Truth"
+                eff_corner = getattr(analysis, 'corner_threshold', 150.0)
+                eff_no_blur = getattr(analysis, 'use_potrace_style', False) or getattr(args, 'no_vector_blur', False)
+
                 if is_halftone:
                     logger.info(f"  [Export] Rendering halftone {pdf_filename} as Raster PDF")
                     import io
@@ -1008,7 +1017,7 @@ def step9_export(
                     c.save()
                     exported_paths.append(pdf_filepath)
                 else:
-                    # TRUE VECTOR for solids
+                    # TRUE HIGH-FIDELITY VECTOR for solids
                     ink_mask_pdf = cv2.bitwise_not(film_gray)
 
                     export_vector_pdf(
@@ -1018,12 +1027,12 @@ def step9_export(
                         output_path=Path(pdf_filepath),
                         dpi=args.dpi,
                         smooth_factor=eff_smooth,
-                        corner_threshold=getattr(args, 'corner_threshold', 150.0),
-                        no_vector_blur=getattr(args, 'no_vector_blur', False)
+                        corner_threshold=eff_corner,
+                        no_vector_blur=eff_no_blur
                     )
                     exported_paths.append(pdf_filepath)
                 
-                logger.info(f"  Exported {pdf_filename}")
+                logger.info(f"  Exported {pdf_filename} (Smooth: {eff_smooth}, Corner: {eff_corner}, NoBlur: {eff_no_blur})")
 
             _progress(((9 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Exported {i+1}/{total}")
         
@@ -1035,6 +1044,9 @@ def step9_export(
             # REMOVE enforce_polarity from here — mask is already correct from step7
             ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
 
+            # Re-fetch high-fidelity params for combined PDF
+            eff_corner = getattr(analysis, 'corner_threshold', 150.0)
+            eff_no_blur = getattr(analysis, 'use_potrace_style', False) or getattr(args, 'no_vector_blur', False)
                 
             export_vector_pdf(
                 masks=ink_masks_combined,
@@ -1043,11 +1055,11 @@ def step9_export(
                 output_path=Path(combined_pdf_path),
                 dpi=args.dpi,
                 smooth_factor=eff_smooth,
-                corner_threshold=getattr(args, 'corner_threshold', 150.0),
-                no_vector_blur=getattr(args, 'no_vector_blur', False)
+                corner_threshold=eff_corner,
+                no_vector_blur=eff_no_blur
             )
             exported_paths.append(combined_pdf_path)
-            logger.info(f"  Exported all_films_combined.pdf")
+            logger.info(f"  Exported all_films_combined.pdf (Smooth: {eff_smooth})")
         
     except Exception as e:
         logger.error(f"  [Export] CRITICAL ERROR: {e}", exc_info=True)

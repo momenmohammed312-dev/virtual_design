@@ -52,17 +52,33 @@ class ColorSeparator:
         h, w, _ = image.shape
         total_pixels = h * w
 
-        # ── White Background Filtering ────────────────────────────────────────
-        # Near-white pixels (added by Flutter's ImageProcessor padding) are excluded
-        # from K-means so they don't waste a color slot.
-        # Pixels with ALL channels > white_threshold are marked as background.
-        white_threshold = 240  # pixels with R, G, B all above this are "white"
+        # ── Global Background Pre-Filtering ──────────────────────────────────
+        # Senior CV Fix: Detect background adaptively (White or Black).
+        # Most digital assets have a solid white (255) background, but some have dark.
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        bg_mask = (gray >= white_threshold)          # True = white/near-white background
-        fg_mask = ~bg_mask                            # True = actual design pixels
+        
+        # 1. Detect if background is likely white or black by checking corners
+        corners = [gray[0, 0], gray[0, -1], gray[-1, 0], gray[-1, -1]]
+        avg_corner = np.mean(corners)
+        
+        # Threshold: slightly more aggressive to catch off-white (235) or off-black (20)
+        if avg_corner > 200:
+            # White background
+            bg_mask = (gray >= 235)
+            logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background")
+        elif avg_corner < 50:
+            # Black background
+            bg_mask = (gray <= 20)
+            logger.info(f"[ColorSeparator] Adaptive: Detected BLACK background")
+        else:
+            # Ambiguous: fallback to simple white threshold
+            bg_mask = (gray >= 245)
+            logger.info(f"[ColorSeparator] Adaptive: Ambiguous background (avg_corner={avg_corner})")
+            
+        fg_mask = ~bg_mask
         fg_pixel_count = int(np.sum(fg_mask))
-
-        logger.info(f"[ColorSeparator] Separating {num_colors} colors (use_lab={use_lab}, "
+        
+        logger.info(f"[ColorSeparator] Separating {num_colors} colors (LAB={use_lab}, "
                     f"fg_pixels={fg_pixel_count}/{total_pixels} = "
                     f"{fg_pixel_count/total_pixels*100:.1f}%)")
 

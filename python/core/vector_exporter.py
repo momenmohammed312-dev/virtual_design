@@ -165,27 +165,16 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ رسم الـ vector paths ═══
-        # 1. Pre-trace blur: optional, only for complex images.
-        # Use --no-vector-blur to disable even for complex.
-        # 1. Edge Smoothing: Apply slight blur to binary mask to "straighten" jagged edges
-        # especially important for upscaled small logos (like Nike 570px -> 2000px)
-        if not no_vector_blur:
-            # For logos (low smooth_factor), use a small kernel for minor jaggy removal
-            # For artwork (high smooth_factor), use a larger kernel for smoother curves
-            if smooth_factor <= 0.2:
-                blur_k = 3
-            else:
-                blur_k = int(3 + round(max(0.0, smooth_factor) * 6.0))
-            
-            if blur_k % 2 == 0: blur_k += 1
-            blur_k = max(3, min(7, blur_k))
-            
-            # Median blur first to remove pixel salt-and-pepper noise
-            bw = cv2.medianBlur(mask, 3)
-            bw = cv2.GaussianBlur(bw, (blur_k, blur_k), 0)
-            _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
-        else:
-            bw = mask.copy()
+        # Senior Fix: Use the mask EXACTLY as it came from preview.
+        # No more hidden processing (blur/median) that changes the shape during export.
+        bw = mask.copy()
+        if bw.dtype != np.uint8:
+            bw = bw.astype(np.uint8)
+        
+        # Ensure it's purely binary for contour extraction
+        if len(np.unique(bw)) > 2:
+            _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
+
         
         # 2. Contour Extraction: TC89_KCOS for better curve approximation
         contours, hierarchy = cv2.findContours(
@@ -223,18 +212,12 @@ def export_vector_pdf(
             perimeter = cv2.arcLength(contour_arr, True)
             area = cv2.contourArea(contour_arr)
             
-            # Epsilon: adaptive for text sharpness
-            # Epsilon: adaptive for text sharpness
-            if smooth_factor <= 0.15:
-                # For text: calculate epsilon based on detail level
-                # Small text with lots of points -> needs more simplification to prevent wobble
-                if area < 800:
-                    epsilon = max(0.6, 0.01 * perimeter)   # small text — simplify more aggressively
-                else:
-                    epsilon = max(0.4, 0.005 * perimeter)   # large text — moderate simplification
-            else:
-                epsilon = max(0.25, min(0.50, 0.003 * perimeter))  # normal smoothing
+            # Epsilon: Unified High-Fidelity (Senior Computer Vision Standard)
+            # We use a very small epsilon (0.0001) to keep the contour dense.
+            # This prevents the 'polygon' look and lets the Bezier fitter do the smoothing properly.
+            epsilon = 0.0001 * perimeter
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
+
             
             if len(approx) < 3:
                 return

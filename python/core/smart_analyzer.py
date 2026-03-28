@@ -59,10 +59,25 @@ class SmartAnalyzer:
         sorted_scores = sorted(score_vals, reverse=True)
         confidence = sorted_scores[0] - sorted_scores[1]
         
+        # Phase 24: Senior Confidence Gate & Rule Overrides
+        # 1. Force TEXT_LOGO if it's clearly a high-contrast 2-color (1 ink + 1 bg) image
+        if metrics["color_count_estimate"] <= 2 and scores['text'] > 0.4:
+            logger.info("  [SmartAnalyzer] Rule: Low color count detected. Forcing TEXT_LOGO.")
+            image_class = ImageClass.TEXT_LOGO
+            confidence = 0.95
+            
+        # 2. If we are < 70% confident in text_logo, default to artwork
+        # This prevents aggressive binarization on fuzzy/complex images.
+        elif image_class == ImageClass.TEXT_LOGO and confidence < 0.70:
+            logger.warning(f"  [SmartAnalyzer] Unstable confidence ({confidence:.1%}) for text_logo. Falling back to ARTWORK.")
+            image_class = ImageClass.ARTWORK
+            confidence = 0.7
+            
         # Low quality override
         if metrics["is_low_res"] or metrics["noise_level"] > 2000:
             image_class = ImageClass.LOW_QUALITY
             confidence = 0.5
+
             
         params = self._get_params(image_class, metrics)
         
@@ -207,13 +222,16 @@ class SmartAnalyzer:
         base = {"use_potrace_style": False, "use_halftone": False, "lpi": 55, "num_colors": 0}
         
         if cls == ImageClass.TEXT_LOGO:
-            return {**base, "smoothing_factor": 0.0, "corner_threshold": 20.0, "global_threshold": 160, "use_potrace_style": True}
+            # Phase 25: Senior Sharpening (High Fidelity)
+            return {**base, "smoothing_factor": 0.0, "corner_threshold": 10.0, "global_threshold": 160, "use_potrace_style": True}
         if cls == ImageClass.ARTWORK:
-            return {**base, "smoothing_factor": 0.20, "corner_threshold": 45.0, "global_threshold": 180}
+            # Conservative smoothing to prevent "melting" details
+            return {**base, "smoothing_factor": 0.10, "corner_threshold": 30.0, "global_threshold": 180}
         if cls == ImageClass.PHOTO:
-            return {**base, "smoothing_factor": 0.25, "corner_threshold": 60.0, "global_threshold": 200, "use_halftone": True}
+            return {**base, "smoothing_factor": 0.25, "corner_threshold": 45.0, "global_threshold": 200, "use_halftone": True}
         
-        return {**base, "smoothing_factor": 0.20, "corner_threshold": 45.0, "global_threshold": 200}
+        return {**base, "smoothing_factor": 0.10, "corner_threshold": 30.0, "global_threshold": 200}
+
 
 
     def get_recommended_lpi(self, image_class: ImageClass, detail_level: str = "medium") -> int:

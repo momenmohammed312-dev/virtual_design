@@ -61,7 +61,8 @@ class MaskGenerator:
 
             if grayscale_output:
                 # For halftone: preserve grayscale intensity from original image
-                mask[label_map == i] = 255 - gray_orig[label_map == i]
+                # Design pixels (low labels) should map to their original grayscale (low = dark/ink)
+                mask[label_map == i] = gray_orig[label_map == i]
             else:
                 # For solid: black design on white background (film polarity)
                 mask[label_map == i] = 0  # Design pixels = BLACK (0)
