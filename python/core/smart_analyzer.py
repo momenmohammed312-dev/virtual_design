@@ -1,3 +1,4 @@
+from __future__ import annotations
 import cv2
 import numpy as np
 from dataclasses import dataclass
@@ -13,36 +14,36 @@ class ImageClass(Enum):
     LOW_QUALITY  = "low_quality" # صورة مضروبة — noise عالي، دقة منخفضة
 
 @dataclass
-class AnalysisResult:
+class SmartResult:
     image_class: ImageClass
     
     # Processing Parameters (auto-filled)
-    smoothing_factor: float
-    corner_threshold: float
-    global_threshold: int
-    use_halftone: bool
-    lpi: int
-    num_colors: int          # 0 = auto-detect
-    use_potrace_style: bool  # sharp vectorization
+    smoothing_factor: float = 0.1
+    corner_threshold: float = 30.0
+    global_threshold: int = 127
+    use_halftone: bool = False
+    lpi: int = 55
+    num_colors: int = 0
+    use_potrace_style: bool = False
     
     # Diagnostic Info
-    edge_density: float
-    color_count_estimate: int
-    noise_level: float
-    is_low_res: bool
-    confidence: float        # 0.0 - 1.0
+    edge_density: float = 0.0
+    color_count_estimate: int = 0
+    noise_level: float = 0.0
+    is_low_res: bool = False
+    confidence: float = 0.0
     
     # Bimodality & Shape Features
-    mid_ratio: float        # histogram midtones ratio (85-169)
-    shape_ratio: float      # perimeter/area ratio
+    mid_ratio: float = 0.0
+    shape_ratio: float = 0.0
     
     # NEW Scores (V2)
-    score_text: float
-    score_artwork: float
-    score_photo: float
+    score_text: float = 0.0
+    score_artwork: float = 0.0
+    score_photo: float = 0.0
 
 class SmartAnalyzer:
-    def analyze(self, image: np.ndarray, dpi: int = 300) -> AnalysisResult:
+    def analyze(self, image: np.ndarray, dpi: int = 300) -> SmartResult:
         """
         Analyze image using soft scoring instead of hard thresholds.
         """
@@ -82,7 +83,7 @@ class SmartAnalyzer:
         params = self._get_params(image_class, metrics)
         
         # Merge all into result
-        result = AnalysisResult(
+        result = SmartResult(
             image_class=image_class,
             confidence=round(float(confidence), 3),
             score_text=round(scores['text'], 3),
@@ -90,7 +91,7 @@ class SmartAnalyzer:
             score_photo=round(scores['photo'], 3),
             is_low_res=metrics["is_low_res"], # Explicitly pass is_low_res
             **params,
-            **{k: v for k, v in metrics.items() if k not in ['is_low_res'] and k in AnalysisResult.__annotations__}
+            **{k: v for k, v in metrics.items() if k not in ['is_low_res'] and k in SmartResult.__annotations__}
         )
 
         
@@ -222,15 +223,19 @@ class SmartAnalyzer:
         base = {"use_potrace_style": False, "use_halftone": False, "lpi": 55, "num_colors": 0}
         
         if cls == ImageClass.TEXT_LOGO:
-            # Phase 25: Senior Sharpening (High Fidelity)
-            return {**base, "smoothing_factor": 0.0, "corner_threshold": 10.0, "global_threshold": 160, "use_potrace_style": True}
+            # تم التعديل: رفع الـ smoothing لـ 0.25 والـ corner لـ 95
+            # ده هيخلي اللوجوهات زي نايكي تطلع "كيرفات" مش خطخطوط مكسرة
+            return {**base, "smoothing_factor": 0.25, "corner_threshold": 95.0, "global_threshold": 160, "use_potrace_style": True}
+            
         if cls == ImageClass.ARTWORK:
-            # Conservative smoothing to prevent "melting" details
-            return {**base, "smoothing_factor": 0.10, "corner_threshold": 30.0, "global_threshold": 180}
+            # تنعيم متوسط للرسومات
+            return {**base, "smoothing_factor": 0.35, "corner_threshold": 110.0, "global_threshold": 180}
+            
         if cls == ImageClass.PHOTO:
-            return {**base, "smoothing_factor": 0.25, "corner_threshold": 45.0, "global_threshold": 200, "use_halftone": True}
+            # تنعيم عالي للصور الفوتوغرافية عشان الهالف تون
+            return {**base, "smoothing_factor": 0.45, "corner_threshold": 140.0, "global_threshold": 200, "use_halftone": True}
         
-        return {**base, "smoothing_factor": 0.10, "corner_threshold": 30.0, "global_threshold": 200}
+        return {**base, "smoothing_factor": 0.20, "corner_threshold": 120.0, "global_threshold": 200}
 
 
 

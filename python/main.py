@@ -35,7 +35,7 @@ except ImportError as e:
 
 # Important local imports for vector export
 try:
-    from core.vector_exporter import export_vector_pdf
+    from core.vector_exporter import export_vector_pdf, render_vector_halftone, render_raster_halftone
     HAS_VECTOR_EXPORTER = True
 except ImportError:
     HAS_VECTOR_EXPORTER = False
@@ -999,21 +999,19 @@ def step9_export(
                 eff_no_blur = getattr(analysis, 'use_potrace_style', False) or getattr(args, 'no_vector_blur', False)
 
                 if is_halftone:
-                    logger.info(f"  [Export] Rendering halftone {pdf_filename} as Raster PDF")
-                    import io
+                    dot_count = int(np.sum(film_gray < 127))
+                    dot_ratio = float(dot_count) / float(max(1, film_gray.size))
+                    use_raster = (dot_count >= 50000) or (dot_ratio >= 0.03)
 
+                    mode = "Raster" if use_raster else "Vector"
+                    logger.info(f"  [Export] Rendering halftone {pdf_filename} as {mode} PDF (dots={dot_count}, ratio={dot_ratio:.2%})")
                     
                     c = rl_canvas.Canvas(pdf_filepath, pagesize=A4)
-                    w, h = A4
-                    margin = 20 * mm
-                    avail_w, avail_h = w - 2*margin, h - 2*margin
-                    ih, iw = film_gray.shape[:2]
-                    aspect = iw / ih
-                    if avail_w / aspect <= avail_h: dw, dh = avail_w, avail_w / aspect
-                    else: dw, dh = avail_h * aspect, avail_h
-                    
-                    _, buf = cv2.imencode(".png", film_gray)
-                    c.drawImage(ImageReader(io.BytesIO(buf.tobytes())), (w-dw)/2, (h-dh)/2, width=dw, height=dh, mask='auto')
+
+                    if use_raster:
+                        render_raster_halftone(c, film_gray, args.dpi, A4[0], A4[1])
+                    else:
+                        render_vector_halftone(c, film_gray, color_entry, A4[1])
                     c.save()
                     exported_paths.append(pdf_filepath)
                 else:

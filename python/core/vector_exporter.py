@@ -8,6 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional
 import logging
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def _get_angle(p1, p2, p3):
 def fit_bezier_to_contour(
     contour: np.ndarray,
     smooth_factor: float = 0.25,
-    corner_threshold: float = 140.0
+    corner_threshold: float = 95.0
 ) -> List[Tuple]:
     """
     تحويل النقاط (Contour) إلى منحنيات بيزييه (Bezier Curves) احترافية.
@@ -212,10 +213,8 @@ def export_vector_pdf(
             perimeter = cv2.arcLength(contour_arr, True)
             area = cv2.contourArea(contour_arr)
             
-            # Epsilon: Unified High-Fidelity (Senior Computer Vision Standard)
-            # We use a very small epsilon (0.0001) to keep the contour dense.
-            # This prevents the 'polygon' look and lets the Bezier fitter do the smoothing properly.
-            epsilon = 0.0001 * perimeter
+            # رفعنا المعامل لـ 0.0005 لتقليل النويز قبل التنعيم
+            epsilon = 0.0005 * perimeter
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
 
             
@@ -333,3 +332,56 @@ def export_vector_pdf(
     c.save()
     logger.info(f"[VectorExporter] Saved: {output_path} ({len(masks)} films)")
     return output_path
+
+def render_vector_halftone(canvas, mask, color_rgb, page_h):
+    """تحويل نقاط الهافتون لدوائر فيكتور حقيقية"""
+    import numpy as np
+    # جلب أماكن النقاط السوداء (ink = 0 في الـ mask الأصلي، بنسبة دقة الـ mask)
+    points = np.argwhere(mask < 127) 
+    
+    canvas.setFillColorRGB(0, 0, 0) # رسم النقاط بالأسود للفيلم
+    dot_size = 0.8 # حجم النقطة - ممكن تظبطه حسب الـ LPI
+    
+    for y, x in points:
+        # رسم دائرة صغيرة لكل بكسل هافتون
+        canvas.circle(x, page_h - y, dot_size, fill=1, stroke=0)
+
+def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, page_h: float) -> None:
+    """Embed halftone mask as a high-resolution raster image inside the PDF.
+
+    This is used as a fallback for dense halftone patterns where vector dots become
+    too heavy/slow or cause visual artifacts in PDF renderers.
+    """
+    if mask.dtype != np.uint8:
+        mask_u8 = mask.astype(np.uint8)
+    else:
+        mask_u8 = mask
+
+    if len(mask_u8.shape) == 3:
+        mask_u8 = cv2.cvtColor(mask_u8, cv2.COLOR_BGR2GRAY)
+
+    mask_h, mask_w = mask_u8.shape[:2]
+
+    ok, png_bytes = cv2.imencode('.png', mask_u8)
+    if not ok:
+        raise RuntimeError("Failed to encode halftone mask as PNG")
+
+    from reportlab.lib.utils import ImageReader
+    img_reader = ImageReader(io.BytesIO(png_bytes.tobytes()))
+
+    margin_pt = 40.0
+    header_pt = 60.0
+    footer_pt = 50.0
+    available_w = page_w - 2 * margin_pt
+    available_h = page_h - header_pt - footer_pt - 2 * margin_pt
+
+    img_w_pt = (mask_w / max(1, dpi)) * 72.0
+    img_h_pt = (mask_h / max(1, dpi)) * 72.0
+    scale = min(available_w / img_w_pt, available_h / img_h_pt, 1.0)
+
+    draw_w = img_w_pt * scale
+    draw_h = img_h_pt * scale
+    draw_x = margin_pt + (available_w - draw_w) / 2
+    draw_y = footer_pt + margin_pt
+
+    canvas.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, mask='auto')
