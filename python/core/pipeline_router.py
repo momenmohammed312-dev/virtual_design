@@ -36,6 +36,7 @@ class PipelineResult:
     separation_result: Dict
     image_class: str
     skip_binarization: bool = False
+    effective_smoothing: float = None  # For artwork smoothing override (BUG-11 fix)
 
 class PipelineRouter:
     """
@@ -128,8 +129,9 @@ class PipelineRouter:
         sep_result = self.separator.separate(preprocessed, num_colors=target_colors)
         
         # 3. Generate Masks
-        # If halftoning, generate grayscale intensity masks.
-        masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=args.halftone)
+        # CRITICAL FIX: ARTWORK must use binary masks, not grayscale (prevents empty masks)
+        # Only PHOTO pipeline should use grayscale_output=True
+        masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=False)
         
         # 4. Halftone (if requested for artwork)
         if args.halftone:
@@ -139,23 +141,29 @@ class PipelineRouter:
         processed_masks = []
         for i, m in enumerate(masks):
             # If not halftoning and not already binary, make binary now
+            # FIXED: Use Otsu for each mask independently (BUG-05)
             if not args.halftone and len(np.unique(m)) > 2:
-                _, m = cv2.threshold(m, 127, 255, cv2.THRESH_BINARY)
+                _, m = cv2.threshold(m, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             
             try:
                 self.controller.validate_mask_coverage(m, f"artwork_mask_{i}", min_coverage=0.001)
                 processed_masks.append(m)
             except ValueError:
                 logger.warning(f"[Router] Skipping empty color mask {i}")
-                processed_masks.append(m) 
+                # FIXED: Don't add empty mask - skip it entirely (BUG-03 fix)
+                continue 
 
         # Task 18 override: cap smoothing for artwork
-        args.smoothing_factor = min(args.smoothing_factor, 0.15) if not args.halftone else 0.0
-
+        # FIXED: Don't mutate args - calculate effective smoothing for return (BUG-11)
+        effective_smooth = min(args.smoothing_factor, 0.15) if not args.halftone else 0.0
+        logger.info(f'[Router] Artwork smoothing capped: {args.smoothing_factor} -> {effective_smooth}')
+        
         return PipelineResult(
             masks=processed_masks,
             separation_result=sep_result,
-            image_class='artwork'
+            image_class='artwork',
+            skip_binarization=False,
+            effective_smoothing=effective_smooth  # New field for step9_export
         )
 
     def _run_photo(self, image: np.ndarray, args: argparse.Namespace) -> PipelineResult:

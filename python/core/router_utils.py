@@ -78,7 +78,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     if effective_lpi == 65: # default
         effective_lpi = min(120, max(55, args.dpi // 5))
 
-    cmyk_angles = [15.0, 75.0, 0.0, 45.0]
+    cmyk_angles = [15.0, 45.0, 75.0, 0.0]
     result = []
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
@@ -88,12 +88,21 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
         design_pixels = np.sum(mask < 128)
         coverage_percentage = (design_pixels / total_pixels) * 100
         
+        # CRITICAL FIX: Skip halftone on empty/near-empty masks (prevents crashes)
+        if coverage_percentage < 1.0:  # Less than 1% coverage = essentially empty
+            logger.warning(f"[Halftone] Skipping empty mask {i+1} ({coverage_percentage:.1f}% coverage)")
+            result.append(mask)  # Pass through unchanged
+            continue
+        
         if coverage_percentage > 95.0:
             result.append(mask)
             continue
             
         enhanced = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
-        if 5.0 <= coverage_percentage <= 85.0:
+        # FIXED: Skip CLAHE on binary, apply on grayscale with full tonal range (BUG-06)
+        unique_vals = np.unique(enhanced)
+        is_binary_mask = len(unique_vals) <= 2
+        if not is_binary_mask:
             enhanced = clahe.apply(enhanced)
             
         angle = cmyk_angles[i] if i < len(cmyk_angles) else getattr(args, 'angle', 45.0)

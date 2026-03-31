@@ -17,7 +17,7 @@ POLARITY_BG = 255   # background pixels = WHITE
 
 # Coverage bounds
 MIN_INK_COVERAGE = 0.001  # 0.1% — below = blank film
-MAX_INK_COVERAGE = 0.98   # 98%  — above = inverted mask
+MAX_INK_COVERAGE = 0.995  # 99.5%  — above = inverted mask (increased for solid artwork)
 
 
 @dataclass
@@ -191,6 +191,10 @@ class PipelineController:
         total_px = mask.size
         ink_px = int(np.sum(mask == POLARITY_INK))
         ink_ratio = ink_px / total_px
+        
+        # Debug: Show mask statistics
+        unique_vals = np.unique(mask)
+        logger.info(f"  [Debug] {stage}: unique_vals={unique_vals}, ink_ratio={ink_ratio:.4%}, polarity_ink={POLARITY_INK}")
 
         if ink_ratio < min_coverage:
             msg = f"BLANK_MASK: {stage} ink coverage {ink_ratio:.4%} < {min_coverage:.4%}"

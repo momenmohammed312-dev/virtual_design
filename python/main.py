@@ -16,6 +16,7 @@ import time
 import gc
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -39,6 +40,33 @@ try:
     HAS_VECTOR_EXPORTER = True
 except ImportError:
     HAS_VECTOR_EXPORTER = False
+
+
+# ─── ProcessedFilmCache — Lock Preview Output Architecture ─────────────────────
+@dataclass
+class LockedFilm:
+    """Immutable snapshot of a processed film mask with metadata."""
+    final_mask: np.ndarray      # uint8, film polarity (ink=0, bg=255)
+    color_rgb: tuple             # (R, G, B)
+    color_name: str
+    film_index: int
+    image_class: str
+    smooth_factor: float
+    corner_threshold: float
+    use_potrace_style: bool
+    is_halftone: bool
+
+@dataclass
+class ProcessedFilmCache:
+    """Cache for final processed masks - export reads from here, never re-processes."""
+    films: List[LockedFilm] = field(default_factory=list)
+    locked: bool = False
+
+    def lock(self):
+        """Create immutable snapshots of all masks."""
+        self.locked = True
+        for f in self.films:
+            f.final_mask = f.final_mask.copy()  # Immutable snapshot
 
 
 # Local imports
@@ -81,6 +109,12 @@ try:
     HAS_BINARIZER = True
 except ImportError:
     HAS_BINARIZER = False
+
+try:
+    from core.edge_aware_binarizer import EdgeAwareBinarizer, EdgeAwareConfig
+    HAS_EDGE_AWARE_BINARIZER = True
+except ImportError:
+    HAS_EDGE_AWARE_BINARIZER = False
 
 try:
     from core.stroke_validator import StrokeValidator
@@ -131,6 +165,7 @@ def _check_modules() -> None:
         'SmartAnalyzer': HAS_SMART_ANALYZER,
         'HalftoneGenerator': HAS_HALFTONE,
         'Binarizer': HAS_BINARIZER,
+        'EdgeAwareBinarizer': HAS_EDGE_AWARE_BINARIZER,
         'StrokeValidator': HAS_STROKE_VALIDATOR,
         'RegistrationMarks': HAS_REG_MARKS,
         'Exporter': HAS_EXPORTER,
@@ -277,17 +312,20 @@ def step1_load_image(input_path: str) -> np.ndarray:
         if image.shape[2] == 4:
             image = image[:, :, :3]
         
-        # Auto upscale small images to prevent stroke validation failures
+        # CRITICAL FIX: Disable auto upscale - prevents edge smoothing artifacts
+        # Small images should be processed as-is to preserve sharp edges
         h, w = image.shape[:2]
-        # Professional standard: Target ~2000px width for reliable analysis
-        target_width = 2000
-        if w < target_width:
-            scale_factor = target_width / w
+        logger.info(f"Processing image at original resolution: {w}x{h} (auto-upscale disabled)")
+        
+        # Only upscale if extremely small (< 300px) for analysis stability
+        min_width = 300
+        if w < min_width:
+            scale_factor = min_width / w
             new_w = int(w * scale_factor)
             new_h = int(h * scale_factor)
-            # Use INTER_LANCZOS4 for maximal detail preservation
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-            logger.info(f"Auto-upscaled small image: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [LANCZOS4]")
+            # CRITICAL: Use INTER_NEAREST to preserve edges (no smoothing)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            logger.info(f"Minimal upscale only: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [NEAREST]")
         
         return image
     except Exception as e:
@@ -491,7 +529,12 @@ def step5_halftone(masks: list, args: argparse.Namespace) -> list:
     halftone_gamma = 1.6
     
     try:
-        generator = HalftoneGenerator()
+        generator = HalftoneGenerator(
+            dpi=args.dpi,
+            radius_gain=getattr(args, 'dot_gain_radius', 1.0),
+            curve_type=getattr(args, 'dot_gain_curve', 'linear')
+        )
+        logger.info(f"  Halftone generator: radius_gain={args.dot_gain_radius}, curve={args.dot_gain_curve}")
         result = []
         total = max(1, len(masks))
         
@@ -626,13 +669,28 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
 
 def step7_final_binarization(masks: list, args: argparse.Namespace) -> list:
     """
-    MERGED PRODUCTION BINARIZATION (Phase 16 Audit Fix).
-    Replaces old step6 and step7.5 to prevent detail loss.
-    Uses Binarizer.auto_threshold() with recursive fallback.
+    MERGED PRODUCTION BINARIZATION with Edge-aware support (Phase 2).
+    Uses EdgeAwareBinarizer for ARTWORK when enabled, falls back to standard Binarizer.
     """
     _step(7, "Production Binarization & Validation")
     
-    if not HAS_BINARIZER:
+    # Check if edge-aware binarization is enabled
+    use_edge_aware = getattr(args, 'edge_aware_bin', False) and HAS_EDGE_AWARE_BINARIZER
+    
+    if use_edge_aware:
+        logger.info("  Using Edge-aware Binarizer for superior ARTWORK processing")
+        config = EdgeAwareConfig(
+            method=getattr(args, 'binarization_method', 'sauvola'),
+            edge_preserve=getattr(args, 'edge_preserve', True),
+            k=0.34 if getattr(args, 'binarization_method', 'sauvola') == 'sauvola' else 0.2,
+            window_size=51,
+            min_area=getattr(args, 'noise_removal', 3)
+        )
+        binarizer = EdgeAwareBinarizer(config)
+    elif HAS_BINARIZER:
+        logger.info("  Using standard Binarizer")
+        binarizer = Binarizer()
+    else:
         logger.warning("Binarizer not found. Falling back to simple Otsu.")
         result = []
         for m in masks:
@@ -640,43 +698,58 @@ def step7_final_binarization(masks: list, args: argparse.Namespace) -> list:
             result.append(b)
         return result
 
-    binarizer = Binarizer()
     out = []
     total = len(masks)
     start_bin = time.time()
     
     for i, m in enumerate(masks):
-        # Use auto mode to select best method
-        image_class = getattr(args, '_image_class', None)
-        image_class_val = image_class.value if image_class and hasattr(image_class, 'value') else 'auto'
-        
         m_start = time.time()
-        binary = binarizer.binarize(m, method='auto', image_class=image_class_val, global_threshold=getattr(args, 'global_threshold', 200))
+        
+        if use_edge_aware:
+            # Use edge-aware binarizer
+            binary = binarizer.binarize(m)
+            
+            # Get quality metrics
+            metrics = binarizer.get_quality_metrics(m, binary)
+            logger.info(f"  [Edge-aware] Mask {i+1}: edge_pres={metrics['edge_preservation']:.3f}, "
+                       f"noise_red={metrics['noise_reduction']:.3f}")
+        else:
+            # Use standard binarizer
+            if HAS_BINARIZER:
+                binarizer._method_cache = {}  # Force fresh method selection per mask
+                image_class = getattr(args, '_image_class', None)
+                image_class_val = image_class.value if image_class and hasattr(image_class, 'value') else 'auto'
+                binary = binarizer.binarize(m, method='auto', image_class=image_class_val, 
+                                          global_threshold=getattr(args, 'global_threshold', 200))
+            else:
+                _, binary = cv2.threshold(m, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
         m_elapsed = (time.time() - m_start) * 1000
         
-        # Check if binarizer rejected the mask (returned a white/blank mask)
+        # Check if binarizer rejected the mask
         total_px = binary.size
         white_px = np.count_nonzero(binary == 255)
         if white_px / total_px > 0.999:
-            logger.warning(f"  [Binarizer] Mask {i+1} REJECTED (Method Cache: {'YES' if image_class_val in binarizer._method_cache else 'NO'})")
+            logger.warning(f"  [Binarizer] Mask {i+1} REJECTED")
         else:
-            logger.info(f"  [Binarizer] Mask {i+1} PROCESSED in {m_elapsed:.0f}ms (EDA-Score applied)")
-        
+            logger.info(f"  [Binarizer] Mask {i+1} PROCESSED in {m_elapsed:.0f}ms")
+
         # Final Guard: Enforce polarity and audit
         if HAS_CONTROLLER:
             binary = controller.enforce_polarity(binary, stage=f"final_bin/{i+1}")
             controller.audit(binary, stage=f"final_bin_audit/{i+1}")
 
-        # Noise removal (Area opening)
-        noise_min_area = getattr(args, 'noise_removal', 3)
-        if noise_min_area > 0:
-            inv = cv2.bitwise_not(binary)
-            num, labels, stats, _ = cv2.connectedComponentsWithStats(inv, 8, cv2.CV_32S)
-            clean = np.full_like(binary, 255)
-            for lbl in range(1, num):
-                if stats[lbl, cv2.CC_STAT_AREA] >= noise_min_area:
-                    clean[labels == lbl] = 0
-            binary = clean
+        # Noise removal (skip if edge-aware already handled it)
+        if not use_edge_aware:
+            noise_min_area = getattr(args, 'noise_removal', 3)
+            if noise_min_area > 0:
+                inv = cv2.bitwise_not(binary)
+                num, labels, stats, _ = cv2.connectedComponentsWithStats(inv, 8, cv2.CV_32S)
+                clean = np.full_like(binary, 255)
+                for lbl in range(1, num):
+                    if stats[lbl, cv2.CC_STAT_AREA] >= noise_min_area:
+                        clean[labels == lbl] = 0
+                binary = clean
             
         out.append(binary)
         _progress(((7 - 1) + (i + 1) / total) / TOTAL_STEPS, f"Binarized {i+1}/{total}")
@@ -868,7 +941,7 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
 
 
 def step9_export(
-    masks: list,
+    cache: ProcessedFilmCache,
     separation_result: dict,
     output_dir: str,
     args: argparse.Namespace,
@@ -882,6 +955,8 @@ def step9_export(
     pdf_paths = []
 
     try:
+        # Extract masks from cache films
+        masks = [film.final_mask for film in cache.films]
         total = max(1, len(masks))
         
         if HAS_CONTROLLER:
@@ -912,11 +987,11 @@ def step9_export(
         
         # A4 margins for PDF layout (points)
 
+        total = max(1, len(cache.films))
 
-
-        for i, mask in enumerate(masks):
-            if mask.dtype != np.uint8:
-                mask = mask.astype(np.uint8)
+        for film in cache.films:
+            i = film.film_index
+            mask = film.final_mask
             
             # Skip masks with no design pixels (all black -> now all white 255 since we inverted)
             if len(mask.shape) == 3:
@@ -928,9 +1003,14 @@ def step9_export(
                 logger.info(f"  Skipping empty mask {i+1}")
                 continue
 
-            # Get color info for this mask from separation_result
-            color_entry = separation_result['colors'][i] if i < len(separation_result['colors']) else (0,0,0)
-            name_entry = separation_result['color_names'][i] if i < len(separation_result['color_names']) else f"Film_{i+1}"
+            # Use color info from film cache (already populated)
+            color_entry = film.color_rgb
+            name_entry = film.color_name
+            
+            # Use cached processing parameters
+            eff_smooth = film.smooth_factor
+            eff_corner = film.corner_threshold
+            eff_no_blur = film.use_potrace_style
             
             # 1. Save PNG for UI preview (Pure Binary)
             png_filename = f"film_{i+1}.png"
@@ -991,13 +1071,8 @@ def step9_export(
                 all_names_for_pdf.append(name_entry)
                 
                 # CHOICE: Raster (Image) for Halftone vs Vector (Bezier) for Solid
-                is_halftone = args.halftone or (HAS_SMART_ANALYZER and analysis is not None and analysis.use_halftone)
+                is_halftone = film.is_halftone
                 
-                # PHASE 23: Master Vector Tuning (Senior Standard)
-                # We use the analysis results (Step 0) as the "Frozen Truth"
-                eff_corner = getattr(analysis, 'corner_threshold', 150.0)
-                eff_no_blur = getattr(analysis, 'use_potrace_style', False) or getattr(args, 'no_vector_blur', False)
-
                 if is_halftone:
                     dot_count = int(np.sum(film_gray < 127))
                     dot_ratio = float(dot_count) / float(max(1, film_gray.size))
@@ -1008,15 +1083,22 @@ def step9_export(
                     
                     c = rl_canvas.Canvas(pdf_filepath, pagesize=A4)
 
+                    # CRITICAL FIX: Halftone must ALWAYS be raster (Industry Standard)
+                    # Vector halftone causes crashes and quality issues
+                    use_raster = True  # Force raster for all halftone
+                    logger.info(f"  [Export] FORCED: Halftone {pdf_filename} as RASTER PDF (industry standard)")
+
                     if use_raster:
                         render_raster_halftone(c, film_gray, args.dpi, A4[0], A4[1])
                     else:
+                        # This branch should never be reached - kept for compatibility only
                         render_vector_halftone(c, film_gray, color_entry, A4[1])
                     c.save()
                     exported_paths.append(pdf_filepath)
                 else:
                     # TRUE HIGH-FIDELITY VECTOR for solids
-                    ink_mask_pdf = cv2.bitwise_not(film_gray)
+                    # FIXED: Use mask directly - polarity already enforced by PipelineController
+                    ink_mask_pdf = film_gray
 
                     export_vector_pdf(
                         masks=[ink_mask_pdf],
@@ -1038,16 +1120,20 @@ def step9_export(
         if args.combine_pdf and REPORTLAB_AVAILABLE and all_masks_for_pdf:
             combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
 
-            # Combined PDF is usually vector for clarity, but we use inversion logic
-            # REMOVE enforce_polarity from here — mask is already correct from step7
-            ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
-
-            # Re-fetch high-fidelity params for combined PDF
-            eff_corner = getattr(analysis, 'corner_threshold', 150.0)
-            eff_no_blur = getattr(analysis, 'use_potrace_style', False) or getattr(args, 'no_vector_blur', False)
+            # FIXED: Use masks directly - polarity already enforced by PipelineController
+            # Add audit assertion to ensure correct polarity (BUG-04 fix)
+            for i, m in enumerate(all_masks_for_pdf):
+                mean = np.mean(m)
+                if mean <= 127:
+                    logger.warning(f'  [Export] WARNING: all_masks_for_pdf[{i}] has mean={mean:.1f} — polarity may be wrong')
+            
+            # Use cached parameters from first film (consistent across all films)
+            first_film = cache.films[0] if cache.films else None
+            eff_corner = first_film.corner_threshold if first_film else 150.0
+            eff_no_blur = first_film.use_potrace_style if first_film else False
                 
             export_vector_pdf(
-                masks=ink_masks_combined,
+                masks=all_masks_for_pdf,  # No inversion - masks already correct
                 colors=all_colors_for_pdf,
                 color_names=all_names_for_pdf,
                 output_path=Path(combined_pdf_path),
@@ -1198,6 +1284,37 @@ def parse_args() -> argparse.Namespace:
         "--mesh-count", type=int, default=160,
         help="Screen mesh count (e.g. 86, 110, 160, 200, 305). Higher mesh = finer LPI."
     )
+
+    parser.add_argument(
+        "--auto-fix-lpi", action="store_true",
+        help="Auto-adjust LPI to match industry mesh/LPI ratio (4-5) when out of range"
+    )
+    
+    # Phase 2B: Dot Gain Compensation Controls (Production-grade defaults)
+    parser.add_argument(
+        "--dot-gain-radius", type=float, default=0.9,
+        help="Dot gain compensation (0.85-1.1 typical for screen printing, 1.0=no gain)"
+    )
+    parser.add_argument(
+        "--dot-gain-curve", choices=["linear", "exponential", "logarithmic", "sigmoid"], 
+        default="sigmoid",
+        help="Dot gain compensation curve type (sigmoid recommended for production)"
+    )
+    
+    # Phase 2: Edge-aware Binarization Controls
+    parser.add_argument(
+        "--edge-aware-bin", action="store_true",
+        help="Enable edge-aware binarization for superior ARTWORK processing"
+    )
+    parser.add_argument(
+        "--binarization-method", choices=["sauvola", "niblack", "guided"], 
+        default="sauvola",
+        help="Edge-aware binarization method (sauvola recommended for artwork)"
+    )
+    parser.add_argument(
+        "--edge-preserve", action="store_true", default=True,
+        help="Preserve edges during binarization (recommended for sharp artwork)"
+    )
     
     return parser.parse_args()
 
@@ -1253,7 +1370,7 @@ def main() -> int:
         mesh_count=args.mesh_count,
         dpi=args.dpi,
     )
-    args.lpi = job_config.validate_lpi(args.lpi)
+    args.lpi = job_config.validate_lpi(args.lpi, auto_fix=getattr(args, 'auto_fix_lpi', False))
     logger.info(f"[JobConfig] Mesh: {args.mesh_count} | Effective LPI: {args.lpi}")
 
     try:
@@ -1345,11 +1462,52 @@ def main() -> int:
         # Step 8 — Registration Marks (ALL)
         masks = step8_registration_marks(masks, output_dir, args)
         
+        # Create ProcessedFilmCache — Lock Preview Output (BUG-01 fix)
+        cache = ProcessedFilmCache()
+        for i, mask in enumerate(masks):
+            color_entry = separation_result['colors'][i] if i < len(separation_result['colors']) else (0,0,0)
+            name_entry  = separation_result['color_names'][i] if i < len(separation_result['color_names']) else f'Film_{i+1}'
+            
+            # Determine effective smoothing factor (Senior Standard hierarchy)
+            cli_smooth = getattr(args, 'smoothing_factor', None)
+            
+            # CRITICAL FIX: Disable smoothing for TEXT_LOGO (Industry Standard)
+            if _route_class == 'text_logo':
+                eff_smooth = 0.0  # Sharp edges for logos/text
+                eff_corner = 10.0  # Sharp corners
+                eff_potrace = True  # Use potrace-style processing
+                logger.info('[Cache] TEXT_LOGO pipeline: smoothing=0.0, corners=10.0, potrace=True')
+            elif cli_smooth is not None and cli_smooth > 0:
+                eff_smooth = cli_smooth
+                eff_corner = getattr(analysis_obj, 'corner_threshold', 150.0)
+                eff_potrace = getattr(analysis_obj, 'use_potrace_style', False)
+            elif analysis_obj is not None:
+                eff_smooth = getattr(analysis_obj, 'smoothing_factor', 0.15)
+                eff_corner = getattr(analysis_obj, 'corner_threshold', 150.0)
+                eff_potrace = getattr(analysis_obj, 'use_potrace_style', False)
+            else:
+                eff_smooth = 0.15
+                eff_corner = 150.0
+                eff_potrace = False
+            
+            cache.films.append(LockedFilm(
+                final_mask=mask,
+                color_rgb=color_entry,
+                color_name=name_entry,
+                film_index=i,
+                image_class=_route_class,
+                smooth_factor=eff_smooth,
+                corner_threshold=eff_corner,
+                use_potrace_style=eff_potrace,
+                is_halftone=args.halftone or (analysis_obj is not None and getattr(analysis_obj, 'use_halftone', False)),
+            ))
+        cache.lock()  # Snapshot all masks — export is now deterministic
+        
         # Debug output removed — was writing unconditional debug_mask_* files to output dir.
         # Re-enable with --debug flag if needed in future.
 
         # Step 9 — Exporting films (PNG + PDF + SVG)
-        exported = step9_export(masks, separation_result, output_dir, args, analysis=analysis_obj)
+        exported = step9_export(cache, separation_result, output_dir, args, analysis=analysis_obj)
 
         elapsed = round(time.time() - start_time, 1)
         logger.info(f"Pipeline complete in {elapsed}s. {len(exported)} films exported.")

@@ -5,6 +5,7 @@ Uses Bezier curve fitting for smooth edges (no staircase artifacts)
 
 import cv2
 import numpy as np
+import math
 from pathlib import Path
 from typing import List, Tuple, Optional
 import logging
@@ -39,45 +40,62 @@ def fit_bezier_to_contour(
     corner_threshold: float = 95.0
 ) -> List[Tuple]:
     """
-    تحويل النقاط (Contour) إلى منحنيات بيزييه (Bezier Curves) احترافية.
-    إضافة: الحفاظ على الزوايا الحادة (Sharp Corners) basado en corner_threshold.
+    Potrace-inspired Bezier fitting with three-phase approach:
+    1. Douglas-Peucker simplification (removes staircase noise)
+    2. Corner detection via signed curvature (true geometric corners)
+    3. Catmull-Rom only on smooth segments between confirmed corners
     """
     pts = contour.reshape(-1, 2).astype(float)
     n = len(pts)
     if n < 3:
         return []
-    
-    commands = [('M', pts[0][0], pts[0][1])]
-    
+
+    # STEP 1: Douglas-Peucker polygon simplification (removes staircase noise)
+    # epsilon relative to contour perimeter — industry standard
+    # Last 5% tweak: dynamic epsilon
+    # - TEXT_LOGO: tighter (preserve sharp details)
+    # - ARTWORK: looser (reduce polygonization / micro-zigzag)
+    perimeter = cv2.arcLength(contour, True)
+    is_text_logo_proxy = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
+    eps_ratio = 0.001 if is_text_logo_proxy else 0.003
+    epsilon = max(0.5, perimeter * eps_ratio)
+    simplified = cv2.approxPolyDP(contour, epsilon, True)
+    pts = simplified.reshape(-1, 2).astype(float)
+    n = len(pts)
+    if n < 3:
+        return []
+
+    # STEP 2: Corner detection via signed curvature (Potrace-style)
+    def signed_angle(p0, p1, p2):
+        v1 = p1 - p0
+        v2 = p2 - p1
+        cross = v1[0]*v2[1] - v1[1]*v2[0]
+        dot   = v1[0]*v2[0] + v1[1]*v2[1]
+        return math.degrees(math.atan2(cross, dot))
+
+    corners = set()
     for i in range(n):
-        p0 = pts[(i - 1) % n]
+        angle = signed_angle(pts[(i-1)%n], pts[i], pts[(i+1)%n])
+        if abs(angle) > (180 - corner_threshold):
+            corners.add(i)
+
+    # STEP 3: Catmull-Rom only on smooth segments
+    commands = [('M', pts[0][0], pts[0][1])]
+    for i in range(n):
+        p0 = pts[(i-1)%n]
         p1 = pts[i]
-        p2 = pts[(i + 1) % n]
-        p3 = pts[(i + 2) % n]
-        
-        # Senior Optimization: Handle Sharp Corners and Flat Lines
-        # 1. Very sharp angles (< 150) -> Keep linear
-        # 2. Very flat angles (> 175) -> Keep linear (prevents wobbly straight lines)
-        # 3. Intermediate angles -> Apply light Bezier smoothing
-        
-        angle1 = _get_angle(p0, p1, p2)
-        angle2 = _get_angle(p1, p2, p3)
-        
-        is_corner = angle1 < corner_threshold or angle2 < corner_threshold
-        is_flat = angle1 > 176.0 or angle2 > 176.0
-        
-        current_smooth = 0.0 if (is_corner or is_flat or smooth_factor == 0) else smooth_factor
-        
-        if current_smooth == 0:
+        p2 = pts[(i+1)%n]
+        p3 = pts[(i+2)%n]
+        is_corner = (i in corners) or ((i+1)%n in corners)
+        sf = 0.0 if is_corner else smooth_factor
+        if sf == 0:
             commands.append(('L', p2[0], p2[1]))
         else:
-            # Catmull-Rom to Bezier conversion
-            cp1x = p1[0] + (p2[0] - p0[0]) * current_smooth
-            cp1y = p1[1] + (p2[1] - p0[1]) * current_smooth
-            cp2x = p2[0] - (p3[0] - p1[0]) * current_smooth
-            cp2y = p2[1] - (p3[1] - p1[1]) * current_smooth
-            commands.append(('C', cp1x, cp1y, cp2x, cp2y, p2[0], p2[1]))
-    
+            cp1x = p1[0] + (p2[0]-p0[0])*sf
+            cp1y = p1[1] + (p2[1]-p0[1])*sf
+            cp2x = p2[0] - (p3[0]-p1[0])*sf
+            cp2y = p2[1] - (p3[1]-p1[1])*sf
+            commands.append(('C', cp1x,cp1y, cp2x,cp2y, p2[0],p2[1]))
     return commands
 
 
@@ -168,14 +186,21 @@ def export_vector_pdf(
         
         # ═══ رسم الـ vector paths ═══
         # Senior Fix: Use the mask EXACTLY as it came from preview.
-        # No more hidden processing (blur/median) that changes the shape during export.
+        # Last 5% tweak: enforce hard-binary edges before any vectorization.
         bw = mask.copy()
         if bw.dtype != np.uint8:
             bw = bw.astype(np.uint8)
-        
-        # Ensure it's purely binary for contour extraction
-        if len(np.unique(bw)) > 2:
-            _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
+
+        # Always enforce hard binary edges (prevents gray quantization artifacts)
+        bw = ((bw > 127).astype(np.uint8) * 255)
+
+        # ARTWORK-only: light blur then re-threshold to reduce staircase micro-zigzags.
+        # TEXT_LOGO must remain perfectly hard (no blur). We infer TEXT_LOGO when
+        # smoothing is ~0 or corner_threshold is very low.
+        is_text_logo_proxy = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
+        if not is_text_logo_proxy:
+            bw_blur = cv2.GaussianBlur(bw, (3, 3), 0.5)
+            bw = ((bw_blur > 127).astype(np.uint8) * 255)
 
         
         # 2. Contour Extraction: TC89_KCOS for better curve approximation
@@ -210,12 +235,15 @@ def export_vector_pdf(
             area = cv2.contourArea(contour_arr)
             if area < min_contour_area:
                 return
-            
+
             perimeter = cv2.arcLength(contour_arr, True)
             area = cv2.contourArea(contour_arr)
-            
-            # رفعنا المعامل لـ 0.0005 لتقليل النويز قبل التنعيم
-            epsilon = 0.0005 * perimeter
+
+            # Last 5% tweak: dynamic epsilon before Bezier fitting
+            # - TEXT_LOGO: tighter
+            # - ARTWORK: looser
+            eps_ratio = 0.001 if is_text_logo_proxy else 0.003
+            epsilon = eps_ratio * perimeter
             approx = cv2.approxPolyDP(contour_arr, epsilon, True)
 
             

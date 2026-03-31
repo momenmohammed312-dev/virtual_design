@@ -53,27 +53,20 @@ class ColorSeparator:
         total_pixels = h * w
 
         # ── Global Background Pre-Filtering ──────────────────────────────────
-        # Senior CV Fix: Detect background adaptively (White or Black).
-        # Most digital assets have a solid white (255) background, but some have dark.
+        # FIXED: Use histogram mode instead of corner sampling (BUG-07)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # 1. Detect if background is likely white or black by checking corners
-        corners = [gray[0, 0], gray[0, -1], gray[-1, 0], gray[-1, -1]]
-        avg_corner = np.mean(corners)
+        # Use histogram mode for robust background detection
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        bg_luma = int(np.argmax(hist))  # Most frequent pixel = background
+        bg_mask = np.abs(gray.astype(int) - bg_luma) < 15  # 15-luma tolerance
         
-        # Threshold: slightly more aggressive to catch off-white (235) or off-black (20)
-        if avg_corner > 200:
-            # White background
-            bg_mask = (gray >= 235)
-            logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background")
-        elif avg_corner < 50:
-            # Black background
-            bg_mask = (gray <= 20)
-            logger.info(f"[ColorSeparator] Adaptive: Detected BLACK background")
+        if bg_luma > 200:
+            logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background (luma={bg_luma})")
+        elif bg_luma < 50:
+            logger.info(f"[ColorSeparator] Adaptive: Detected BLACK background (luma={bg_luma})")
         else:
-            # Ambiguous: fallback to simple white threshold
-            bg_mask = (gray >= 245)
-            logger.info(f"[ColorSeparator] Adaptive: Ambiguous background (avg_corner={avg_corner})")
+            logger.info(f"[ColorSeparator] Adaptive: Detected GRAY background (luma={bg_luma})")
             
         fg_mask = ~bg_mask
         fg_pixel_count = int(np.sum(fg_mask))

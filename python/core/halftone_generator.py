@@ -56,6 +56,9 @@ class HalftoneGenerator:
         mask = (px >= 0) & (px < w) & (py >= 0) & (py < h)
         px, py = px[mask], py[mask]
 
+        # CRITICAL FIX: Initialize intensities array before early return (prevents NameError)
+        intensities = np.array([])
+        
         if len(px) == 0:
             return []
 
@@ -73,10 +76,11 @@ class HalftoneGenerator:
         if gamma != 1.0:
             intensities = np.power(intensities, 1.0 / gamma)
 
-        # TASK 16: Shadow relief (15% gap)
-        # 0.85 multiplier ensures dots do not touch neighbors at 100% intensity,
-        # preventing ink bridging/flooding on the screen.
-        radii = intensities * (dot_spacing / 2.0) * 0.85
+        # TASK 16: LPI-adaptive shadow gap (BUG-09 fix)
+        # Industry standard: fine screens need more gap, coarse screens can use less
+        shadow_gap = 0.90 - (lpi / 1000.0)  # 55 LPI → 0.845, 120 LPI → 0.78
+        shadow_gap = max(0.75, min(0.92, shadow_gap))
+        radii = intensities * (dot_spacing / 2.0) * shadow_gap
 
         # 5. Build dot list
         dots = [

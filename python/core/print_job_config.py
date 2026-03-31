@@ -34,18 +34,40 @@ class PrintJobConfig:
         355: 110  # Ultra fine
     })
 
-    def validate_lpi(self, requested_lpi: int) -> int:
+    def validate_lpi(self, requested_lpi: int, auto_fix: bool = False) -> int:
         """Clamps the requested LPI to a safe value based on current mesh count."""
         # Find nearest standard mesh in table (if custom mesh used)
         available_meshes = sorted(self.MESH_LPI_TABLE.keys())
         nearest_mesh = min(available_meshes, key=lambda x: abs(x - self.mesh_count))
         
         limit = self.MESH_LPI_TABLE.get(nearest_mesh, 45)
-        
-        if requested_lpi > limit:
-            logger.warning(f"[JobConfig] LPI {requested_lpi} exceeds safe limit for {self.mesh_count} mesh. Clamping to {limit}.")
-            return limit
-        return requested_lpi
+
+        effective_lpi = int(requested_lpi)
+        if effective_lpi > limit:
+            logger.warning(f"[JobConfig] LPI {effective_lpi} exceeds safe limit for {self.mesh_count} mesh. Clamping to {limit}.")
+            effective_lpi = int(limit)
+
+        mesh = max(1, int(self.mesh_count))
+        ratio = float(mesh) / float(max(1, effective_lpi))
+        min_ratio = 4.0
+        max_ratio = 5.0
+
+        lpi_min = int(math.ceil(mesh / max_ratio))
+        lpi_max = int(math.floor(mesh / min_ratio))
+
+        if ratio < min_ratio or ratio > max_ratio:
+            suggested = int(round(mesh / 4.5))
+            suggested = max(lpi_min, min(lpi_max, suggested))
+            suggested = min(suggested, int(limit))
+            logger.warning(
+                f"[JobConfig] Mesh/LPI ratio out of range (mesh={mesh}, lpi={effective_lpi}, ratio={ratio:.2f}). "
+                f"Target≈4–5. Suggested LPI={suggested} (range {lpi_min}-{lpi_max})."
+            )
+            if auto_fix and suggested > 0 and suggested != effective_lpi:
+                logger.warning(f"[JobConfig] Auto-fix enabled. Adjusting LPI {effective_lpi} -> {suggested}.")
+                effective_lpi = suggested
+
+        return effective_lpi
 
     def calculate_dot_radius_max(self, lpi: int) -> float:
         """

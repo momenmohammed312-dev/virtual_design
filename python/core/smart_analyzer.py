@@ -1,6 +1,7 @@
 from __future__ import annotations
 import cv2
 import numpy as np
+import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 import logging
@@ -60,29 +61,84 @@ class SmartAnalyzer:
         sorted_scores = sorted(score_vals, reverse=True)
         confidence = sorted_scores[0] - sorted_scores[1]
         
-        # Phase 24: Senior Confidence Gate & Rule Overrides
-        # 1. Force TEXT_LOGO if it's clearly a high-contrast 2-color (1 ink + 1 bg) image
-        if metrics["color_count_estimate"] <= 2 and scores['text'] > 0.4:
-            logger.info("  [SmartAnalyzer] Rule: Low color count detected. Forcing TEXT_LOGO.")
+        # Phase 24: CRITICAL FIX - Deterministic Weighted Scoring (eliminates flip-flop)
+        # Calculate final weighted score instead of rule-based overrides
+        final_text_score = (
+            scores['text'] * 0.5 +      # Primary weight
+            metrics['edge_density'] * 0.2 +   # Edge clarity
+            (8.0 - metrics['color_count_estimate']) * 0.05 +  # Color simplicity
+            (1.0 - metrics['mid_ratio']) * 0.15 +  # Bimodality
+            (1.0 - metrics['gradient_ratio']) * 0.1   # Low gradients
+        )
+        
+        final_artwork_score = (
+            scores['artwork'] * 0.4 +
+            metrics['color_count_estimate'] * 0.05 +  # Multiple colors
+            metrics['mid_ratio'] * 0.2 +           # Mid-tones present
+            metrics['gradient_ratio'] * 0.15 +          # Moderate gradients
+            metrics['sat_mean'] * 0.1 +               # Some saturation
+            (1.0 - metrics['edge_density']) * 0.1    # Not too edge-heavy
+        )
+        
+        final_photo_score = (
+            scores['photo'] * 0.4 +
+            metrics['gradient_ratio'] * 0.3 +           # High gradients
+            metrics['mid_ratio'] * 0.2 +               # Many mid-tones
+            metrics['color_count_estimate'] * 0.05 +        # Many colors
+            metrics['sat_mean'] * 0.05                # High saturation
+        )
+        
+        # Deterministic decision based on weighted scores
+        if final_text_score > 0.65:
             image_class = ImageClass.TEXT_LOGO
-            confidence = 0.95
-            
-        # 2. If we are < 70% confident in text_logo, default to artwork
-        # This prevents aggressive binarization on fuzzy/complex images.
-        elif image_class == ImageClass.TEXT_LOGO and confidence < 0.70:
-            logger.warning(f"  [SmartAnalyzer] Unstable confidence ({confidence:.1%}) for text_logo. Falling back to ARTWORK.")
+            confidence = final_text_score
+            logger.info(f"  [SmartAnalyzer] Weighted Score: TEXT_LOGO ({confidence:.3f})")
+        elif final_photo_score > 0.60 and metrics['gradient_ratio'] > 0.2:
+            image_class = ImageClass.PHOTO
+            confidence = final_photo_score
+            logger.info(f"  [SmartAnalyzer] Weighted Score: PHOTO ({confidence:.3f})")
+        else:
             image_class = ImageClass.ARTWORK
-            confidence = 0.7
-            
-        # Low quality override
+            confidence = max(final_artwork_score, 0.70)
+            logger.info(f"  [SmartAnalyzer] Weighted Score: ARTWORK ({confidence:.3f})")
+
+        # Adobe-style hard overrides (rules on top of scoring) for borderline cases.
+        # Keep these conservative to avoid pipeline flip-flop.
+        if metrics['gradient_ratio'] > 0.30:
+            image_class = ImageClass.PHOTO
+            confidence = max(float(confidence), 0.80)
+            logger.info("  [SmartAnalyzer] Override: High gradient_ratio. Forcing PHOTO.")
+        else:
+            # Adaptive TEXT_LOGO threshold: edge_density is resolution/scale sensitive,
+            # so we modulate the decision threshold based on gradient_ratio.
+            edge_threshold = 0.05 + (0.02 * (1.0 - float(metrics['gradient_ratio'])))
+
+            # Stability buffer (anti-flip): avoid overriding when text/artwork are too close.
+            score_gap_ta = abs(float(scores['text']) - float(scores['artwork']))
+            allow_override = score_gap_ta >= 0.05
+
+            if (
+                allow_override
+                and metrics['color_count_estimate'] <= 2
+                and float(metrics['edge_density']) >= edge_threshold
+                and float(metrics['mid_ratio']) < 0.10
+            ):
+                image_class = ImageClass.TEXT_LOGO
+                confidence = max(float(confidence), 0.85)
+                logger.info(
+                    f"  [SmartAnalyzer] Override: 2-color + edge_density>= {edge_threshold:.3f} + low midtones. Forcing TEXT_LOGO."
+                )
+        
+        # Override low quality regardless of scoring
         if metrics["is_low_res"] or metrics["noise_level"] > 2000:
             image_class = ImageClass.LOW_QUALITY
             confidence = 0.5
-
             
         params = self._get_params(image_class, metrics)
         
         # Merge all into result
+        # FIXED: Use dataclasses.fields() for robustness (BUG-10)
+        valid_fields = {f.name for f in dataclasses.fields(SmartResult)}
         result = SmartResult(
             image_class=image_class,
             confidence=round(float(confidence), 3),
@@ -91,7 +147,7 @@ class SmartAnalyzer:
             score_photo=round(scores['photo'], 3),
             is_low_res=metrics["is_low_res"], # Explicitly pass is_low_res
             **params,
-            **{k: v for k, v in metrics.items() if k not in ['is_low_res'] and k in SmartResult.__annotations__}
+            **{k: v for k, v in metrics.items() if k != 'is_low_res' and k in valid_fields}
         )
 
         
