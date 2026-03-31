@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 import logging
 import io
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
