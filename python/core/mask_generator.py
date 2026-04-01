@@ -2,6 +2,7 @@
 mask_generator.py — Binary Mask Generator for each color layer
 Virtual Design Silk Screen Studio
 FIXED: BUG B - get_mask_stats() counting ink pixels correctly + adaptive epsilon
+P1 ENHANCEMENT: Added professional ink trapping functionality
 """
 
 import cv2
@@ -10,6 +11,67 @@ from typing import Dict, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def apply_ink_trapping(
+    masks: List[np.ndarray], 
+    trap_width_px: int = 3,
+    trap_method: str = "expand_into_inks"
+) -> List[np.ndarray]:
+    """
+    P1 ENHANCEMENT: Professional ink trapping to prevent white gaps.
+    
+    Ink trapping is the process of slightly overlapping adjacent color layers
+    to prevent white gaps at color boundaries due to press misregistration.
+    
+    Args:
+        masks: List of binary masks (ink=0, bg=255)
+        trap_width_px: Trap width in pixels (typically 2-4px for 300 DPI)
+        trap_method: "expand_into_inks" or "expand_all"
+    
+    Returns:
+        List of trapped masks with proper overlap
+    """
+    if len(masks) < 2:
+        return masks
+    
+    logger.info(f"[InkTrapping] Applying {trap_width_px}px trap to {len(masks)} masks")
+    
+    # Create elliptical structuring element for natural trap shape
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (trap_width_px*2+1, trap_width_px*2+1))
+    
+    # Create combined ink areas for trapping reference
+    combined_ink = np.zeros_like(masks[0])
+    for mask in masks:
+        ink = cv2.bitwise_not(mask)
+        combined_ink = cv2.bitwise_or(combined_ink, ink)
+    
+    trapped_masks = []
+    
+    for i, mask in enumerate(masks):
+        ink = cv2.bitwise_not(mask)
+        
+        if trap_method == "expand_into_inks":
+            # Method 1: Only expand into areas covered by OTHER inks
+            dilated_ink = cv2.dilate(ink, kernel, iterations=1)
+            
+            # Find expansion areas (where dilated_ink overlaps other inks)
+            expansion = cv2.bitwise_and(dilated_ink, combined_ink)
+            expansion = cv2.bitwise_and(expansion, cv2.bitwise_not(ink))  # Remove original ink
+            
+            # Apply expansion only to adjacent ink areas
+            trapped_ink = cv2.bitwise_or(ink, expansion)
+            trapped_mask = cv2.bitwise_not(trapped_ink)
+            
+        else:  # trap_method == "expand_all"
+            # Method 2: Simple expansion of all ink areas
+            trapped_ink = cv2.dilate(ink, kernel, iterations=1)
+            trapped_mask = cv2.bitwise_not(trapped_ink)
+        
+        trapped_masks.append(trapped_mask)
+    
+    logger.info(f"[InkTrapping] Completed trapping for {len(trapped_masks)} masks")
+    return trapped_masks
 
 
 class MaskGenerator:

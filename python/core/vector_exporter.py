@@ -142,12 +142,28 @@ def export_vector_pdf(
     from reportlab.lib.colors import Color, black, white
     from reportlab.lib.units import mm, inch
     
+    # Import print calibration for 1:1 scaling
+    try:
+        from .print_calibration import get_calibration
+        calib = get_calibration(dpi)
+        logger.info(f"Using calibrated scaling: {calib.pixels_per_mm:.1f} px/mm @ {dpi} DPI")
+    except ImportError:
+        # Fallback to manual calculation
+        calib = None
+        logger.warning("Print calibration module not available, using fallback scaling")
+    
     page_sizes = {'A4': A4, 'A3': A3, 'LETTER': letter}
     page_w, page_h = page_sizes.get(page_size.upper(), A4)
     
-    # نقاط PDF في بوصة = pixels / dpi * 72
+    # Professional 1:1 scaling: pixels to points with calibration
     def px_to_pt(px: float) -> float:
-        return px / dpi * 72.0
+        if calib:
+            # Use calibrated conversion for 1:1 accuracy
+            mm = calib.pixels_to_mm(px)
+            return mm * 72.0 / 25.4  # mm to points
+        else:
+            # Fallback calculation
+            return px / dpi * 72.0
     
     c = rl_canvas.Canvas(str(output_path), pagesize=(page_w, page_h))
     
@@ -171,7 +187,9 @@ def export_vector_pdf(
         mask_w_pt = px_to_pt(mask_w)
         mask_h_pt = px_to_pt(mask_h)
         
-        scale = min(available_w / mask_w_pt, available_h / mask_h_pt, 1.0)
+        # P1 FIX: Remove 1.0 cap to ensure small images fill page correctly
+        # For film output, the film should ALWAYS fill the available area
+        scale = min(available_w / mask_w_pt, available_h / mask_h_pt)
         
         draw_w = mask_w_pt * scale
         draw_h = mask_h_pt * scale
@@ -236,21 +254,12 @@ def export_vector_pdf(
             if area < min_contour_area:
                 return
 
-            perimeter = cv2.arcLength(contour_arr, True)
-            area = cv2.contourArea(contour_arr)
-
-            # Last 5% tweak: dynamic epsilon before Bezier fitting
-            # - TEXT_LOGO: tighter
-            # - ARTWORK: looser
-            eps_ratio = 0.001 if is_text_logo_proxy else 0.003
-            epsilon = eps_ratio * perimeter
-            approx = cv2.approxPolyDP(contour_arr, epsilon, True)
-
-            
-            if len(approx) < 3:
+            if len(contour_arr) < 3:
                 return
             
-            bezier_cmds = fit_bezier_to_contour(approx, smooth_factor, corner_threshold)
+            # CRITICAL FIX: Remove double simplification - pass raw contour directly
+            # The fit_bezier_to_contour() function already handles intelligent simplification
+            bezier_cmds = fit_bezier_to_contour(contour_arr, smooth_factor, corner_threshold)
             if not bezier_cmds:
                 return
             
@@ -406,7 +415,7 @@ def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, pa
 
     img_w_pt = (mask_w / max(1, dpi)) * 72.0
     img_h_pt = (mask_h / max(1, dpi)) * 72.0
-    scale = min(available_w / img_w_pt, available_h / img_h_pt, 1.0)
+    scale = min(available_w / img_w_pt, available_h / img_h_pt)
 
     draw_w = img_w_pt * scale
     draw_h = img_h_pt * scale

@@ -133,6 +133,9 @@ class Binarizer:
         if std > 60: c = ['otsu', 'triangle']
         elif std < 30: c = ['adaptive_gauss'] if ic != 'text_logo' else ['otsu']
         else: c = ['otsu', 'adaptive_gauss', 'triangle']
+
+        if ic == 'artwork' and std < 60:
+            c = ['sauvola'] + [x for x in c if x != 'sauvola']
         c.append('global_127')
         return c
 
@@ -154,6 +157,29 @@ class Binarizer:
         try:
             if cmd == 'otsu': _, res = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             elif cmd == 'triangle': _, res = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE)
+            elif cmd == 'sauvola':
+                try:
+                    from skimage.filters import threshold_sauvola
+                except Exception:
+                    return None
+                # P1 ENHANCEMENT: Optimized Sauvola parameters for artwork class
+                # Dynamic window size based on image dimensions for better edge preservation
+                img_size = max(gray.shape)
+                if img_size > 2000:
+                    window_size = 35  # Larger window for high-res images
+                    k = 0.18  # Lower k for better thin stroke preservation
+                elif img_size > 1000:
+                    window_size = 25  # Standard window
+                    k = 0.20  # Standard k value
+                else:
+                    window_size = 15  # Smaller window for low-res images
+                    k = 0.22  # Higher k for stability
+                
+                # Ensure window size is odd and reasonable
+                window_size = max(7, min(51, window_size | 1))
+                
+                thresh = threshold_sauvola(gray, window_size=window_size, k=k)
+                res = (gray > thresh).astype(np.uint8) * 255
             elif cmd.startswith('global_'): 
                 val = int(cmd.split('_')[1]); _, res = cv2.threshold(gray, val, 255, cv2.THRESH_BINARY)
             elif 'adaptive' in cmd:

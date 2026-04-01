@@ -24,6 +24,9 @@ def load_image_safely(path: str) -> np.ndarray:
         # If image has alpha channel, drop it to keep 3 channels (BGR)
         if img.ndim == 3 and img.shape[2] == 4:
             img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        
+        # CRITICAL FIX: Add LANCZOS4 upscale guard for small images
+        img = _apply_upscale_if_needed(img)
         return img
 
     # Fall back to PIL (RGB) then convert to BGR for consistency with rest of pipeline
@@ -33,6 +36,9 @@ def load_image_safely(path: str) -> np.ndarray:
         arr = np.array(pil)
         img = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
         print(f"[ImageLoader] PIL loaded successfully: shape={img.shape}, dtype={img.dtype}", flush=True)
+        
+        # CRITICAL FIX: Add LANCZOS4 upscale guard for small images
+        img = _apply_upscale_if_needed(img)
         return img
     except UnidentifiedImageError:
         # Most likely an unsupported image format
@@ -41,3 +47,34 @@ def load_image_safely(path: str) -> np.ndarray:
     except Exception as e:
         print(f"[ImageLoader] PIL failed with error: {e}", flush=True)
         raise ValueError(f"Cannot read image: {e}")
+
+
+def _apply_upscale_if_needed(img: np.ndarray) -> np.ndarray:
+    """
+    CRITICAL FIX: Apply LANCZOS4 upscale guard for small images.
+    Industry standard: upscale to 2400px minimum for proper analysis and processing.
+    """
+    TARGET_MIN_DIM = 2400  # Industry standard for RIP processing
+    
+    if len(img.shape) == 3:
+        h, w = img.shape[:2]
+    else:
+        h, w = img.shape[:2]
+    
+    min_dim = min(h, w)
+    
+    if min_dim < TARGET_MIN_DIM:
+        scale = TARGET_MIN_DIM / min_dim
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        
+        print(f"[ImageLoader] Upscaling image from {w}x{h} to {new_w}x{new_h} (scale: {scale:.2f}x)", flush=True)
+        
+        # Use LANCZOS4 for highest quality upscaling
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        
+        print(f"[ImageLoader] Upscaled image shape: {img.shape}", flush=True)
+    else:
+        print(f"[ImageLoader] Image size {w}x{h} already meets minimum {TARGET_MIN_DIM}px", flush=True)
+    
+    return img

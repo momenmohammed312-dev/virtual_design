@@ -104,7 +104,7 @@ class SmartAnalyzer:
 
         # Adobe-style hard overrides (rules on top of scoring) for borderline cases.
         # Keep these conservative to avoid pipeline flip-flop.
-        if metrics['gradient_ratio'] > 0.30:
+        if metrics['gradient_ratio'] > 0.30 and float(confidence) < 0.70:
             image_class = ImageClass.PHOTO
             confidence = max(float(confidence), 0.80)
             logger.info("  [SmartAnalyzer] Override: High gradient_ratio. Forcing PHOTO.")
@@ -204,7 +204,7 @@ class SmartAnalyzer:
         
         # 5. Saturation Mean (HSV) - High for art/photos, low for BW logos
         hsv = cv2.cvtColor(img_ana, cv2.COLOR_BGR2HSV)
-        sat_mean = np.mean(hsv[:,:,1])
+        sat_mean = np.mean(hsv[:,:,1]) / 255.0
         
         # Noise & Resolution
         noise_level = cv2.Laplacian(gray, cv2.CV_32F).var()
@@ -228,42 +228,42 @@ class SmartAnalyzer:
 
     def _score_classes(self, m: dict) -> dict:
         """Soft scoring using weighted features."""
-        # Normalize features
+        # Normalize features to 0-1 range
         f_mid = m["mid_ratio"]
-        f_col = m["color_count_estimate"]
+        f_col = m["color_count_estimate"] / 8.0  # Normalize 0-8 → 0-1
         f_edge = m["edge_density"]
         f_grad = m["gradient_ratio"]
-        f_sat = m["sat_mean"]
+        f_sat = m["sat_mean"] / 255.0  # Normalize 0-255 → 0-1
         f_noise = m["noise_level"]
         
         # TEXT SCORE
         # Low midtones (bimodal), few colors, high edge density relative to gradient complexity
         s_text = (
             self._soft(f_mid, 0.02, 0.15, invert=True) * 0.35 +
-            self._soft(f_col, 2, 8, invert=True) * 0.25 +
+            self._soft(f_col, 0.25, 1.0, invert=True) * 0.25 +  # Normalized 0-1
             self._soft(f_edge, 0.01, 0.10) * 0.20 +
             self._soft(f_grad, 0.05, 0.20, invert=True) * 0.10 +
-            self._soft(f_sat, 10, 100, invert=True) * 0.05 +
+            self._soft(f_sat, 0.04, 0.39, invert=True) * 0.05 +  # Normalized 0-1
             self._soft(m["shape_ratio"], 0.0005, 0.01) * 0.05
         )
         
         # PHOTO SCORE
         # High midtones, many colors, high gradients, high saturation
         s_photo = (
-            self._soft(f_col, 4, 16) * 0.30 +
+            self._soft(f_col, 0.5, 2.0) * 0.30 +  # Normalized 0-1 (0.5-2.0 = 4-16 colors)
             self._soft(f_mid, 0.10, 0.40) * 0.25 +
             self._soft(f_grad, 0.15, 0.50) * 0.20 +
-            self._soft(f_sat, 40, 150) * 0.15 +
+            self._soft(f_sat, 0.16, 0.59) * 0.15 +  # Normalized 0-1 (0.16-0.59 = 40-150 sat)
             self._soft(f_edge, 0.05, 0.20, invert=True) * 0.10
         )
         
         # ARTWORK SCORE
         # Mid-range colors, low noise, moderate gradients
         s_art = (
-            self._soft(f_col, 2, 10) * 0.30 +
+            self._soft(f_col, 0.25, 1.25) * 0.30 +  # Normalized 0-1 (0.25-1.25 = 2-10 colors)
             self._soft(f_noise, 100, 800, invert=True) * 0.25 +
             self._soft(f_mid, 0.05, 0.25) * 0.20 +
-            self._soft(f_sat, 20, 120) * 0.15 +
+            self._soft(f_sat, 0.08, 0.47) * 0.15 +  # Normalized 0-1 (0.08-0.47 = 20-120 sat)
             self._soft(f_edge, 0.02, 0.15) * 0.10
         )
         

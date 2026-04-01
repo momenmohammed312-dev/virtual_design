@@ -17,7 +17,7 @@ POLARITY_BG = 255   # background pixels = WHITE
 
 # Coverage bounds
 MIN_INK_COVERAGE = 0.001  # 0.1% — below = blank film
-MAX_INK_COVERAGE = 0.995  # 99.5%  — above = inverted mask (increased for solid artwork)
+MAX_INK_COVERAGE = 1.0    # 100% — allow solid designs (was 0.995, causing false rejects)
 
 
 @dataclass

@@ -42,104 +42,6 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
     print("⚠️  reportlab not installed. PDF export will use PNG fallback.")
 
-# --- Minimal PDF writer (no external deps) ---
-def _write_minimal_pdf(filepath: Path, width: int, height: int, contours):
-    """
-    Write a single-page PDF with filled polygons from contours.
-    Uses pure Python, no reportlab/fpdf.
-    """
-    # Build content stream: draw each polygon as filled path
-    content = "q\n"
-    # Coordinate transform: flip Y to convert from top-left origin to PDF bottom-left origin
-    # matrix: [1 0 0 -1 0 height] maps (x,y) -> (x, height - y)
-    content += f"1 0 0 -1 0 {height:.3f} cm\n"
-    content += "0 0 0 rg\n"  # set fill color black
-    for cnt in contours:
-        if cnt is None or len(cnt) == 0:
-            continue
-        pts = cnt.reshape(-1, 2)
-        epsilon = 0.001 * cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, epsilon, True).reshape(-1, 2)
-        if len(approx) < 3:
-            continue
-        # Move to first point
-        x0, y0 = approx[0]
-        content += f"{x0:.3f} {height - y0:.3f} m\n"
-        for (x, y) in approx[1:]:
-            content += f"{x:.3f} {height - y:.3f} l\n"
-        content += "h f\n"
-    content += "Q\n"
-    # Compress content
-    compressed = zlib.compress(content.encode('latin1'))
-
-    # PDF objects (we'll build them and then compute offsets)
-    header = "%PDF-1.4\n"
-    obj1 = f"""1 0 obj
-<<
-/Type /Catalog
-/Pages 2 0 R
->>
-endobj
-"""
-    obj2 = f"""2 0 obj
-<<
-/Type /Pages
-/Kids [3 0 R]
-/Count 1
->>
-endobj
-"""
-    obj3 = f"""3 0 obj
-<<
-/Type /Page
-/Parent 2 0 R
-/MediaBox [0 0 {width} {height}]
-/Resources <<
-/Font <<
-/F1 4 0 R
->>
->>
-/Contents 5 0 R
->>
-endobj
-"""
-    obj4 = f"""4 0 obj
-<<
-/Type /Font
-/Subtype /Type1
-/BaseFont /Helvetica
->>
-endobj
-"""
-    obj5 = f"""5 0 obj
-<<
-/Length {len(compressed)}
-/Filter /FlateDecode
->>
-stream
-{compressed.decode('latin1')}
-endstream
-endobj
-"""
-    # Build full PDF body
-    body = obj1 + obj2 + obj3 + obj4 + obj5
-    # Cross-reference table offsets (after header)
-    startxref_pos = len(header) + len(body)
-    xref = "xref\n0 6\n0000000000 65535 f \n"
-    # Offsets for each object (relative to start of file)
-    offsets = []
-    current = len(header)
-    for obj in [obj1, obj2, obj3, obj4, obj5]:
-        offsets.append(current)
-        current += len(obj)
-    for off in offsets:
-        xref += f"{off:010d} 00000 n \n"
-    xref += f"trailer\n<<\n/Size 6\n/Root 1 0 R\n>>\nstartxref\n{startxref_pos}\n%%EOF"
-    pdf = header + body + xref
-    with open(filepath, 'wb') as f:
-        f.write(pdf.encode('latin1'))
-
-
 class Exporter:
     """Export films in multiple formats"""
     
@@ -244,15 +146,23 @@ class Exporter:
                           mask: np.ndarray,
                           filename: str) -> Path:
         """
-        Export a single mask as vector PDF using minimal writer.
+        P1 CLEANUP: Removed dead minimal PDF writer.
+        Now delegates to vector_exporter for professional quality.
         """
+        # Use vector exporter for professional quality instead of dead minimal writer
+        from core.vector_exporter import export_vector_pdf
+        
         filepath = self.output_dir / filename
         h, w = mask.shape[:2]
-        # Ensure binary
-        _, bw = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-        _write_minimal_pdf(filepath, w, h, contours)
+        
+        export_vector_pdf(
+            masks=[mask],
+            colors=[(0, 0, 0)],  # Black ink
+            color_names=["single_film"],
+            output_path=filepath,
+            dpi=self.dpi,
+            smooth_factor=0.25,
+        )
         return filepath
     
     def export_pdf(self,

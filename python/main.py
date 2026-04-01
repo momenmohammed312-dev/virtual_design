@@ -312,20 +312,19 @@ def step1_load_image(input_path: str) -> np.ndarray:
         if image.shape[2] == 4:
             image = image[:, :, :3]
         
-        # CRITICAL FIX: Disable auto upscale - prevents edge smoothing artifacts
-        # Small images should be processed as-is to preserve sharp edges
+        # Compromise upscale for analysis quality - ensure good edge detection and clustering
         h, w = image.shape[:2]
-        logger.info(f"Processing image at original resolution: {w}x{h} (auto-upscale disabled)")
+        logger.info(f"Processing image at original resolution: {w}x{h}")
         
-        # Only upscale if extremely small (< 300px) for analysis stability
-        min_width = 300
-        if w < min_width:
-            scale_factor = min_width / w
+        # Scale to minimum 1200px for analysis quality (compromise between 300px and 2000px)
+        target_width = 1200
+        if w < target_width:
+            scale_factor = target_width / w
             new_w = int(w * scale_factor)
             new_h = int(h * scale_factor)
-            # CRITICAL: Use INTER_NEAREST to preserve edges (no smoothing)
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-            logger.info(f"Minimal upscale only: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [NEAREST]")
+            # Use LANCZOS4 for high-quality upscaling that preserves edges
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+            logger.info(f"Upscaled for analysis: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [LANCZOS4]")
         
         return image
     except Exception as e:
@@ -824,28 +823,129 @@ def _make_single_color_separation(image: np.ndarray, white_threshold: int = 240)
     }
 
 
+def process_calibration(args: argparse.Namespace) -> None:
+    """Generate calibration materials for print validation"""
+    _step(0, "Generating calibration materials")
+    
+    try:
+        from core.print_calibration import get_calibration, CalibrationGridGenerator, PrintAccuracyValidator
+        
+        calib = get_calibration(args.dpi)
+        grid_gen = CalibrationGridGenerator(calib)
+        validator = PrintAccuracyValidator(calib)
+        
+        output_dir = Path(args.output)
+        output_dir.mkdir(exist_ok=True)
+        
+        # 1. Generate mm grid (100x100mm)
+        logger.info("  Generating millimeter grid...")
+        grid = grid_gen.create_mm_grid(100.0, 100.0, 10.0)
+        grid_path = output_dir / "calibration_grid_100x100mm.png"
+        cv2.imwrite(str(grid_path), grid)
+        logger.info(f"  Saved: {grid_path}")
+        
+        # 2. Generate test pattern (100x100mm)
+        logger.info("  Generating test pattern...")
+        pattern = grid_gen.create_test_pattern(100.0, 100.0)
+        pattern_path = output_dir / "test_pattern_100x100mm.png"
+        cv2.imwrite(str(pattern_path), pattern)
+        logger.info(f"  Saved: {pattern_path}")
+        
+        # 3. Generate validation info
+        validation_info = {
+            'calibration': {
+                'dpi': args.dpi,
+                'pixels_per_mm': calib.pixels_per_mm,
+                'pixels_per_cm': calib.pixels_per_cm,
+                'mm_per_pixel': calib.mm_per_pixel
+            },
+            'grid_info': {
+                'size_mm': (100.0, 100.0),
+                'size_px': (calib.mm_to_pixels(100.0), calib.mm_to_pixels(100.0)),
+                'grid_spacing_mm': 10.0
+            },
+            'usage': {
+                'print_test': 'Print the grid and measure with ruler to validate 1:1 scaling',
+                'test_pattern': 'Check line resolution, circle roundness, and text readability',
+                'tolerance': 'Industry standard: ±1mm or ±1%, whichever is stricter'
+            }
+        }
+        
+        # Save validation info
+        import json
+        info_path = output_dir / "calibration_info.json"
+        with open(info_path, 'w') as f:
+            json.dump(validation_info, f, indent=2)
+        logger.info(f"  Saved calibration info: {info_path}")
+        
+        logger.info("✅ Calibration materials generated successfully!")
+        logger.info("📏 Print the grid and measure to validate 1:1 scaling accuracy")
+        
+    except ImportError as e:
+        logger.error(f"Calibration module not available: {e}")
+    except Exception as e:
+        logger.error(f"Calibration generation failed: {e}")
+
+
+def process_scale_validation(args: argparse.Namespace, image: np.ndarray) -> None:
+    """Generate measurement template for scale validation"""
+    _step(0, "Generating scale validation template")
+    
+    try:
+        from core.print_calibration import get_calibration, PrintAccuracyValidator
+        
+        calib = get_calibration(args.dpi)
+        validator = PrintAccuracyValidator(calib)
+        
+        h, w = image.shape[:2]
+        
+        # Create measurement template
+        template = validator.create_measurement_template((w, h))
+        
+        output_dir = Path(args.output)
+        output_dir.mkdir(exist_ok=True)
+        
+        template_path = output_dir / "scale_validation_template.png"
+        cv2.imwrite(str(template_path), template)
+        
+        # Calculate expected real-world size
+        real_w_mm = calib.pixels_to_mm(w)
+        real_h_mm = calib.pixels_to_mm(h)
+        
+        logger.info(f"  Template saved: {template_path}")
+        logger.info(f"  Design size: {w}x{h}px = {real_w_mm:.1f}x{real_h_mm:.1f}mm @ {args.dpi} DPI")
+        logger.info("  Print this template and measure to validate scaling accuracy")
+        
+    except ImportError as e:
+        logger.error(f"Calibration module not available: {e}")
+    except Exception as e:
+        logger.error(f"Scale validation failed: {e}")
+
+
 def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namespace) -> list:
-    _step(8, "Adding registration marks")
+    if masks and len(masks[0].shape) == 2:
+        img_h, img_w = masks[0].shape
+    else:
+        img_w, img_h = 1000, 1000  # fallback
     
-    if not HAS_REG_MARKS:
-        logger.warning("Skipping registration marks (module not found)")
-        return masks
+    # Use args.dpi instead of undefined dpi variable
+    current_dpi = args.dpi
     
-    # DPI-aware sizing: all measurements in mm converted to pixels
-    quiet_zone_mm = 22       # 22mm quiet zone (above 20mm standard)
-    mark_target_mm = 5       # 5mm mark size
-    line_target_mm = 0.2     # 0.2mm line thickness
-    dpi = args.dpi
+    # Proportional sizing: 3% of smallest dimension for marks
+    base_dim = min(img_w, img_h)
+    mark_target_mm = max(5, (base_dim / current_dpi) * 25.4 * 0.03)  # 3% of image size, min 5mm
+    line_target_mm = max(0.15, mark_target_mm * 0.04)  # 4% of mark size, min 0.15mm
+    quiet_zone_mm = max(15, mark_target_mm * 3)  # 3x mark size, min 15mm
     
-    safe_border = max(120, int(dpi * quiet_zone_mm / 25.4))
-    safe_mark_size = max(40, int(dpi * mark_target_mm / 25.4))
-    safe_line_thickness = max(1, int(dpi * line_target_mm / 25.4))
+    safe_border = max(120, int(current_dpi * quiet_zone_mm / 25.4))
+    safe_mark_size = max(40, int(current_dpi * mark_target_mm / 25.4))
+    safe_line_thickness = max(1, int(current_dpi * line_target_mm / 25.4))
     
     config = RegistrationConfig(
         add_border=True,
         border_size=safe_border,
         mark_type='full',
-        dpi=dpi,
+        dpi=current_dpi,
         style=MarkStyle(
             mark_size=safe_mark_size,
             line_thickness=safe_line_thickness,
@@ -1097,8 +1197,9 @@ def step9_export(
                     exported_paths.append(pdf_filepath)
                 else:
                     # TRUE HIGH-FIDELITY VECTOR for solids
-                    # FIXED: Use mask directly - polarity already enforced by PipelineController
-                    ink_mask_pdf = film_gray
+                    # REVERT: vector_exporter expects ink=255 (design=white) for findContours
+                    # film_gray has ink=0 (film polarity) → must invert
+                    ink_mask_pdf = cv2.bitwise_not(film_gray)
 
                     export_vector_pdf(
                         masks=[ink_mask_pdf],
@@ -1120,7 +1221,9 @@ def step9_export(
         if args.combine_pdf and REPORTLAB_AVAILABLE and all_masks_for_pdf:
             combined_pdf_path = os.path.join(output_dir, "all_films_combined.pdf")
 
-            # FIXED: Use masks directly - polarity already enforced by PipelineController
+            # REVERT: vector_exporter expects ink=255 - must invert masks
+            ink_masks_combined = [cv2.bitwise_not(m) for m in all_masks_for_pdf]
+            
             # Add audit assertion to ensure correct polarity (BUG-04 fix)
             for i, m in enumerate(all_masks_for_pdf):
                 mean = np.mean(m)
@@ -1133,7 +1236,7 @@ def step9_export(
             eff_no_blur = first_film.use_potrace_style if first_film else False
                 
             export_vector_pdf(
-                masks=all_masks_for_pdf,  # No inversion - masks already correct
+                masks=ink_masks_combined,  # Inverted masks for correct polarity
                 colors=all_colors_for_pdf,
                 color_names=all_names_for_pdf,
                 output_path=Path(combined_pdf_path),
@@ -1212,7 +1315,7 @@ def parse_args() -> argparse.Namespace:
         '--auto-colors', action='store_true',
         help='Auto-detect optimal color count'
     )
-    parser.add_argument("--dpi", type=int, default=600, help="Output DPI (higher = smoother edges)")
+    parser.add_argument("--dpi", type=int, default=300, help="Output DPI (industry standard for screen printing)")
     parser.add_argument("--halftone", action="store_true", help="Enable halftone mode")
     parser.add_argument("--lpi", type=int, default=65, help="Halftone LPI (lines per inch)")
     parser.add_argument("--dot-shape", choices=["round", "square", "ellipse"], default="round", help="Halftone dot shape")
@@ -1221,6 +1324,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validate-strokes", action="store_true", help="Validate stroke widths")
     parser.add_argument("--min-stroke", type=float, default=0.0, help="Min stroke width in mm (disabled)")
     parser.add_argument("--edge-enhance", choices=["none", "light", "strong"], default="light")
+    parser.add_argument(
+        '--calibration', action='store_true',
+        help='Generate calibration grid and test pattern for print validation'
+    )
+    parser.add_argument(
+        '--validate-scale', action='store_true',
+        help='Validate 1:1 scaling accuracy with measurement template'
+    )
     parser.add_argument(
         '--combine-pdf', action='store_true', default=True,
         help='Combine all films into one PDF (default: True)'
@@ -1362,6 +1473,11 @@ def main() -> int:
     logger.info(f"Colors: {args.colors} | DPI: {args.dpi} | Halftone: {args.halftone}")
     logger.info("=" * 50)
 
+    # Handle calibration mode
+    if args.calibration:
+        process_calibration(args)
+        return 0
+    
     output_dir = args.output
     logger.info(f"Root Output Directory: {output_dir}")
 
@@ -1413,6 +1529,11 @@ def main() -> int:
         
         # Now upscale for processing
         image = step1_load_image(args.input)
+        
+        # Handle scale validation mode
+        if args.validate_scale:
+            process_scale_validation(args, image)
+            return 0
 
         
         # Step 2.5 — Auto Crop (Senior Optimization)

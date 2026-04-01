@@ -72,6 +72,15 @@ class HalftoneGenerator:
         norm = gray[iy, ix] / 255.0
         intensities = 1.0 - norm
         
+        # CRITICAL FIX: Apply dot gain compensation before gamma correction
+        # Import here to avoid circular imports
+        try:
+            from .print_job_config import PrintJobConfig
+            job_config = PrintJobConfig()
+            intensities = job_config.apply_dot_gain_compensation(intensities)
+        except ImportError:
+            pass  # Fallback to no compensation if not available
+        
         # Gamma correction: controls dot growth curve
         if gamma != 1.0:
             intensities = np.power(intensities, 1.0 / gamma)
@@ -160,7 +169,8 @@ class HalftoneGenerator:
                 x2, y2 = min(big.shape[1] - 1, cx + r), min(big.shape[0] - 1, cy + r)
                 big[y1:y2 + 1, x1:x2 + 1] = 255
             else:
-                cv2.circle(big, (cx, cy), r, 255, -1)  # LINE_8 on 2x canvas
+                # CRITICAL FIX: Use LINE_AA for smooth anti-aliased circles
+                cv2.circle(big, (cx, cy), r, 255, -1, cv2.LINE_AA)
         
         # Downscale with area averaging — produces natural anti-aliasing
         out = cv2.resize(big, (w, h), interpolation=cv2.INTER_AREA)

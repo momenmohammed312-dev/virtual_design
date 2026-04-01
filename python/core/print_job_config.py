@@ -3,6 +3,7 @@ print_job_config.py — Screen Print Parameters & Mesh Constraints
 Virtual Design Silk Screen Studio
 """
 
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 import math
@@ -20,6 +21,15 @@ class PrintJobConfig:
     dpi: int = 600
     ink_type: str = "plastisol"
     substrate_color: str = "white"
+    
+    # CRITICAL FIX: Dot gain compensation curves for professional press accuracy
+    # Values represent tone reproduction curves (input -> output after dot gain)
+    DOT_GAIN_CURVES: Dict[str, Dict[float, float]] = field(default_factory=lambda: {
+        'plastisol_white': {0.0: 0.0, 0.25: 0.19, 0.5: 0.40, 0.75: 0.64, 1.0: 1.0},
+        'water_based': {0.0: 0.0, 0.25: 0.21, 0.5: 0.42, 0.75: 0.67, 1.0: 1.0},
+        'discharge': {0.0: 0.0, 0.25: 0.23, 0.5: 0.45, 0.75: 0.70, 1.0: 1.0},
+        'uv_curable': {0.0: 0.0, 0.25: 0.18, 0.5: 0.38, 0.75: 0.62, 1.0: 1.0},
+    })
     
     # Standard Mesh-to-LPI limit table (Rule of Thumb: LPI <= Mesh / 3 or 3.5)
     # Using conservative LPI limits to prevent dot bridge failure/ink flooding.
@@ -83,3 +93,29 @@ class PrintJobConfig:
         # Simple rule: if substrate is dark (not white/gray), we need underbase
         dark_substrates = ["black", "navy", "dark_gray", "red", "royal_blue"]
         return self.substrate_color.lower() in dark_substrates
+
+    def get_dot_gain_curve(self, ink_type: str = None) -> Optional[Dict[float, float]]:
+        """Get the dot gain compensation curve for the specified ink type."""
+        ink_type = ink_type or self.ink_type
+        return self.DOT_GAIN_CURVES.get(ink_type.lower(), None)
+
+    def apply_dot_gain_compensation(self, intensities: np.ndarray, ink_type: str = None) -> np.ndarray:
+        """
+        Apply dot gain compensation to intensity values.
+        Reduces dot sizes to compensate for expected ink spread on press.
+        """
+        curve = self.get_dot_gain_curve(ink_type)
+        if curve is None:
+            return intensities
+        
+        # Interpolate the compensation curve
+        input_values = np.array(list(curve.keys()))
+        output_values = np.array(list(curve.values()))
+        
+        # Clip intensities to [0, 1] range
+        intensities_clipped = np.clip(intensities, 0.0, 1.0)
+        
+        # Apply compensation curve
+        compensated = np.interp(intensities_clipped, input_values, output_values)
+        
+        return compensated
