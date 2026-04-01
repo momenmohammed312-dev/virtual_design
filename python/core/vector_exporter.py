@@ -57,11 +57,11 @@ def fit_bezier_to_contour(
     # Adaptive epsilon: smaller for fine details, larger for smooth curves
     # This prevents "staircase" while preserving true corners
     if area < 200:  # Very small areas (eyes, dots)
-        epsilon = max(0.5, perimeter * 0.001)  # Tight for fine details
+        epsilon = max(1.0, perimeter * 0.003)  # Higher minimum to prevent jagged edges
     elif area < 1000:  # Medium areas (text strokes)
-        epsilon = max(1.0, perimeter * 0.002)  # Moderate balance
+        epsilon = max(2.0, perimeter * 0.004)  # Moderate balance
     else:  # Large areas (shapes, fills)
-        epsilon = max(2.0, perimeter * 0.003)  # Relaxed for smooth curves
+        epsilon = max(3.0, perimeter * 0.005)  # Relaxed for smooth curves
     
     simplified = cv2.approxPolyDP(contour, epsilon, True)
     pts = simplified.reshape(-1, 2).astype(float)
@@ -110,7 +110,7 @@ def export_vector_pdf(
     output_path: Path,
     dpi: int = 300,
     smooth_factor: float = 0.2,
-    corner_threshold: float = 150.0,
+    corner_threshold: float = 120.0,
     min_contour_area: int = 50,
     page_size: str = 'A4',
     no_vector_blur: bool = False,
@@ -207,36 +207,35 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ Advanced Mask Preprocessing (Senior Fix) ═══
-        # Senior Fix: Use mask EXACTLY as it came from preview.
-        # Last 5% tweak: enforce hard-binary edges before any vectorization.
         bw = mask.copy()
         if bw.dtype != np.uint8:
             bw = bw.astype(np.uint8)
-
-        # Always enforce hard binary edges (prevents gray quantization artifacts)
-        bw = ((bw > 127).astype(np.uint8) * 255)
 
         # SMART PREPROCESSING: Adaptive approach based on content type
         is_text_logo_proxy = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
         
         if not is_text_logo_proxy:
-            # For ARTWORK: Use Median blur to remove staircase noise without smoothing curves
-            # Median preserves edges while removing noise, unlike Gaussian which blurs everything
+            # CORRECT ORDER: blur FIRST, then threshold (not threshold → blur → threshold)
+            # Thresholding first creates staircase artifacts that blur cannot fix
             bw = cv2.medianBlur(bw, 3)
+            bw = cv2.GaussianBlur(bw, (3, 3), 0.5)
             
-            # Light Gaussian blur ONLY for extreme noise cases
-            # This reduces micro-zigzags while preserving overall shape
-            bw = cv2.GaussianBlur(bw, (3, 3), 0.3)
+            # Morphological smoothing: open then close to clean edges
+            kernel = np.ones((3, 3), np.uint8)
+            bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
+            bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
+            
+            # Final thresholding AFTER all smoothing
             _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
         else:
             # For TEXT_LOGO: Keep perfectly sharp - no blur
-            # This preserves crisp text edges
-            pass
+            # Just enforce hard binary edges
+            bw = ((bw > 127).astype(np.uint8) * 255)
 
         
-        # 2. Contour Extraction: TC89_KCOS for better curve approximation
+        # 2. Contour Extraction: CHAIN_APPROX_NONE for maximum precision
         contours, hierarchy = cv2.findContours(
-            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_TC89_KCOS
+            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE
         )
         
         # coordinate transform (defined once, outside the loop)

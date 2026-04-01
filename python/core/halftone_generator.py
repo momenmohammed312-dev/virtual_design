@@ -89,13 +89,14 @@ class HalftoneGenerator:
         # Industry standard: fine screens need more gap, coarse screens can use less
         shadow_gap = 0.90 - (lpi / 1000.0)  # 55 LPI → 0.845, 120 LPI → 0.78
         shadow_gap = max(0.75, min(0.92, shadow_gap))
-        radii = intensities * (dot_spacing / 2.0) * shadow_gap
+        # FIXED: Use dot_spacing * 0.45 (not dot_spacing / 2.0) for proper full-dot coverage
+        radii = intensities * dot_spacing * 0.45 * shadow_gap
 
-        # 5. Build dot list
+        # 5. Build dot list with minimum visible dot size
         dots = [
             HalftoneDot(cx=float(px[i]), cy=float(py[i]), radius=float(radii[i]), shape=dot_shape)
             for i in range(len(px))
-            if radii[i] > 0.05  # Skip invisible dots
+            if radii[i] >= 1.0  # Skip invisible dots (minimum 1px final radius)
         ]
         
         return dots

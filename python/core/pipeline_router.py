@@ -129,9 +129,10 @@ class PipelineRouter:
         sep_result = self.separator.separate(preprocessed, num_colors=target_colors)
         
         # 3. Generate Masks
-        # CRITICAL FIX: ARTWORK must use binary masks, not grayscale (prevents empty masks)
-        # Only PHOTO pipeline should use grayscale_output=True
-        masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=False)
+        # CRITICAL FIX: Use grayscale_output=True when halftone is enabled
+        # Halftone needs grayscale values to compute dot sizes properly
+        use_grayscale = args.halftone
+        masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=use_grayscale)
         
         # 4. Halftone (if requested for artwork)
         if args.halftone:

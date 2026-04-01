@@ -1,7 +1,6 @@
 from __future__ import annotations
 import cv2
 import numpy as np
-import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 import logging
@@ -37,11 +36,6 @@ class SmartResult:
     # Bimodality & Shape Features
     mid_ratio: float = 0.0
     shape_ratio: float = 0.0
-    
-    # NEW Scores (V2)
-    score_text: float = 0.0
-    score_artwork: float = 0.0
-    score_photo: float = 0.0
 
 class SmartAnalyzer:
     def analyze(self, image: np.ndarray, dpi: int = 300) -> SmartResult:
@@ -136,21 +130,30 @@ class SmartAnalyzer:
             
         params = self._get_params(image_class, metrics)
         
-        # Merge all into result
-        # FIXED: Use dataclasses.fields() for robustness (BUG-10)
-        valid_fields = {f.name for f in dataclasses.fields(SmartResult)}
+        # Build proper SmartResult with only valid dataclass fields
         result = SmartResult(
             image_class=image_class,
-            confidence=confidence,
-            scores=scores,
-            metrics=metrics,
-            recommended_params=self._get_params(image_class, metrics)
+            confidence=float(confidence),
+            smoothing_factor=params.get('smoothing_factor', 0.1),
+            corner_threshold=params.get('corner_threshold', 30.0),
+            global_threshold=params.get('global_threshold', 127),
+            use_halftone=params.get('use_halftone', False),
+            lpi=params.get('lpi', 55),
+            num_colors=params.get('num_colors', 0),
+            use_potrace_style=params.get('use_potrace_style', False),
+            edge_density=float(metrics['edge_density']),
+            color_count_estimate=int(metrics['color_count_estimate']),
+            noise_level=float(metrics['noise_level']),
+            is_low_res=bool(metrics['is_low_res']),
+            mid_ratio=float(metrics['mid_ratio']),
+            shape_ratio=float(metrics['shape_ratio']),
+            score_text=float(final_text_score),
+            score_artwork=float(final_artwork_score),
+            score_photo=float(final_photo_score),
         )
         
-        # Only include valid fields to prevent serialization errors
-        return {k: v for k, v in result.__dict__.items() if k in valid_fields}
-        logger.info(f"[SmartAnalyzer] V2 Score: Text={result.score_text:.2f}, Art={result.score_artwork:.2f}, Photo={result.score_photo:.2f}")
-        logger.info(f"[SmartAnalyzer] Final: {image_class.value} ({result.confidence:.0%} confidence)")
+        logger.info(f"[SmartAnalyzer] Weighted: Text={final_text_score:.3f}, Art={final_artwork_score:.3f}, Photo={final_photo_score:.3f}")
+        logger.info(f"[SmartAnalyzer] Final: {image_class.value} ({confidence:.0%} confidence)")
         
         return result
     
@@ -231,7 +234,7 @@ class SmartAnalyzer:
         f_col = m["color_count_estimate"] / 8.0  # Normalize 0-8 → 0-1
         f_edge = m["edge_density"]
         f_grad = m["gradient_ratio"]
-        f_sat = m["sat_mean"] / 255.0  # Normalize 0-255 → 0-1
+        f_sat = m["sat_mean"]  # Already normalized to 0-1 in _extract_metrics
         f_noise = m["noise_level"]
         
         # TEXT SCORE

@@ -52,21 +52,33 @@ class ColorSeparator:
         h, w, _ = image.shape
         total_pixels = h * w
 
+        # ── Solid Image Detection ─────────────────────────────────────────────
+        # Detect solid images (few unique colors) to skip background removal
+        # Otherwise a solid-color design gets mistaken for background
+        img_small = cv2.resize(image, (50, 50), interpolation=cv2.INTER_AREA)
+        total_unique_colors = len(np.unique(img_small.reshape(-1, 3), axis=0))
+        is_solid = total_unique_colors < 10
+
         # ── Global Background Pre-Filtering ──────────────────────────────────
         # FIXED: Use histogram mode instead of corner sampling (BUG-07)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # Use histogram mode for robust background detection
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-        bg_luma = int(np.argmax(hist))  # Most frequent pixel = background
-        bg_mask = np.abs(gray.astype(int) - bg_luma) < 15  # 15-luma tolerance
-        
-        if bg_luma > 200:
-            logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background (luma={bg_luma})")
-        elif bg_luma < 50:
-            logger.info(f"[ColorSeparator] Adaptive: Detected BLACK background (luma={bg_luma})")
+        if is_solid:
+            # Solid image — skip background detection, cluster everything
+            logger.info(f"[ColorSeparator] Solid image detected ({total_unique_colors} unique colors). Skipping background removal.")
+            bg_mask = np.zeros((h, w), dtype=bool)
         else:
-            logger.info(f"[ColorSeparator] Adaptive: Detected GRAY background (luma={bg_luma})")
+            # Use histogram mode for robust background detection
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+            bg_luma = int(np.argmax(hist))  # Most frequent pixel = background
+            bg_mask = np.abs(gray.astype(int) - bg_luma) < 15  # 15-luma tolerance
+            
+            if bg_luma > 200:
+                logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background (luma={bg_luma})")
+            elif bg_luma < 50:
+                logger.info(f"[ColorSeparator] Adaptive: Detected BLACK background (luma={bg_luma})")
+            else:
+                logger.info(f"[ColorSeparator] Adaptive: Detected GRAY background (luma={bg_luma})")
             
         fg_mask = ~bg_mask
         fg_pixel_count = int(np.sum(fg_mask))
