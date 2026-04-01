@@ -36,6 +36,11 @@ class SmartResult:
     # Bimodality & Shape Features
     mid_ratio: float = 0.0
     shape_ratio: float = 0.0
+    
+    # Weighted Scores (for debugging/auditing)
+    score_text: float = 0.0
+    score_artwork: float = 0.0
+    score_photo: float = 0.0
 
 class SmartAnalyzer:
     def analyze(self, image: np.ndarray, dpi: int = 300) -> SmartResult:
