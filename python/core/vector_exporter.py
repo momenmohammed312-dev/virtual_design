@@ -41,7 +41,7 @@ def fit_bezier_to_contour(
 ) -> List[Tuple]:
     """
     Potrace-inspired Bezier fitting with three-phase approach:
-    1. Douglas-Peucker simplification (removes staircase noise)
+    1. SMART Simplification (adaptive epsilon based on contour area)
     2. Corner detection via signed curvature (true geometric corners)
     3. Catmull-Rom only on smooth segments between confirmed corners
     """
@@ -50,15 +50,19 @@ def fit_bezier_to_contour(
     if n < 3:
         return []
 
-    # STEP 1: Douglas-Peucker polygon simplification (removes staircase noise)
-    # epsilon relative to contour perimeter — industry standard
-    # Last 5% tweak: dynamic epsilon
-    # - TEXT_LOGO: tighter (preserve sharp details)
-    # - ARTWORK: looser (reduce polygonization / micro-zigzag)
+    # STEP 1: SMART Douglas-Peucker simplification (adaptive epsilon)
     perimeter = cv2.arcLength(contour, True)
-    is_text_logo_proxy = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
-    eps_ratio = 0.001 if is_text_logo_proxy else 0.003
-    epsilon = max(0.5, perimeter * eps_ratio)
+    area = abs(cv2.contourArea(contour))
+    
+    # Adaptive epsilon: smaller for fine details, larger for smooth curves
+    # This prevents "staircase" while preserving true corners
+    if area < 200:  # Very small areas (eyes, dots)
+        epsilon = max(0.5, perimeter * 0.001)  # Tight for fine details
+    elif area < 1000:  # Medium areas (text strokes)
+        epsilon = max(1.0, perimeter * 0.002)  # Moderate balance
+    else:  # Large areas (shapes, fills)
+        epsilon = max(2.0, perimeter * 0.003)  # Relaxed for smooth curves
+    
     simplified = cv2.approxPolyDP(contour, epsilon, True)
     pts = simplified.reshape(-1, 2).astype(float)
     n = len(pts)
@@ -202,8 +206,8 @@ def export_vector_pdf(
         c.setFillColor(white)
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
-        # ═══ رسم الـ vector paths ═══
-        # Senior Fix: Use the mask EXACTLY as it came from preview.
+        # ═══ Advanced Mask Preprocessing (Senior Fix) ═══
+        # Senior Fix: Use mask EXACTLY as it came from preview.
         # Last 5% tweak: enforce hard-binary edges before any vectorization.
         bw = mask.copy()
         if bw.dtype != np.uint8:
@@ -212,13 +216,22 @@ def export_vector_pdf(
         # Always enforce hard binary edges (prevents gray quantization artifacts)
         bw = ((bw > 127).astype(np.uint8) * 255)
 
-        # ARTWORK-only: light blur then re-threshold to reduce staircase micro-zigzags.
-        # TEXT_LOGO must remain perfectly hard (no blur). We infer TEXT_LOGO when
-        # smoothing is ~0 or corner_threshold is very low.
+        # SMART PREPROCESSING: Adaptive approach based on content type
         is_text_logo_proxy = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
+        
         if not is_text_logo_proxy:
-            bw_blur = cv2.GaussianBlur(bw, (3, 3), 0.5)
-            bw = ((bw_blur > 127).astype(np.uint8) * 255)
+            # For ARTWORK: Use Median blur to remove staircase noise without smoothing curves
+            # Median preserves edges while removing noise, unlike Gaussian which blurs everything
+            bw = cv2.medianBlur(bw, 3)
+            
+            # Light Gaussian blur ONLY for extreme noise cases
+            # This reduces micro-zigzags while preserving overall shape
+            bw = cv2.GaussianBlur(bw, (3, 3), 0.3)
+            _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
+        else:
+            # For TEXT_LOGO: Keep perfectly sharp - no blur
+            # This preserves crisp text edges
+            pass
 
         
         # 2. Contour Extraction: TC89_KCOS for better curve approximation

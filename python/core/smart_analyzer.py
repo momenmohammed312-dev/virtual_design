@@ -141,16 +141,14 @@ class SmartAnalyzer:
         valid_fields = {f.name for f in dataclasses.fields(SmartResult)}
         result = SmartResult(
             image_class=image_class,
-            confidence=round(float(confidence), 3),
-            score_text=round(scores['text'], 3),
-            score_artwork=round(scores['artwork'], 3),
-            score_photo=round(scores['photo'], 3),
-            is_low_res=metrics["is_low_res"], # Explicitly pass is_low_res
-            **params,
-            **{k: v for k, v in metrics.items() if k != 'is_low_res' and k in valid_fields}
+            confidence=confidence,
+            scores=scores,
+            metrics=metrics,
+            recommended_params=self._get_params(image_class, metrics)
         )
-
         
+        # Only include valid fields to prevent serialization errors
+        return {k: v for k, v in result.__dict__.items() if k in valid_fields}
         logger.info(f"[SmartAnalyzer] V2 Score: Text={result.score_text:.2f}, Art={result.score_artwork:.2f}, Photo={result.score_photo:.2f}")
         logger.info(f"[SmartAnalyzer] Final: {image_class.value} ({result.confidence:.0%} confidence)")
         

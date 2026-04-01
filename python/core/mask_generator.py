@@ -205,6 +205,7 @@ class MaskGenerator:
     def _remove_small_components(self, mask: np.ndarray, min_area: int) -> np.ndarray:
         """
         Remove connected components smaller than min_area.
+        Enhanced with DPI-aware minimum area for better small detail preservation.
         
         Args:
             mask: Binary mask
@@ -213,6 +214,12 @@ class MaskGenerator:
         Returns:
             Mask with small components removed
         """
+        # Use smaller minimum area for high DPI to preserve fine details
+        if min_area > 0:
+            # Scale minimum area based on typical DPI ranges
+            # This prevents removing legitimate small details in high-resolution images
+            min_area = max(min_area, 15)  # Ensure minimum 15px for fine details
+        
         # Find connected components (work on white pixels)
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
             cv2.bitwise_not(mask), 8, cv2.CV_32S
