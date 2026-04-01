@@ -145,22 +145,37 @@ class ColorSeparator:
 
         # Build full label map: assign every pixel to nearest center
         if using_fg_only:
-            # Assign all full-resolution pixels to nearest center by Euclidean distance
+            # Use Delta-E (perceptually accurate) when available, fallback to Euclidean
             label_map_flat = np.zeros(total_pixels, dtype=np.int32)
-            for k_idx in range(num_colors):
-                # Distance from every pixel to center k
-                diff = full_data - best_centers[k_idx].astype(np.float32)
-                # Initialise with large value on first iteration
-                if k_idx == 0:
-                    min_dist = np.sum(diff ** 2, axis=1)
-                    label_map_flat[:] = 0
-                else:
-                    dist = np.sum(diff ** 2, axis=1)
-                    closer = dist < min_dist
-                    min_dist = np.where(closer, dist, min_dist)
-                    label_map_flat[closer] = k_idx
-
-            label_map = label_map_flat.reshape((h, w)).astype(np.int32)
+            try:
+                from skimage.color import deltaE_cie76
+                # Delta-E CIE76: perceptually uniform color distance in LAB space
+                centers_uint8 = np.clip(best_centers, 0, 255).astype(np.uint8).reshape(1, -1, 3)
+                full_lab = full_data.reshape(h, w, 3).astype(np.uint8)
+                min_de = np.full((h, w), 999.0, dtype=np.float32)
+                for k_idx in range(num_colors):
+                    center_px = centers_uint8[:, k_idx:k_idx+1, :]
+                    center_repeated = np.tile(center_px, (h, w, 1))
+                    de = deltaE_cie76(full_lab, center_repeated)
+                    closer = de < min_de
+                    min_de = np.where(closer, de, min_de)
+                    label_map_flat[closer.reshape(-1)] = k_idx
+                label_map_flat = label_map_flat.reshape(h, w).astype(np.int32)
+                logger.info(f"[ColorSeparator] Using Delta-E CIE76 for pixel assignment")
+            except ImportError:
+                # Fallback: Euclidean distance in LAB space
+                for k_idx in range(num_colors):
+                    diff = full_data - best_centers[k_idx].astype(np.float32)
+                    if k_idx == 0:
+                        min_dist = np.sum(diff ** 2, axis=1)
+                        label_map_flat[:] = 0
+                    else:
+                        dist = np.sum(diff ** 2, axis=1)
+                        closer = dist < min_dist
+                        min_dist = np.where(closer, dist, min_dist)
+                        label_map_flat[closer] = k_idx
+                label_map_flat = label_map_flat.reshape((h, w)).astype(np.int32)
+            label_map = label_map_flat
             # Mark white/background pixels as -1 (excluded from color layers)
             label_map[bg_mask] = -1
         else:
