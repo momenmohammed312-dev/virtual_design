@@ -57,7 +57,13 @@ class ColorSeparator:
         # Otherwise a solid-color design gets mistaken for background
         img_small = cv2.resize(image, (50, 50), interpolation=cv2.INTER_AREA)
         total_unique_colors = len(np.unique(img_small.reshape(-1, 3), axis=0))
-        is_solid = total_unique_colors < 10
+        
+        # Also check histogram concentration: if >80% of pixels are within 15 luma of the mode, it's solid
+        hist = cv2.calcHist([cv2.cvtColor(img_small, cv2.COLOR_BGR2GRAY)], [0], None, [256], [0, 256]).flatten()
+        mode_luma = int(np.argmax(hist))
+        mode_concentration = np.sum(hist[max(0, mode_luma-7):min(256, mode_luma+8)]) / (hist.sum() + 1e-6)
+        
+        is_solid = (total_unique_colors < 10) or (mode_concentration > 0.80)
 
         # ── Global Background Pre-Filtering ──────────────────────────────────
         # FIXED: Use histogram mode instead of corner sampling (BUG-07)
@@ -176,10 +182,39 @@ class ColorSeparator:
                         label_map_flat[closer] = k_idx
                 label_map_flat = label_map_flat.reshape((h, w)).astype(np.int32)
             label_map = label_map_flat
-            # Mark white/background pixels as -1 (excluded from color layers)
+            # Mark background pixels as -1 (excluded from color layers)
             label_map[bg_mask] = -1
         else:
-            label_map = best_labels.reshape((h, w)).astype(np.int32)
+            # Solid/degenerate case: cluster_data = full_data, so best_labels covers all pixels
+            # Still use Delta-E/Euclidean for consistent assignment
+            label_map_flat = np.zeros(total_pixels, dtype=np.int32)
+            try:
+                from skimage.color import deltaE_cie76
+                centers_uint8 = np.clip(best_centers, 0, 255).astype(np.uint8).reshape(1, -1, 3)
+                full_lab = full_data.reshape(h, w, 3).astype(np.uint8)
+                min_de = np.full((h, w), 999.0, dtype=np.float32)
+                for k_idx in range(num_colors):
+                    center_px = centers_uint8[:, k_idx:k_idx+1, :]
+                    center_repeated = np.tile(center_px, (h, w, 1))
+                    de = deltaE_cie76(full_lab, center_repeated)
+                    closer = de < min_de
+                    min_de = np.where(closer, de, min_de)
+                    label_map_flat[closer.reshape(-1)] = k_idx
+                label_map = label_map_flat.reshape(h, w).astype(np.int32)
+                logger.info(f"[ColorSeparator] Solid mode: Using Delta-E CIE76 for all pixels")
+            except ImportError:
+                for k_idx in range(num_colors):
+                    diff = full_data - best_centers[k_idx].astype(np.float32)
+                    if k_idx == 0:
+                        min_dist = np.sum(diff ** 2, axis=1)
+                        label_map_flat[:] = 0
+                    else:
+                        dist = np.sum(diff ** 2, axis=1)
+                        closer = dist < min_dist
+                        min_dist = np.where(closer, dist, min_dist)
+                        label_map_flat[closer] = k_idx
+                label_map = label_map_flat.reshape((h, w)).astype(np.int32)
+            # No background removal in solid mode — bg_mask is all False anyway
 
         # FIXED: Convert centers back to BGR for consistent output
         if use_lab:
@@ -521,9 +556,11 @@ class ColorSeparator:
     ) -> Tuple[float, np.ndarray, np.ndarray, int]:
         """
         Computes silhouette-like quality score and retries with k-1 if poor.
+        FIXED: Never drops below min_k=2 to prevent all-masks-becoming-one-color.
         Returns: (compactness, labels, centers, k)
         """
-        if k <= 2:
+        min_k = 2  # Never go below 2 colors
+        if k <= min_k:
             return best_comp, best_lbls, best_cntrs, k
             
         # Calculate mean intra-cluster distance (Compactness / N)
@@ -540,31 +577,34 @@ class ColorSeparator:
         quality_score = avg_intra / avg_inter
         logger.info(f"[ColorSeparator] Silhouette Score (k={k}): {quality_score:.3f}")
         
-        # If score >= 0.5 (poor separation) and K > 2, try K-1
+        # If score >= 0.5 (poor separation) and K > min_k, try K-1
+        # But only retry ONCE to prevent cascading reduction
         if quality_score >= 0.5:
-            logger.warning(f"[ColorSeparator] Poor separation (score={quality_score:.3f}). Retrying with k={k-1}...")
-            try:
-                comp_alt, lbls_alt, cntrs_alt = cv2.kmeans(
-                    data, k - 1, None, criteria, 3, cv2.KMEANS_PP_CENTERS
-                )
-                
-                # Check k-1 quality
-                avg_intra_alt = comp_alt / data.shape[0]
-                inter_dists_alt = []
-                for i in range(len(cntrs_alt)):
-                    for j in range(i + 1, len(cntrs_alt)):
-                        inter_dists_alt.append(np.linalg.norm(cntrs_alt[i] - cntrs_alt[j]))
-                avg_inter_alt = np.mean(inter_dists_alt) if inter_dists_alt else 1.0
-                quality_score_alt = avg_intra_alt / avg_inter_alt
-                
-                logger.info(f"[ColorSeparator] Silhouette Score (k={k-1}): {quality_score_alt:.3f}")
-                
-                if quality_score_alt < quality_score:
-                    logger.info(f"[ColorSeparator] Accepting k={k-1} results (improved from {quality_score:.3f} to {quality_score_alt:.3f})")
-                    return comp_alt, lbls_alt, cntrs_alt, k - 1
-                else:
-                    logger.info(f"[ColorSeparator] Keeping k={k} results (k={k-1} was not better)")
-            except Exception as e:
-                logger.warning(f"[ColorSeparator] Retry k={k-1} failed: {e}")
+            retry_k = max(min_k, k - 1)
+            if retry_k < k:
+                logger.warning(f"[ColorSeparator] Poor separation (score={quality_score:.3f}). Retrying with k={retry_k}...")
+                try:
+                    comp_alt, lbls_alt, cntrs_alt = cv2.kmeans(
+                        data, retry_k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
+                    )
+                    
+                    # Check retry_k quality
+                    avg_intra_alt = comp_alt / data.shape[0]
+                    inter_dists_alt = []
+                    for i in range(len(cntrs_alt)):
+                        for j in range(i + 1, len(cntrs_alt)):
+                            inter_dists_alt.append(np.linalg.norm(cntrs_alt[i] - cntrs_alt[j]))
+                    avg_inter_alt = np.mean(inter_dists_alt) if inter_dists_alt else 1.0
+                    quality_score_alt = avg_intra_alt / avg_inter_alt
+                    
+                    logger.info(f"[ColorSeparator] Silhouette Score (k={retry_k}): {quality_score_alt:.3f}")
+                    
+                    if quality_score_alt < quality_score:
+                        logger.info(f"[ColorSeparator] Accepting k={retry_k} results (improved from {quality_score:.3f} to {quality_score_alt:.3f})")
+                        return comp_alt, lbls_alt, cntrs_alt, retry_k
+                    else:
+                        logger.info(f"[ColorSeparator] Keeping k={k} results (k={retry_k} was not better)")
+                except Exception as e:
+                    logger.warning(f"[ColorSeparator] Retry k={retry_k} failed: {e}")
         
         return best_comp, best_lbls, best_cntrs, k
