@@ -36,8 +36,8 @@ def _get_angle(p1, p2, p3):
 
 def fit_bezier_to_contour(
     contour: np.ndarray,
-    smooth_factor: float = 0.25,
-    corner_threshold: float = 95.0
+    smooth_factor: float = 0.35,
+    corner_threshold: float = 120.0
 ) -> List[Tuple]:
     """
     Potrace-inspired Bezier fitting with three-phase approach:
@@ -54,14 +54,14 @@ def fit_bezier_to_contour(
     perimeter = cv2.arcLength(contour, True)
     area = abs(cv2.contourArea(contour))
     
-    # Adaptive epsilon: smaller for fine details, larger for smooth curves
-    # This prevents "staircase" while preserving true corners
+    # Adaptive epsilon: scaled up to eliminate staircase artifacts at all sizes
+    # Higher values = more simplification = smoother curves
     if area < 200:  # Very small areas (eyes, dots)
-        epsilon = max(1.0, perimeter * 0.003)  # Higher minimum to prevent jagged edges
+        epsilon = max(2.0, perimeter * 0.008)  # Was: 1.0, 0.003
     elif area < 1000:  # Medium areas (text strokes)
-        epsilon = max(2.0, perimeter * 0.004)  # Moderate balance
+        epsilon = max(3.0, perimeter * 0.010)  # Was: 2.0, 0.004
     else:  # Large areas (shapes, fills)
-        epsilon = max(3.0, perimeter * 0.005)  # Relaxed for smooth curves
+        epsilon = max(4.0, perimeter * 0.012)  # Was: 3.0, 0.005
     
     simplified = cv2.approxPolyDP(contour, epsilon, True)
     pts = simplified.reshape(-1, 2).astype(float)
@@ -206,30 +206,42 @@ def export_vector_pdf(
         c.setFillColor(white)
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
-        # ═══ Advanced Mask Preprocessing (Senior Fix) ═══
+        # ═══ Advanced Mask Preprocessing (Anti-Jag Fix) ═══
         bw = mask.copy()
         if bw.dtype != np.uint8:
             bw = bw.astype(np.uint8)
 
+        mask_h, mask_w = bw.shape[:2]
+        
+        # ADAPTIVE blur kernel: scales with mask size to handle any resolution
+        # Small masks (≤500px) → k=3, Medium (500-1500px) → k=5, Large (>1500px) → k=7
+        blur_k = 3
+        if mask_h > 1500:
+            blur_k = 7
+        elif mask_h > 500:
+            blur_k = 5
+        
         # SMART PREPROCESSING: Adaptive approach based on content type
         is_text_logo_proxy = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
         
         if not is_text_logo_proxy:
-            # CORRECT ORDER: blur FIRST, then threshold (not threshold → blur → threshold)
-            # Thresholding first creates staircase artifacts that blur cannot fix
-            bw = cv2.medianBlur(bw, 3)
-            bw = cv2.GaussianBlur(bw, (3, 3), 0.5)
+            # CORRECT ORDER: blur FIRST, then threshold
+            bw = cv2.medianBlur(bw, blur_k)
+            bw = cv2.GaussianBlur(bw, (blur_k, blur_k), 0.5)
             
             # Morphological smoothing: open then close to clean edges
-            kernel = np.ones((3, 3), np.uint8)
+            morph_k = max(3, blur_k - 2)
+            kernel = np.ones((morph_k, morph_k), np.uint8)
             bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
             bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
             
             # Final thresholding AFTER all smoothing
             _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
         else:
-            # For TEXT_LOGO: Keep perfectly sharp - no blur
-            # Just enforce hard binary edges
+            # For TEXT_LOGO: light smoothing to remove staircase from upscaling
+            # but keep edges sharp enough for text readability
+            if blur_k > 3:
+                bw = cv2.medianBlur(bw, 3)  # Always use k=3 for text_logo
             bw = ((bw > 127).astype(np.uint8) * 255)
 
         
@@ -257,7 +269,7 @@ def export_vector_pdf(
             path.setFillMode(1) # 1 = Even-Odd fill rule (essential for nested holes)
             use_even_odd = True
         
-        min_contour_area = 10 # capture small details
+        # Use the parameter min_contour_area (don't override it)
         
         # We need to sort contours by area descending so outer ones come first?
         # Actually with RETR_TREE and Even-Odd, order doesn't matter for pure fill.
