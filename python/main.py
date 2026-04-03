@@ -97,6 +97,15 @@ except ImportError:
     HAS_SMART_ANALYZER = False
     print("[WARNING] Smart Analyzer not available", flush=True)
 
+# Phase 1: Image Classifier (feature-first classification)
+try:
+    from core.image_classifier import ImageClassifier
+    HAS_IMAGE_CLASSIFIER = True
+except ImportError:
+    HAS_IMAGE_CLASSIFIER = False
+    logger_bootstrap = __import__('logging').getLogger(__name__)
+    logger_bootstrap.warning("[WARNING] ImageClassifier not available")
+
 # Try importing optional modules (halftone, binarizer, etc.)
 try:
     from core.halftone_generator import HalftoneGenerator
@@ -163,6 +172,7 @@ def _check_modules() -> None:
     """Check module availability."""
     optional = {
         'SmartAnalyzer': HAS_SMART_ANALYZER,
+        'ImageClassifier': HAS_IMAGE_CLASSIFIER,
         'HalftoneGenerator': HAS_HALFTONE,
         'Binarizer': HAS_BINARIZER,
         'EdgeAwareBinarizer': HAS_EDGE_AWARE_BINARIZER,
@@ -1513,36 +1523,79 @@ def main() -> int:
         if len(image_orig.shape) > 2 and image_orig.shape[2] == 4:
             image_orig = image_orig[:, :, :3]
 
-        # Step 0 — Smart Analysis (NEW)
+        # Step 0 — Smart Analysis (Phase 1: Dual-layer classification)
         if HAS_SMART_ANALYZER and img_type == 'auto':
             _step(0, "Smart Image Analysis")
+
+            # ── Layer A: New ImageClassifier (feature-first, no binarization) ──
+            if HAS_IMAGE_CLASSIFIER:
+                try:
+                    classifier = ImageClassifier()
+                    clf_result  = classifier.classify(image_orig)
+                    logger.info(
+                        f"[ImageClassifier] type={clf_result.type.upper()} "
+                        f"conf={clf_result.confidence:.3f} "
+                        f"route={clf_result.route()} "
+                        f"(logo={clf_result.score_logo:.3f} "
+                        f"photo={clf_result.score_photo:.3f} "
+                        f"mixed={clf_result.score_mixed:.3f})"
+                    )
+                    # Store for downstream use
+                    args._clf_type       = clf_result.type        # 'logo'|'photo'|'mixed'
+                    args._clf_confidence = clf_result.confidence
+                    args._clf_route      = clf_result.route()     # 'vector'|'halftone'|'hybrid'
+                except Exception as _ce:
+                    logger.warning(f"[ImageClassifier] Failed: {_ce} — continuing with SmartAnalyzer only")
+                    args._clf_type       = 'mixed'
+                    args._clf_confidence = 0.0
+                    args._clf_route      = 'hybrid'
+            else:
+                args._clf_type       = 'mixed'
+                args._clf_confidence = 0.0
+                args._clf_route      = 'hybrid'
+
+            # ── Layer B: Existing SmartAnalyzer (parameter tuning) ──
             analyzer = SmartAnalyzer()
             analysis = analyzer.analyze(image_orig, dpi=args.dpi)
 
-            
             # Override args based on analysis (only if user didn't set manually)
             args.smoothing_factor = analysis.smoothing_factor
             args.corner_threshold = analysis.corner_threshold
             args.global_threshold = analysis.global_threshold
             # ❌ لا تـoverride الـ halftone — المستخدم هو اللي بيقرر solid أو halftone
-            # args.halftone = analysis.use_halftone  
             args.lpi = analysis.lpi
-            
+
             # Store image class for later use in pipeline steps
             args._image_class = analysis.image_class
             args._analysis_confidence = analysis.confidence
-            
+
             # Auto-detect colors if not specified
             if args.colors == 0:
                 args.colors = analysis.num_colors  # 0 = auto-detect
-            
-            logger.info(f"[SmartAnalyzer] Class: {analysis.image_class.value} | "
-                       f"Confidence: {analysis.confidence:.0%} | "
-                       f"Halftone: {args.halftone} | Smooth: {args.smoothing_factor}")
+
+            # ── Phase 4 guard: if ImageClassifier says LOGO with high confidence,
+            #    force skip_halftone so edge_aware_binarizer is never applied
+            #    before vector pipeline. ──
+            if args._clf_type == 'logo' and args._clf_confidence > 0.25:
+                args.skip_halftone = True
+                logger.info(
+                    "[ClassifierGuard] Logo detected by ImageClassifier "
+                    f"(conf={args._clf_confidence:.3f}) — "
+                    "skip_halftone=True to protect vector pipeline"
+                )
+
+            logger.info(
+                f"[SmartAnalyzer] Class: {analysis.image_class.value} | "
+                f"Confidence: {analysis.confidence:.0%} | "
+                f"Halftone: {args.halftone} | Smooth: {args.smoothing_factor}"
+            )
         else:
             # Fallback to existing logic for non-auto modes
-            args._image_class = None
+            args._image_class        = None
             args._analysis_confidence = 0.0
+            args._clf_type            = 'mixed'
+            args._clf_confidence      = 0.0
+            args._clf_route           = 'hybrid'
         
         # Now upscale for processing
         image = step1_load_image(args.input)

@@ -1,7 +1,20 @@
 """
-edge_aware_binarizer.py - Phase 2: Edge-aware binarization for ARTWORK
-Implements Sauvola/Niblack thresholding with edge preservation
-Production-grade binarization for screen printing workflows
+edge_aware_binarizer.py — Local Adaptive Binarization (Halftone Pipeline Only)
+Implements Sauvola/Niblack/Guided thresholding for screen-printing film output.
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ARCHITECTURAL RULE (Phase 4 — Feature-First Pipeline)                      ║
+║                                                                              ║
+║  This module is ONLY permitted in the HALFTONE pipeline.                    ║
+║  It must NEVER be called before the vector pipeline stages.                 ║
+║                                                                              ║
+║  Correct routing:                                                            ║
+║    logo / mixed → anti_alias_preserve → curve_fitter → vector_exporter     ║
+║    photo         → anti_alias_preserve → [halftone] → edge_aware_binarizer  ║
+║                                                                              ║
+║  Violating this rule destroys anti-aliased gradient information and         ║
+║  produces staircase artefacts in the downstream vectorization stage.        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
 import cv2

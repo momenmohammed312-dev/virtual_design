@@ -5,28 +5,69 @@ from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
+# ── Lazy import of anti_alias_preserve (avoids circular deps) ─────────────────
+def _get_preserver(image_type: str):
+    """Return an AntiAliasPreserver preset for the given image type."""
+    try:
+        from core.anti_alias_preserve import AntiAliasPreserver
+        presets = {
+            'logo':  AntiAliasPreserver.for_logo,
+            'photo': AntiAliasPreserver.for_photo,
+            'mixed': AntiAliasPreserver.for_mixed,
+        }
+        return presets.get(image_type, AntiAliasPreserver.for_mixed)()
+    except ImportError:
+        logger.warning("[RouterUtils] anti_alias_preserve not available — using raw image")
+        return None
+
 def preprocess_text_logo(image: np.ndarray) -> np.ndarray:
-    """Enhanced sharpening for pure logos/text: Bilateral + Sharpening."""
-    bilat = cv2.bilateralFilter(image, 5, 50, 50)
-    kernel_sharpen = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-    sharpened = cv2.filter2D(bilat, -1, kernel_sharpen)
+    """
+    Edge-preserving preprocessing for logos/text.
+    Phase 2 upgrade: uses AntiAliasPreserver (logo preset) before sharpening.
+    NO binarization at this stage.
+    """
+    preserver = _get_preserver('logo')
+    if preserver is not None:
+        # AntiAliasPreserver returns grayscale for logos — convert back to BGR
+        gray = preserver.process(image)
+        bilat = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR) if len(gray.shape) == 2 else gray
+    else:
+        bilat = cv2.bilateralFilter(image, 5, 50, 50)
+    # Sharpening pass (unsharp mask — less destructive than the 3×3 kernel)
+    blurred = cv2.GaussianBlur(bilat, (0, 0), 1.0)
+    sharpened = cv2.addWeighted(bilat, 1.5, blurred, -0.5, 0)
     return sharpened
 
 def preprocess_artwork(image: np.ndarray) -> np.ndarray:
-    """Balanced preprocessing for illustrations: Bilateral + Contrast."""
-    bilat = cv2.bilateralFilter(image, 9, 75, 75)
-    return cv2.convertScaleAbs(bilat, alpha=1.3, beta=0)
+    """
+    Edge-preserving preprocessing for illustrations (mixed preset).
+    Phase 2 upgrade: AntiAliasPreserver with colour preservation.
+    NO binarization at this stage.
+    """
+    preserver = _get_preserver('mixed')
+    if preserver is not None:
+        return preserver.process(image)
+    # Fallback
+    return cv2.bilateralFilter(image, 9, 75, 75)
 
 def preprocess_photo(image: np.ndarray) -> np.ndarray:
-    """Shadow/Texture-preserving preprocessing for photographs."""
+    """
+    Shadow/texture-preserving preprocessing for photographs (photo preset).
+    Phase 2 upgrade: AntiAliasPreserver with gamma + bilateral for halftone.
+    Output is grayscale (required by halftone engine).
+    NO binarization at this stage.
+    """
+    preserver = _get_preserver('photo')
+    if preserver is not None:
+        return preserver.process(image)   # returns uint8 grayscale
+    # Fallback
     if len(image.shape) == 3:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     else:
         gray = image.copy()
     bilat = cv2.bilateralFilter(gray, 15, 75, 75)
     blurred = cv2.GaussianBlur(bilat, (5, 5), 1.0)
-    unsharp = cv2.addWeighted(bilat, 1.5, blurred, -0.5, 0)
-    return unsharp
+    return cv2.addWeighted(bilat, 1.5, blurred, -0.5, 0)
 
 def _make_single_color_separation(image: np.ndarray, white_threshold: int = 240) -> dict:
     """Bypasses K-means for TEXT_LOGO / monochrome images."""

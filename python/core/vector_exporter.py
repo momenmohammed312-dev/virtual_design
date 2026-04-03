@@ -54,14 +54,13 @@ def fit_bezier_to_contour(
     perimeter = cv2.arcLength(contour, True)
     area = abs(cv2.contourArea(contour))
     
-    # Adaptive epsilon: scaled up to eliminate staircase artifacts at all sizes
-    # Higher values = more simplification = smoother curves
+    # Adaptive epsilon: scaled down to prevent aggressive destruction of text and straight edges
     if area < 200:  # Very small areas (eyes, dots)
-        epsilon = max(2.0, perimeter * 0.015)  # Was: 0.008
+        epsilon = max(0.5, perimeter * 0.002)
     elif area < 1000:  # Medium areas (text strokes)
-        epsilon = max(3.0, perimeter * 0.020)  # Was: 0.010
+        epsilon = max(1.0, perimeter * 0.003)
     else:  # Large areas (shapes, fills)
-        epsilon = max(4.0, perimeter * 0.025)  # Was: 0.012
+        epsilon = max(1.5, perimeter * 0.005)
     
     simplified = cv2.approxPolyDP(contour, epsilon, True)
     pts = simplified.reshape(-1, 2).astype(float)
@@ -245,18 +244,20 @@ def export_vector_pdf(
             # Final thresholding AFTER all smoothing
             _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
         else:
-            # For TEXT_LOGO: light smoothing to remove staircase from upscaling
-            # but keep edges sharp enough for text readability
-            bw = cv2.medianBlur(bw, 5)
-            bw = cv2.GaussianBlur(bw, (5, 5), 0.8)
-            bw = ((bw > 127).astype(np.uint8) * 255)
+            # For TEXT_LOGO: adaptive smoothing to melt large staircases caused by upscaling,
+            # ensuring straight lines and clean curves before vectorization.
+            blur_size = max(5, int((mask_h / 1500) * 11))
+            if blur_size % 2 == 0: 
+                blur_size += 1
+                
+            bw = cv2.medianBlur(bw, blur_size)
+            bw = cv2.GaussianBlur(bw, (blur_size, blur_size), 0)
+            _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
 
         
-        # 2. Contour Extraction: TC89_L1 for built-in staircase smoothing
-        # Unlike CHAIN_APPROX_NONE (every pixel), TC89_L1 applies Teh-Chin
-        # chain approximation which naturally smooths pixel staircases
+        # 2. Contour Extraction: SIMPLE is better to avoid zigzag artifacts
         contours, hierarchy = cv2.findContours(
-            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_TC89_L1
+            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
         )
         
         # coordinate transform (defined once, outside the loop)
