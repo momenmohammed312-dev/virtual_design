@@ -54,27 +54,38 @@ def _apply_upscale_if_needed(img: np.ndarray) -> np.ndarray:
     CRITICAL FIX: Apply LANCZOS4 upscale guard for small images.
     Industry standard: upscale to 2400px minimum for proper analysis and processing.
     """
-    TARGET_MIN_DIM = 2400  # Industry standard for RIP processing
+    # ─── Stability & Resolution Management ───
+    # [FIX] Limit upscale target to 1200px (instead of 2400px) for general analysis
+    # [FIX] Cap absolute max dimension to 3500px to prevent OOM/Process crashes
+    TARGET_MIN_DIM = 1200 
+    MAX_SAFE_DIM = 3500
     
-    if len(img.shape) == 3:
-        h, w = img.shape[:2]
-    else:
-        h, w = img.shape[:2]
-    
+    h, w = img.shape[:2]
     min_dim = min(h, w)
+    max_dim = max(h, w)
     
+    # Pre-check: if original is already gigantic, downscale it immediately
+    if max_dim > MAX_SAFE_DIM:
+        scale = MAX_SAFE_DIM / max_dim
+        new_w, new_h = int(w * scale), int(h * scale)
+        print(f"[ImageLoader] Downscaling GIGANTIC image from {w}x{h} to {new_w}x{new_h} for memory safety", flush=True)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        return img
+
     if min_dim < TARGET_MIN_DIM:
         scale = TARGET_MIN_DIM / min_dim
         new_w = int(w * scale)
         new_h = int(h * scale)
         
+        # Guard: Ensure upscale doesn't cross safety limit
+        if max(new_w, new_h) > MAX_SAFE_DIM:
+            scale = MAX_SAFE_DIM / max(new_w, new_h)
+            new_w, new_h = int(new_w * scale), int(new_h * scale)
+
         print(f"[ImageLoader] Upscaling image from {w}x{h} to {new_w}x{new_h} (scale: {scale:.2f}x)", flush=True)
-        
-        # Use LANCZOS4 for highest quality upscaling
         img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-        
         print(f"[ImageLoader] Upscaled image shape: {img.shape}", flush=True)
     else:
-        print(f"[ImageLoader] Image size {w}x{h} already meets minimum {TARGET_MIN_DIM}px", flush=True)
+        print(f"[ImageLoader] Image size {w}x{h} already meets minimum requirement", flush=True)
     
     return img

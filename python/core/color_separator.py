@@ -75,16 +75,25 @@ class ColorSeparator:
             bg_mask = np.zeros((h, w), dtype=bool)
         else:
             # Use histogram mode for robust background detection
+            # 🔥 FIX 2: Fix background detection
             hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-            bg_luma = int(np.argmax(hist))  # Most frequent pixel = background
-            bg_mask = np.abs(gray.astype(int) - bg_luma) < 15  # 15-luma tolerance
+            bg_luma = int(np.argmax(hist))
             
-            if bg_luma > 200:
-                logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background (luma={bg_luma})")
-            elif bg_luma < 50:
+            # sanity check
+            if bg_luma < 50:
+                bg_type = "dark"
                 logger.info(f"[ColorSeparator] Adaptive: Detected BLACK background (luma={bg_luma})")
+                bg_mask = np.abs(gray.astype(int) - bg_luma) < 15
+            elif bg_luma > 200:
+                bg_type = "light"
+                logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background (luma={bg_luma})")
+                bg_mask = np.abs(gray.astype(int) - bg_luma) < 15
             else:
-                logger.info(f"[ColorSeparator] Adaptive: Detected GRAY background (luma={bg_luma})")
+                bg_type = "uncertain"
+                logger.info(f"[ColorSeparator] Adaptive: UNCERTAIN background (luma={bg_luma}) -> fallback")
+                # use adaptive threshold fallback or just let kmeans handle all pixels
+                _, otsu_thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                bg_mask = np.zeros((h, w), dtype=bool)
             
         fg_mask = ~bg_mask
         fg_pixel_count = int(np.sum(fg_mask))

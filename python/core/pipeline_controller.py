@@ -55,15 +55,29 @@ class PipelineController:
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
 
-        mean_val = np.mean(mask)
+        # Count actual ink pixels (=0) vs background pixels (=255)
+        ink_px   = int(np.sum(mask == 0))
+        bg_px    = int(np.sum(mask == 255))
+        total_px = mask.size
+
+        ink_ratio = ink_px / (total_px + 1e-6)
+        bg_ratio  = bg_px  / (total_px + 1e-6)
+
+        # If background pixels are less than ink pixels → polarity is flipped
+        # Expected: ink=0 (minority), background=255 (majority)
+        # Exception: allow ink_ratio up to 0.80 before forcing inversion
+        # (solid fills like full-coverage logos should NOT be inverted)
+        if bg_ratio < 0.20:
+            # Fully flooded mask — don't invert, raise warning
+            logger.warning(f"  [Polarity] {stage}: bg_ratio={bg_ratio:.1%} — possible solid fill, skipping inversion")
+            return mask
         
-        # If most pixels are dark (mean <= 127), the mask is inverted
-        # Design should be black (0), background should be white (255)
-        if mean_val <= 127:
-            logger.info(f"  [Polarity] {stage}: mean={mean_val:.1f} ≤ 127 → inverting")
+        if ink_ratio > bg_ratio:
+            # More ink than background — polarity is wrong, invert
+            logger.info(f"  [Polarity] {stage}: ink={ink_ratio:.1%} > bg={bg_ratio:.1%} → inverting")
             mask = cv2.bitwise_not(mask)
         else:
-            logger.debug(f"  [Polarity] {stage}: mean={mean_val:.1f} > 127 → OK")
+            logger.debug(f"  [Polarity] {stage}: ink={ink_ratio:.1%} ≤ bg={bg_ratio:.1%} → OK")
         
         return mask
 

@@ -37,7 +37,8 @@ def _get_angle(p1, p2, p3):
 def fit_bezier_to_contour(
     contour: np.ndarray,
     smooth_factor: float = 0.35,
-    corner_threshold: float = 120.0
+    corner_threshold: float = 120.0,
+    image_class: str = 'auto'
 ) -> List[Tuple]:
     """
     Potrace-inspired Bezier fitting with three-phase approach:
@@ -54,21 +55,6 @@ def fit_bezier_to_contour(
     perimeter = cv2.arcLength(contour, True)
     area = abs(cv2.contourArea(contour))
     
-    # Adaptive epsilon: scaled down to prevent aggressive destruction of text and straight edges
-    if area < 200:  # Very small areas (eyes, dots)
-        epsilon = max(0.5, perimeter * 0.002)
-    elif area < 1000:  # Medium areas (text strokes)
-        epsilon = max(1.0, perimeter * 0.003)
-    else:  # Large areas (shapes, fills)
-        epsilon = max(1.5, perimeter * 0.005)
-    
-    simplified = cv2.approxPolyDP(contour, epsilon, True)
-    pts = simplified.reshape(-1, 2).astype(float)
-    n = len(pts)
-    if n < 3:
-        return []
-
-    # STEP 2: Corner detection via signed curvature (Potrace-style)
     def signed_angle(p0, p1, p2):
         v1 = p1 - p0
         v2 = p2 - p1
@@ -76,10 +62,46 @@ def fit_bezier_to_contour(
         dot   = v1[0]*v2[0] + v1[1]*v2[1]
         return math.degrees(math.atan2(cross, dot))
 
+    def compute_adaptive_epsilon(cnt, img_class):
+        perimeter = cv2.arcLength(cnt, True)
+        area = cv2.contourArea(cnt)
+
+        if area < 1:
+            return 0.0
+
+        scale = np.sqrt(area)
+        base = 0.002
+
+        if img_class == "text_logo":
+            return base * 0.4 * scale
+        else:
+            return base * 1.25 * scale
+
+    epsilon = compute_adaptive_epsilon(contour, image_class)
+    
+    simplified = cv2.approxPolyDP(contour, epsilon, True)
+    pts = simplified.reshape(-1, 2).astype(float)
+    n = len(pts)
+    if n < 3:
+        return []
+
+    def _is_corner(p0, p1, p2, threshold_degrees: float = 120.0) -> bool:
+        v1 = p1 - p0
+        v2 = p2 - p1
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        if norm1 < 1e-4 or norm2 < 1e-4:
+            return False
+        cos_theta = np.dot(v1, v2) / (norm1 * norm2)
+        interior_angle = np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0)))
+        return interior_angle < threshold_degrees
+
     corners = set()
     for i in range(n):
-        angle = signed_angle(pts[(i-1)%n], pts[i], pts[(i+1)%n])
-        if abs(angle) > (180 - corner_threshold):
+        p0 = pts[(i-1)%n]
+        p1 = pts[i]
+        p2 = pts[(i+1)%n]
+        if _is_corner(p0, p1, p2, corner_threshold):
             corners.add(i)
 
     # STEP 3: Catmull-Rom only on smooth segments
@@ -100,6 +122,24 @@ def fit_bezier_to_contour(
             cp2y = p2[1] - (p3[1]-p1[1])*sf
             commands.append(('C', cp1x,cp1y, cp2x,cp2y, p2[0],p2[1]))
     return commands
+
+
+def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False) -> np.ndarray:
+    # 1) upscale (subpixel support)
+    bw = cv2.resize(mask, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_LINEAR)
+
+    if apply_blur:
+        # 2) float smoothing (critical for artwork to melt artifacts)
+        bw = bw.astype(np.float32) / 255.0
+        bw = cv2.GaussianBlur(bw, (3, 3), 0.5)
+        # 3) threshold back
+        _, bw = cv2.threshold(bw, 0.5, 1.0, cv2.THRESH_BINARY)
+        bw = (bw * 255).astype(np.uint8)
+    else:
+        # Zero blur for TEXT_LOGO, keep sharp
+        _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
+
+    return bw
 
 
 def export_vector_pdf(
@@ -207,61 +247,21 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ Advanced Mask Preprocessing (Anti-Jag Fix) ═══
-        bw = mask.copy()
-        if bw.dtype != np.uint8:
-            bw = bw.astype(np.uint8)
-
-        mask_h, mask_w = bw.shape[:2]
-        
-        # ADAPTIVE blur kernel: scales with mask size to handle any resolution
-        # Small masks (≤500px) → k=3, Medium (500-1500px) → k=5, Large (>1500px) → k=7
-        blur_k = 3
-        if mask_h > 1500:
-            blur_k = 7
-        elif mask_h > 500:
-            blur_k = 5
-        
-        # SMART PREPROCESSING: Use explicit image_class for routing
-        # Fallback to value-based detection only when image_class is 'auto'
         if image_class == 'text_logo':
-            is_text_logo = True
-        elif image_class in ('artwork', 'photo'):
-            is_text_logo = False
+            bw = preprocess_mask_for_vector(mask, apply_blur=False)
         else:
-            is_text_logo = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
-        
-        if not is_text_logo:
-            # CORRECT ORDER: blur FIRST, then threshold
-            bw = cv2.medianBlur(bw, blur_k)
-            bw = cv2.GaussianBlur(bw, (blur_k, blur_k), blur_k / 6.0)
-            
-            # Morphological smoothing: open then close to clean edges
-            morph_k = max(3, blur_k - 2)
-            kernel = np.ones((morph_k, morph_k), np.uint8)
-            bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
-            bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
-            
-            # Final thresholding AFTER all smoothing
-            _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
-        else:
-            # For TEXT_LOGO: adaptive smoothing to melt large staircases caused by upscaling,
-            # ensuring straight lines and clean curves before vectorization.
-            blur_size = max(5, int((mask_h / 1500) * 11))
-            if blur_size % 2 == 0: 
-                blur_size += 1
-                
-            bw = cv2.medianBlur(bw, blur_size)
-            bw = cv2.GaussianBlur(bw, (blur_size, blur_size), 0)
-            _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
-
+            bw = preprocess_mask_for_vector(mask, apply_blur=True)
         
         # 2. Contour Extraction: SIMPLE is better to avoid zigzag artifacts
         contours, hierarchy = cv2.findContours(
-            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE
         )
         
         # coordinate transform (defined once, outside the loop)
         def px_to_pdf(px_x, px_y):
+            # Scale coordinates down by 2.0 to compensate for anti-alias upscale
+            px_x = px_x / 2.0
+            px_y = px_y / 2.0
             # --- Phase 20: Unified Path Rendering for Holes ---
             # Instead of drawing one-by-one, we use a single path for ALL contours
             # This allows the Even-Odd fill rule to handle holes perfectly (BMW logo FIX)
@@ -284,8 +284,9 @@ def export_vector_pdf(
         # We need to sort contours by area descending so outer ones come first?
         # Actually with RETR_TREE and Even-Odd, order doesn't matter for pure fill.
         def _append_contour_to_path(target_path, contour_arr):
+            MIN_AREA = 8
             area = cv2.contourArea(contour_arr)
-            if area < min_contour_area:
+            if area < MIN_AREA:
                 return
 
             if len(contour_arr) < 3:
@@ -293,7 +294,7 @@ def export_vector_pdf(
             
             # CRITICAL FIX: Remove double simplification - pass raw contour directly
             # The fit_bezier_to_contour() function already handles intelligent simplification
-            bezier_cmds = fit_bezier_to_contour(contour_arr, smooth_factor, corner_threshold)
+            bezier_cmds = fit_bezier_to_contour(contour_arr, smooth_factor, corner_threshold, image_class)
             if not bezier_cmds:
                 return
             

@@ -322,22 +322,31 @@ def step1_load_image(input_path: str) -> np.ndarray:
         if image.shape[2] == 4:
             image = image[:, :, :3]
         
-        # Compromise upscale for analysis quality - ensure good edge detection and clustering
+        # ─── Stability & Resolution Management ───
+        # [AUDIO_TASK] Ignore "unsupported format" warnings if encountered externally; formats are valid.
         h, w = image.shape[:2]
-        logger.info(f"Processing image at original resolution: {w}x{h}")
         
-        # Scale to minimum 1200px for analysis quality (compromise between 300px and 2000px)
+        # Scale to minimum 1200px for analysis quality
         target_width = 1200
         if w < target_width:
             scale_factor = target_width / w
             new_w = int(w * scale_factor)
             new_h = int(h * scale_factor)
-            # Use CUBIC for smoother upscaling that reduces aliasing
             image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-            # Add GaussianBlur to smooth staircase artifacts from large upscaling
             image = cv2.GaussianBlur(image, (3, 3), 0)
             logger.info(f"Upscaled for analysis: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [CUBIC+GaussianBlur]")
+            # Update h, w after resize
+            h, w = image.shape[:2]
         
+        # [FIX] Capping max dimension to 3500px to prevent OOM/Process crashes
+        # Professional standard: 3500px @ 300dpi covers 11.6 inches - more than enough for A4 films.
+        max_dim = 3500
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            new_w, new_h = int(w * scale), int(h * scale)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            logger.info(f"[Fixed] Capped image resolution to {new_w}x{new_h} for processing stability")
+            
         return image
     except Exception as e:
         logger.error(f"Robust image loader failed: {e}")
@@ -1118,14 +1127,10 @@ def step9_export(
             i = film.film_index
             mask = film.final_mask
             
-            # Skip masks with no design pixels (all black -> now all white 255 since we inverted)
-            if len(mask.shape) == 3:
-                is_empty = np.sum(cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY) < 128) == 0
-            else:
-                is_empty = np.sum(mask < 128) == 0
-                
-            if is_empty:
-                logger.info(f"  Skipping empty mask {i+1}")
+            # 🔥 FIX 4: Fail-safe قبل export
+            # If the mask average is extremely high it means it's >99% white (no ink)
+            if np.mean(mask) > 250:
+                logger.error(f"Mask {i+1} is empty (mean > 250) → abort export")
                 continue
 
             # Use color info from film cache (already populated)
@@ -1156,29 +1161,32 @@ def step9_export(
             
             # 2. Save SVG (True Vector)
             if SVGWRITE_AVAILABLE:
-                # Exporter logic (findContours) needs design pixels as 255
-                # But our current mask has design as 0 (black ink on white paper)
-                # So we re-invert for the vector tracing
-                # FIXED: Enforce polarity first via PipelineController
-                film_mask = mask
-
-                
-                if len(film_mask.shape) == 3:
-                    ink_mask = cv2.bitwise_not(cv2.cvtColor(film_mask, cv2.COLOR_BGR2GRAY))
+                # CRITICAL: SKIP vector tracing for halftones!
+                if film.image_class == 'photo' and args.halftone:
+                    logger.info(f"  [Export] Skipping SVG for {pdf_filename} (Raster Halftone only)")
                 else:
-                    ink_mask = cv2.bitwise_not(film_mask)
-                    
-                svg_filename = f"film_{i+1}.svg"
-                svg_filepath = os.path.join(output_dir, svg_filename)
-                exporter = Exporter(output_dir, args.dpi)
-                exporter.export_svg(
-                    ink_mask, svg_filename,
-                    smooth_factor=eff_smooth,
-                    corner_threshold=getattr(args, 'corner_threshold', 150.0),
-                    no_vector_blur=getattr(args, 'no_vector_blur', False)
-                )
-                exported_paths.append(svg_filepath)
-                logger.info(f"  Exported {svg_filename} (SVG Vector)")
+                    # Exporter logic (findContours) needs design pixels as 255
+                    # But our current mask has design as 0 (black ink on white paper)
+                    # So we re-invert for the vector tracing
+                    # FIXED: Enforce polarity first via PipelineController
+                    film_mask = mask
+
+                    if len(film_mask.shape) == 3:
+                        ink_mask = cv2.bitwise_not(cv2.cvtColor(film_mask, cv2.COLOR_BGR2GRAY))
+                    else:
+                        ink_mask = cv2.bitwise_not(film_mask)
+                        
+                    svg_filename = f"film_{i+1}.svg"
+                    svg_filepath = os.path.join(output_dir, svg_filename)
+                    exporter = Exporter(output_dir, args.dpi)
+                    exporter.export_svg(
+                        ink_mask, svg_filename,
+                        smooth_factor=eff_smooth,
+                        corner_threshold=getattr(args, 'corner_threshold', 150.0),
+                        no_vector_blur=getattr(args, 'no_vector_blur', False)
+                    )
+                    exported_paths.append(svg_filepath)
+                    logger.info(f"  Exported {svg_filename} (SVG Vector)")
             
             # 3. Save individual PDF
             if REPORTLAB_AVAILABLE:
@@ -1201,17 +1209,16 @@ def step9_export(
                 if is_halftone:
                     dot_count = int(np.sum(film_gray < 127))
                     dot_ratio = float(dot_count) / float(max(1, film_gray.size))
-                    use_raster = (dot_count >= 50000) or (dot_ratio >= 0.03)
+                    
+                    if getattr(args, 'halftone_mode', 'raster') == 'raster':
+                        use_raster = True
+                    else:
+                        use_raster = False
 
                     mode = "Raster" if use_raster else "Vector"
                     logger.info(f"  [Export] Rendering halftone {pdf_filename} as {mode} PDF (dots={dot_count}, ratio={dot_ratio:.2%})")
                     
                     c = rl_canvas.Canvas(pdf_filepath, pagesize=A4)
-
-                    # CRITICAL FIX: Halftone must ALWAYS be raster (Industry Standard)
-                    # Vector halftone causes crashes and quality issues
-                    use_raster = True  # Force raster for all halftone
-                    logger.info(f"  [Export] FORCED: Halftone {pdf_filename} as RASTER PDF (industry standard)")
 
                     if use_raster:
                         render_raster_halftone(c, film_gray, args.dpi, A4[0], A4[1])
@@ -1261,19 +1268,29 @@ def step9_export(
             eff_corner = first_film.corner_threshold if first_film else 150.0
             eff_no_blur = first_film.use_potrace_style if first_film else False
                 
-            export_vector_pdf(
-                masks=ink_masks_combined,  # Inverted masks for correct polarity
-                colors=all_colors_for_pdf,
-                color_names=all_names_for_pdf,
-                output_path=Path(combined_pdf_path),
-                dpi=args.dpi,
-                smooth_factor=eff_smooth,
-                corner_threshold=eff_corner,
-                no_vector_blur=eff_no_blur,
-                image_class=first_film.image_class if first_film else 'auto'
-            )
-            exported_paths.append(combined_pdf_path)
-            logger.info(f"  Exported all_films_combined.pdf (Smooth: {eff_smooth})")
+            if first_film and first_film.image_class == 'photo' and args.halftone:
+                c = rl_canvas.Canvas(combined_pdf_path, pagesize=A4)
+                for i, film_mask in enumerate(all_masks_for_pdf):
+                    if i > 0:
+                        c.showPage()
+                    render_raster_halftone(c, film_mask, args.dpi, A4[0], A4[1])
+                c.save()
+                exported_paths.append(combined_pdf_path)
+                logger.info(f"  Exported all_films_combined.pdf as raster (Halftone)")
+            else:
+                export_vector_pdf(
+                    masks=ink_masks_combined,  # Inverted masks for correct polarity
+                    colors=all_colors_for_pdf,
+                    color_names=all_names_for_pdf,
+                    output_path=Path(combined_pdf_path),
+                    dpi=args.dpi,
+                    smooth_factor=eff_smooth,
+                    corner_threshold=eff_corner,
+                    no_vector_blur=eff_no_blur,
+                    image_class=first_film.image_class if first_film else 'auto'
+                )
+                exported_paths.append(combined_pdf_path)
+                logger.info(f"  Exported all_films_combined.pdf (Smooth: {eff_smooth})")
         
     except Exception as e:
         logger.error(f"  [Export] CRITICAL ERROR: {e}", exc_info=True)
@@ -1344,8 +1361,29 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dpi", type=int, default=300, help="Output DPI (industry standard for screen printing)")
     parser.add_argument("--halftone", action="store_true", help="Enable halftone mode")
+    parser.add_argument(
+        '--halftone-mode',
+        type=str,
+        choices=['raster', 'vector'],
+        default='raster',
+        dest='halftone_mode',
+        help='Halftone engine: raster (AM screening, recommended for photos) | vector (dot list)'
+    )
+    parser.add_argument(
+        '--halftone-angle',
+        type=float,
+        default=45.0,
+        dest='halftone_angle',
+        help='Screen angle in degrees (default: 45.0)'
+    )
     parser.add_argument("--lpi", type=int, default=65, help="Halftone LPI (lines per inch)")
-    parser.add_argument("--dot-shape", choices=["round", "square", "ellipse"], default="round", help="Halftone dot shape")
+    parser.add_argument(
+        "--dot-shape",
+        choices=["round", "ellipse", "euclidean", "line"],
+        default="round",
+        dest="dot_shape",
+        help="Halftone dot shape function (for raster mode)"
+    )
     parser.add_argument("--detail-level", choices=["high", "medium", "low"], default="medium")
     parser.add_argument("--clean", action="store_true", help="Apply edge cleaning")
     parser.add_argument("--validate-strokes", action="store_true", help="Validate stroke widths")
@@ -1468,13 +1506,13 @@ def main() -> int:
     img_type = getattr(args, 'image_type', 'auto')
 
     if img_type == 'simple':
-        args.smoothing_factor = 0.15
-        args.corner_threshold = 45.0
+        args.smoothing_factor = 0.0
+        args.corner_threshold = 95.0
         args.global_threshold = 160
         logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'mixed':
         args.smoothing_factor = 0.20
-        args.corner_threshold = 45.0
+        args.corner_threshold = 120.0
         args.global_threshold = 200
         logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
     elif img_type == 'complex':
@@ -1570,8 +1608,12 @@ def main() -> int:
             args._analysis_confidence = analysis.confidence
 
             # Auto-detect colors if not specified
-            if args.colors == 0:
-                args.colors = analysis.num_colors  # 0 = auto-detect
+            if args.colors <= 1 and analysis.image_class.value in ['artwork', 'photo']:
+                args.colors = max(analysis.num_colors, (analysis.color_count_estimate if hasattr(analysis, 'color_count_estimate') else 4))
+                logger.info(f"[Fixed] Auto-adjusted colors to {args.colors} based on SmartAnalysis (Override from 1)")
+            elif args.colors == 0:
+                args.colors = analysis.num_colors  # Use SmartAnalyzer estimate
+                logger.info(f"[Connectivity] SmartAnalyzer recommends {args.colors} colors. Applied.")
 
             # ── Phase 4 guard: if ImageClassifier says LOGO with high confidence,
             #    force skip_halftone so edge_aware_binarizer is never applied
@@ -1666,10 +1708,10 @@ def main() -> int:
             # Zero smoothing = pure polygonal output (visible pixel staircases)
             # Industry standard: moderate Bezier smoothing even for sharp logos
             if _route_class == 'text_logo':
-                eff_smooth = 0.35  # Increased from 0.15 to 0.35 for better anti-aliasing
-                eff_corner = 120.0  # Moderate corner preservation
+                eff_smooth = 0.0  
+                eff_corner = 95.0  
                 eff_potrace = True  # Use potrace-style processing
-                logger.info('[Cache] TEXT_LOGO pipeline: smoothing=0.35, corners=120.0, potrace=True')
+                logger.info('[Cache] TEXT_LOGO pipeline: smoothing=0.0, corners=95.0, potrace=True')
             elif cli_smooth is not None and cli_smooth > 0:
                 eff_smooth = cli_smooth
                 eff_corner = getattr(analysis_obj, 'corner_threshold', 150.0)

@@ -62,17 +62,19 @@ class SmartAnalyzer:
         
         # Phase 24: CRITICAL FIX - Deterministic Weighted Scoring (eliminates flip-flop)
         # Calculate final weighted score instead of rule-based overrides
+        color_norm = metrics['color_count_estimate'] / 8.0  # → 0.0 to 1.0
+
         final_text_score = (
             scores['text'] * 0.5 +      # Primary weight
             metrics['edge_density'] * 0.2 +   # Edge clarity
-            (8.0 - metrics['color_count_estimate']) * 0.05 +  # Color simplicity
+            (1.0 - color_norm) * 0.05 +  # Color simplicity
             (1.0 - metrics['mid_ratio']) * 0.15 +  # Bimodality
             (1.0 - metrics['gradient_ratio']) * 0.1   # Low gradients
         )
         
         final_artwork_score = (
             scores['artwork'] * 0.4 +
-            metrics['color_count_estimate'] * 0.05 +  # Multiple colors
+            color_norm * 0.05 +  # Multiple colors
             metrics['mid_ratio'] * 0.2 +           # Mid-tones present
             metrics['gradient_ratio'] * 0.15 +          # Moderate gradients
             metrics['sat_mean'] * 0.1 +               # Some saturation
@@ -83,7 +85,7 @@ class SmartAnalyzer:
             scores['photo'] * 0.4 +
             metrics['gradient_ratio'] * 0.3 +           # High gradients
             metrics['mid_ratio'] * 0.2 +               # Many mid-tones
-            metrics['color_count_estimate'] * 0.05 +        # Many colors
+            color_norm * 0.05 +        # Many colors
             metrics['sat_mean'] * 0.05                # High saturation
         )
         
