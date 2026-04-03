@@ -155,9 +155,9 @@ class HalftoneGenerator:
 
     @staticmethod
     def _rasterize(dots: List[HalftoneDot], shape: tuple) -> np.ndarray:
-        """Render dot list with super-sampling for smooth anti-aliased edges."""
+        """Render dot list with super-sampling then hard 1-bit threshold for screen printing film."""
         h, w = shape
-        scale = 2  # 2x super-sampling
+        scale = 2  # 2x super-sampling for smooth dot edges
         
         # Draw on 2x canvas
         big = np.zeros((h * scale, w * scale), dtype=np.uint8)
@@ -170,9 +170,13 @@ class HalftoneGenerator:
                 x2, y2 = min(big.shape[1] - 1, cx + r), min(big.shape[0] - 1, cy + r)
                 big[y1:y2 + 1, x1:x2 + 1] = 255
             else:
-                # CRITICAL FIX: Use LINE_AA for smooth anti-aliased circles
                 cv2.circle(big, (cx, cy), r, 255, -1, cv2.LINE_AA)
         
         # Downscale with area averaging — produces natural anti-aliasing
         out = cv2.resize(big, (w, h), interpolation=cv2.INTER_AREA)
+        
+        # HARD 1-BIT THRESHOLD: Screen printing film needs pure black/white
+        # No gray values allowed — the screen is either open or blocked
+        _, out = cv2.threshold(out, 127, 255, cv2.THRESH_BINARY)
+        
         return out

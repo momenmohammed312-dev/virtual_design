@@ -57,11 +57,11 @@ def fit_bezier_to_contour(
     # Adaptive epsilon: scaled up to eliminate staircase artifacts at all sizes
     # Higher values = more simplification = smoother curves
     if area < 200:  # Very small areas (eyes, dots)
-        epsilon = max(2.0, perimeter * 0.008)  # Was: 1.0, 0.003
+        epsilon = max(2.0, perimeter * 0.015)  # Was: 0.008
     elif area < 1000:  # Medium areas (text strokes)
-        epsilon = max(3.0, perimeter * 0.010)  # Was: 2.0, 0.004
+        epsilon = max(3.0, perimeter * 0.020)  # Was: 0.010
     else:  # Large areas (shapes, fills)
-        epsilon = max(4.0, perimeter * 0.012)  # Was: 3.0, 0.005
+        epsilon = max(4.0, perimeter * 0.025)  # Was: 0.012
     
     simplified = cv2.approxPolyDP(contour, epsilon, True)
     pts = simplified.reshape(-1, 2).astype(float)
@@ -114,6 +114,7 @@ def export_vector_pdf(
     min_contour_area: int = 50,
     page_size: str = 'A4',
     no_vector_blur: bool = False,
+    image_class: str = 'auto',
 ) -> Path:
     """
     تصدير كل الأفلام في PDF واحد متعدد الصفحات بجودة vector حقيقية.
@@ -221,13 +222,19 @@ def export_vector_pdf(
         elif mask_h > 500:
             blur_k = 5
         
-        # SMART PREPROCESSING: Adaptive approach based on content type
-        is_text_logo_proxy = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
+        # SMART PREPROCESSING: Use explicit image_class for routing
+        # Fallback to value-based detection only when image_class is 'auto'
+        if image_class == 'text_logo':
+            is_text_logo = True
+        elif image_class in ('artwork', 'photo'):
+            is_text_logo = False
+        else:
+            is_text_logo = (smooth_factor <= 1e-6) or (corner_threshold <= 20.0)
         
-        if not is_text_logo_proxy:
+        if not is_text_logo:
             # CORRECT ORDER: blur FIRST, then threshold
             bw = cv2.medianBlur(bw, blur_k)
-            bw = cv2.GaussianBlur(bw, (blur_k, blur_k), 0.5)
+            bw = cv2.GaussianBlur(bw, (blur_k, blur_k), blur_k / 6.0)
             
             # Morphological smoothing: open then close to clean edges
             morph_k = max(3, blur_k - 2)
@@ -240,14 +247,16 @@ def export_vector_pdf(
         else:
             # For TEXT_LOGO: light smoothing to remove staircase from upscaling
             # but keep edges sharp enough for text readability
-            if blur_k > 3:
-                bw = cv2.medianBlur(bw, 3)  # Always use k=3 for text_logo
+            bw = cv2.medianBlur(bw, 5)
+            bw = cv2.GaussianBlur(bw, (5, 5), 0.8)
             bw = ((bw > 127).astype(np.uint8) * 255)
 
         
-        # 2. Contour Extraction: CHAIN_APPROX_NONE for maximum precision
+        # 2. Contour Extraction: TC89_L1 for built-in staircase smoothing
+        # Unlike CHAIN_APPROX_NONE (every pixel), TC89_L1 applies Teh-Chin
+        # chain approximation which naturally smooths pixel staircases
         contours, hierarchy = cv2.findContours(
-            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE
+            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_TC89_L1
         )
         
         # coordinate transform (defined once, outside the loop)

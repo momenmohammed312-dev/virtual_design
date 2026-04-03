@@ -322,9 +322,11 @@ def step1_load_image(input_path: str) -> np.ndarray:
             scale_factor = target_width / w
             new_w = int(w * scale_factor)
             new_h = int(h * scale_factor)
-            # Use LANCZOS4 for high-quality upscaling that preserves edges
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-            logger.info(f"Upscaled for analysis: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [LANCZOS4]")
+            # Use CUBIC for smoother upscaling that reduces aliasing
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+            # Add GaussianBlur to smooth staircase artifacts from large upscaling
+            image = cv2.GaussianBlur(image, (3, 3), 0)
+            logger.info(f"Upscaled for analysis: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [CUBIC+GaussianBlur]")
         
         return image
     except Exception as e:
@@ -656,9 +658,10 @@ def step7_validate_strokes(masks: list, args: argparse.Namespace) -> list:
         
         if thin_found:
             logger.warning(f"  Mask {i+1}: thin strokes detected (<{min_stroke_px}px), auto-thickening")
-            # Dynamic iterations based on how thin it is
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             mask = cv2.dilate(mask, kernel, iterations=1)
+            # Gentle smoothing after dilation to prevent amplifying staircase artifacts
+            mask = cv2.medianBlur(mask, 5)  # Increased from 3 to 5 for better aliasing removal
         
         result.append(mask)
     
@@ -718,6 +721,13 @@ def step7_final_binarization(masks: list, args: argparse.Namespace) -> list:
                 binarizer._method_cache = {}  # Force fresh method selection per mask
                 image_class = getattr(args, '_image_class', None)
                 image_class_val = image_class.value if image_class and hasattr(image_class, 'value') else 'auto'
+                
+                # --- CRITICAL FIX: Force higher smoothing for text_logo and logo classes ---
+                if image_class_val in ['text_logo', 'logo']:
+                    args.smoothing_factor = max(getattr(args, 'smoothing_factor', 0.25), 0.35)
+                    logger.info(f"  [Smoothing Fix] Forced smoothing_factor={args.smoothing_factor} for {image_class_val}")
+                # --------------------------------------------------------------------
+                
                 binary = binarizer.binarize(m, method='auto', image_class=image_class_val, 
                                           global_threshold=getattr(args, 'global_threshold', 200))
             else:
@@ -967,9 +977,14 @@ def step8_registration_marks(masks: list, output_dir: str, args: argparse.Namesp
             # Use raw mask directly to preserve sharpest detail
             processed_mask = raw_mask.copy()
             
-            # Simple threshold to ensure it's still binary after morph
-            _, processed_mask = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
-            logger.info(f"  Applied sharp artwork preparation (morph only) to mask {idx+1}")
+            # Only re-threshold if mask has more than 2 unique values (not already binary)
+            # This preserves any anti-aliasing or sub-pixel smoothing from prior stages
+            unique_vals = np.unique(processed_mask)
+            if len(unique_vals) > 2:
+                _, processed_mask = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
+                logger.info(f"  Applied re-thresholding to non-binary mask {idx+1}")
+            else:
+                logger.info(f"  Mask {idx+1} already binary, skipping re-threshold to preserve edge smoothing")
         else:
             processed_mask = raw_mask.copy()
 
@@ -1209,7 +1224,8 @@ def step9_export(
                         dpi=args.dpi,
                         smooth_factor=eff_smooth,
                         corner_threshold=eff_corner,
-                        no_vector_blur=eff_no_blur
+                        no_vector_blur=eff_no_blur,
+                        image_class=film.image_class
                     )
                     exported_paths.append(pdf_filepath)
                 
@@ -1243,7 +1259,8 @@ def step9_export(
                 dpi=args.dpi,
                 smooth_factor=eff_smooth,
                 corner_threshold=eff_corner,
-                no_vector_blur=eff_no_blur
+                no_vector_blur=eff_no_blur,
+                image_class=first_film.image_class if first_film else 'auto'
             )
             exported_paths.append(combined_pdf_path)
             logger.info(f"  Exported all_films_combined.pdf (Smooth: {eff_smooth})")
@@ -1592,12 +1609,14 @@ def main() -> int:
             # Determine effective smoothing factor (Senior Standard hierarchy)
             cli_smooth = getattr(args, 'smoothing_factor', None)
             
-            # CRITICAL FIX: Disable smoothing for TEXT_LOGO (Industry Standard)
+            # CRITICAL FIX: Use higher smoothing for TEXT_LOGO to eliminate aliasing
+            # Zero smoothing = pure polygonal output (visible pixel staircases)
+            # Industry standard: moderate Bezier smoothing even for sharp logos
             if _route_class == 'text_logo':
-                eff_smooth = 0.0  # Sharp edges for logos/text
-                eff_corner = 10.0  # Sharp corners
+                eff_smooth = 0.35  # Increased from 0.15 to 0.35 for better anti-aliasing
+                eff_corner = 120.0  # Moderate corner preservation
                 eff_potrace = True  # Use potrace-style processing
-                logger.info('[Cache] TEXT_LOGO pipeline: smoothing=0.0, corners=10.0, potrace=True')
+                logger.info('[Cache] TEXT_LOGO pipeline: smoothing=0.35, corners=120.0, potrace=True')
             elif cli_smooth is not None and cli_smooth > 0:
                 eff_smooth = cli_smooth
                 eff_corner = getattr(analysis_obj, 'corner_threshold', 150.0)
