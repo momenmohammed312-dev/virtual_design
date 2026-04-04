@@ -7,7 +7,6 @@ import 'package:get/get.dart';
 import 'package:open_file/open_file.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/enums/app_enums.dart';
-import '../../core/utils/image_processor.dart';
 import '../../core/utils/sound_manager.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
@@ -138,6 +137,9 @@ class PreviewController extends GetxController {
   void onClose() {
     // Final Cleanup - Only if we are NOT in a situation where we might need them again soon
     // FATAL #7 FIX: Be conservative with cleanup to avoid "File not found" during rapid tuning
+    /* 
+    // 🔥 Removed cleanup here to allow user to go back to Setup and re-process without "File not found" error.
+    // Cleanup should be handled at a higher level (e.g. app exit or new job start).
     if (imagePath.value.contains('vd_normalized_') && !isRegenerating.value) {
       Get.log(
           '🧹 PreviewController.onClose: Cleaning up normalized image ${imagePath.value}');
@@ -149,6 +151,7 @@ class PreviewController extends GetxController {
           '🧹 PreviewController.onClose: Cleaning up original raw image ${originalPath.value}');
       ImageProcessor.cleanupTempFile(originalPath.value);
     }
+    */
     filmLabelController.dispose();
     transformationController.dispose();
     super.onClose();

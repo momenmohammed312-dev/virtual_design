@@ -81,9 +81,43 @@ class EdgeAwareBinarizer:
                 
                 # Add the component to result
                 result[labels == i] = 0  # Make it black
-        
         self.logger.info(f"[{request_id}] Edge-Aware Binarization completed")
         return result
+    
+    def get_quality_metrics(self, original: np.ndarray, binary: np.ndarray) -> Dict[str, float]:
+        """
+        Calculate quality metrics for the binarization result
+        """
+        if original is None or binary is None:
+            return {"edge_preservation": 0.0, "noise_reduction": 0.0}
+            
+        # Rescale for faster processing
+        h, w = original.shape[:2]
+        scale = min(1.0, 500.0 / max(h, w))
+        orig_s = cv2.resize(original, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        bin_s = cv2.resize(binary, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+        
+        # Edges of original
+        orig_edges = cv2.Canny(orig_s, 50, 150)
+        # Edges of binary
+        bin_edges = cv2.Canny(bin_s, 50, 150)
+        
+        # Edge preservation: how many original edge pixels are preserved in binary edges
+        intersection = cv2.bitwise_and(orig_edges, bin_edges)
+        edge_pres = np.count_nonzero(intersection) / max(1, np.count_nonzero(orig_edges))
+        
+        # Noise reduction: estimate based on small components in binary
+        num, _, stats, _ = cv2.connectedComponentsWithStats(cv2.bitwise_not(bin_s), connectivity=8)
+        small_comp_ratio = np.sum(stats[1:, cv2.CC_STAT_AREA] < 10) / max(1, num-1) if num > 1 else 0.0
+        noise_red = 1.0 - small_comp_ratio
+        
+        return {
+            "edge_preservation": float(edge_pres),
+            "noise_reduction": float(noise_red)
+        }
+
+    def get_health_summary(self) -> Dict[str, Any]:
+        return {"status": "ok", "method": "edge_aware"}
     
     def auto_threshold(self, image: np.ndarray, preferred_method: str = 'auto', **kwargs) -> np.ndarray:
         """

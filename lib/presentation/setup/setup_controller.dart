@@ -26,9 +26,16 @@ class SetupController extends GetxController {
   final RxBool removeBackground = false.obs;
   final RxBool autoUpscale = false.obs;
 
-  final RxDouble smoothingFactor = 0.25.obs;
-  final RxDouble cornerThreshold = 45.0.obs;
-  final RxInt smoothingSlider = 35.obs;
+  final RxDouble globalThreshold = 127.0.obs; // 0-255 (Magic solution)
+  final RxDouble smoothingFactor = 35.0.obs; // 0-100%
+  final RxDouble cornerThreshold = 45.0.obs; // 15-150°
+  final RxInt smoothingSlider = 35.obs; // Legacy
+
+  // Track if user manually moved these sliders
+  bool smoothingAdjustmentMade = false;
+  bool cornerAdjustmentMade = false;
+  bool thresholdAdjustmentMade = false;
+
 
   // Paper size
   final RxDouble paperWidthCm = 21.0.obs;
@@ -87,22 +94,26 @@ class SetupController extends GetxController {
     ever(selectedImageType, (ps.ImageType type) {
       switch (type) {
         case ps.ImageType.simple:
-          smoothingFactor.value = 0.25;
+          smoothingFactor.value = 25.0;
           cornerThreshold.value = 45.0;
           break;
         case ps.ImageType.mixed:
-          smoothingFactor.value = 0.25;
+          smoothingFactor.value = 25.0;
           cornerThreshold.value = 45.0;
           break;
         case ps.ImageType.complex:
-          smoothingFactor.value = 0.30;
+          smoothingFactor.value = 30.0;
           cornerThreshold.value = 50.0;
           break;
         case ps.ImageType.auto:
         default:
-          // In Auto mode, keep user-set values (do nothing)
+          smoothingFactor.value = 35.0;
+          cornerThreshold.value = 45.0;
           break;
       }
+      // Reset adjustment flags when image type changes to allow engine defaults
+      smoothingAdjustmentMade = false;
+      cornerAdjustmentMade = false;
     });
   }
 
@@ -144,9 +155,13 @@ class SetupController extends GetxController {
     colorCorrection.value = false;
     adaptiveThreshold.value = false;
     selectedImageType.value = ps.ImageType.auto;
-    smoothingFactor.value = 0.25;
+    globalThreshold.value = 127.0;
+    smoothingFactor.value = 35.0;
     cornerThreshold.value = 45.0;
     smoothingSlider.value = 35;
+    smoothingAdjustmentMade = false;
+    cornerAdjustmentMade = false;
+    thresholdAdjustmentMade = false;
     update();
   }
 
@@ -214,9 +229,10 @@ class SetupController extends GetxController {
         paperHeightCm: paperHeightCm.value,
         adaptiveThreshold: adaptiveThreshold.value,
         imageType: selectedImageType.value,
-        smoothingFactor: smoothingFactor.value,
-        cornerThreshold: cornerThreshold.value,
-        smoothingSlider: smoothingSlider.value,
+        globalThreshold: thresholdAdjustmentMade ? globalThreshold.value : 0.0,
+        smoothingFactor: smoothingAdjustmentMade ? smoothingFactor.value : -1.0,
+        cornerThreshold: cornerAdjustmentMade ? cornerThreshold.value : -1.0,
+        smoothingSlider: -1, // Use independent smoothingFactor instead
       );
 
       Get.log(

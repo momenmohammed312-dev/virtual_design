@@ -14,10 +14,10 @@ class SetupBinding extends Bindings {
       processor: Get.find<PythonProcessor>(),
     ));
 
-    // Controller
-    Get.lazyPut(
-      () => SetupController(repository: Get.find<ProcessingRepository>()),
-      fenix: true,
+    // Controller - No longer permanent to ensure fresh state on new jobs.
+    // Hive already persists settings if needed.
+    Get.put(
+      SetupController(repository: Get.find<ProcessingRepository>()),
     );
   }
 }

@@ -74,7 +74,7 @@ class Binarizer:
                 if self.evaluate_result(res, gray, 'auto', orig_edges, orig_edge_px)[0]: return res
 
         # 3. TRIAL
-        candidates = self._get_candidates(kwargs.get('image_class', 'auto'), stats['std'], preferred_method)
+        candidates = self._get_candidates(kwargs.get('image_class', 'auto'), stats['std'], preferred_method, **kwargs)
         results, timings = [], {}
         for cmd in candidates:
             t_s = time.time()
@@ -128,7 +128,7 @@ class Binarizer:
             "tier_distribution": {k: round(v / total, 3) for k, v in self._health["tiers"].items()}
         }
 
-    def _get_candidates(self, ic: str, std: float, preferred: str) -> List[str]:
+    def _get_candidates(self, ic: str, std: float, preferred: str, **kwargs) -> List[str]:
         if preferred != 'auto': return [preferred]
         if std > 60: c = ['otsu', 'triangle']
         elif std < 30: c = ['adaptive_gauss'] if ic != 'text_logo' else ['otsu']
@@ -136,7 +136,10 @@ class Binarizer:
 
         if ic == 'artwork' and std < 60:
             c = ['sauvola'] + [x for x in c if x != 'sauvola']
-        c.append('global_127')
+        
+        # Use user-provided global threshold if available
+        gt = kwargs.get('global_threshold', 127)
+        c.append(f'global_{gt}')
         return c
 
     def _handle_debug_export(self, ddir: str, rid: str, gray: np.ndarray, res: np.ndarray, log: dict, conf: float, warnings: list):

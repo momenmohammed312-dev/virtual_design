@@ -734,10 +734,8 @@ def step7_final_binarization(masks: list, args: argparse.Namespace) -> list:
                 image_class = getattr(args, '_image_class', None)
                 image_class_val = image_class.value if image_class and hasattr(image_class, 'value') else 'auto'
                 
-                # --- CRITICAL FIX: Force higher smoothing for text_logo and logo classes ---
-                if image_class_val in ['text_logo', 'logo']:
-                    args.smoothing_factor = max(getattr(args, 'smoothing_factor', 0.25), 0.35)
-                    logger.info(f"  [Smoothing Fix] Forced smoothing_factor={args.smoothing_factor} for {image_class_val}")
+                # --- CRITICAL FIX: Removed hardcoded smoothing override ---
+                # image_class_val in ['text_logo', 'logo'] now respects args.smoothing_factor
                 # --------------------------------------------------------------------
                 
                 binary = binarizer.binarize(m, method='auto', image_class=image_class_val, 
@@ -1178,8 +1176,8 @@ def step9_export(
                     exporter.export_svg(
                         ink_mask, svg_filename,
                         smooth_factor=eff_smooth,
-                        corner_threshold=getattr(args, 'corner_threshold', 150.0),
-                        no_vector_blur=getattr(args, 'no_vector_blur', False)
+                        corner_threshold=eff_corner,
+                        no_vector_blur=eff_no_blur
                     )
                     exported_paths.append(svg_filepath)
                     logger.info(f"  Exported {svg_filename} (SVG Vector)")
@@ -1438,8 +1436,8 @@ def parse_args() -> argparse.Namespace:
     
     # Advanced Tuning (Phase 8 Senior Optimizations)
     parser.add_argument("--global-threshold", type=int, default=200, help="Global threshold for solid masks (0-255)")
-    parser.add_argument("--smoothing-factor", type=float, default=0.3, help="Bezier smoothing factor (0-1.0)")
-    parser.add_argument("--corner-threshold", type=float, default=45.0, help="Angle threshold to preserve sharp corners (degrees)")
+    parser.add_argument("--smoothing-factor", type=float, default=-1.0, help="Bezier smoothing factor (0-1.0, -1=auto)")
+    parser.add_argument("--corner-threshold", type=float, default=-1.0, help="Angle threshold to preserve sharp corners (degrees, -1=auto)")
     parser.add_argument("--noise-removal", type=int, default=3, help="Minimum contour area to keep (pixels)")
     parser.add_argument("--auto-crop", action="store_true", help="Auto-crop image before processing")
     parser.add_argument("--adaptive-threshold", action="store_true", help="Use adaptive/Otsu thresholding instead of global")
@@ -1503,42 +1501,43 @@ def main() -> int:
     start_time = time.time()
     _check_modules()
 
-    # ═══ Mapping Slider to Parameters ═══
-    if getattr(args, 'smoothing_slider', None) is not None:
-        from utils.validators import Validators
-        args.smoothing_factor, args.epsilon = Validators.slider_to_smoothing_params(args.smoothing_slider)
-        logger.info(f"[Slider] Unified mapping: {args.smoothing_slider} -> factor={args.smoothing_factor}, epsilon={args.epsilon}")
+    # ═══ Mapping Slider to Parameters (LEGACY - Disabled for explicit controls) ═══
+    # if getattr(args, 'smoothing_slider', None) not in [None, -1]:
+    #     from utils.validators import Validators
+    #     args.smoothing_factor, args.epsilon = Validators.slider_to_smoothing_params(args.smoothing_slider)
 
-    # ═══ Auto-set parameters based on image type ═══
-    # When image_type is simple/mixed/complex, override all related params unconditionally.
-    # When image_type is auto, respect CLI-provided values or defaults.
+    # ═══ Auto-set parameters based on image type (Presets) ═══
+    # When image_type is simple/mixed/complex, we provide starting points for -1.0 values.
     img_type = getattr(args, 'image_type', 'auto')
 
     if img_type == 'simple':
-        args.smoothing_factor = 0.0
-        args.corner_threshold = 95.0
-        args.global_threshold = 160
-        logger.info("[ImageType] Simple (text/logo): smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
+        if args.smoothing_factor == -1.0: args.smoothing_factor = 25.0
+        if args.corner_threshold == -1.0: args.corner_threshold = 45.0
+        if args.global_threshold == 0.0: args.global_threshold = 160
     elif img_type == 'mixed':
-        args.smoothing_factor = 0.20
-        args.corner_threshold = 120.0
-        args.global_threshold = 200
-        logger.info("[ImageType] Mixed: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
+        if args.smoothing_factor == -1.0: args.smoothing_factor = 35.0
+        if args.corner_threshold == -1.0: args.corner_threshold = 85.0
+        if args.global_threshold == 0.0: args.global_threshold = 180
     elif img_type == 'complex':
-        args.smoothing_factor = 0.25
-        args.corner_threshold = 50.0
-        args.global_threshold = 200
-        logger.info("[ImageType] Complex: smooth=%.2f, corner=%.1f°, threshold=%d" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
-    else:
-        # Auto: keep CLI-provided values or defaults (smoothing_factor, corner_threshold, global_threshold)
-        logger.info("[ImageType] Auto: using CLI/default parameters (smooth=%.2f, corner=%.1f°, threshold=%d)" % (args.smoothing_factor, args.corner_threshold, args.global_threshold))
+        if args.smoothing_factor == -1.0: args.smoothing_factor = 45.0
+        if args.corner_threshold == -1.0: args.corner_threshold = 120.0
+        if args.global_threshold == 0.0: args.global_threshold = 200
 
-    # Safety clamp: keep within UI semantics
-    try:
-        args.corner_threshold = float(args.corner_threshold)
-    except Exception:
-        args.corner_threshold = 45.0
-    args.corner_threshold = max(0.0, min(90.0, args.corner_threshold))
+    # ─── USER OVERRIDE TRACKING ───
+    # We detect if the user passed manual values via the CLI.
+    # We use -1.0 as the 'unset' signal.
+    # Note: args.smoothing_factor here might be 0-100 or 0-1.
+    
+    # [Senior Scaling] Handle 0-100 range from Flutter
+    if args.smoothing_factor > 1.0:
+        args.smoothing_factor = (args.smoothing_factor / 100.0) * 1.2 # 1.2x boost for strong anti-alias
+        logger.info(f"[ManualParam] Smoothing Factor (0-100 scale normalized + 1.2x boost): {args.smoothing_factor:.4f}")
+    elif 0 < args.smoothing_factor <= 1.0:
+        args.smoothing_factor *= 1.2 # still apply boost to 0-1 values if they are manual
+        logger.info(f"[ManualParam] Smoothing Factor (0-1 scale boosted 1.2x): {args.smoothing_factor:.4f}")
+
+    # Corner threshold: expand limit to 200 for expert users
+    args.corner_threshold = max(0.0, min(200.0, args.corner_threshold))
 
     logger.info("=" * 50)
     logger.info("Virtual Design — Silk Screen Processing Pipeline")
@@ -1605,10 +1604,34 @@ def main() -> int:
             analyzer = SmartAnalyzer()
             analysis = analyzer.analyze(image_orig, dpi=args.dpi)
 
-            # Override args based on analysis (only if user didn't set manually)
-            args.smoothing_factor = analysis.smoothing_factor
-            args.corner_threshold = analysis.corner_threshold
-            args.global_threshold = analysis.global_threshold
+
+            # Override args based on analysis (ONLY if user didn't set manually)
+            # -1.0 indicates that no manual value was passed from the UI
+            is_manual_tuning = False
+            if args.smoothing_factor <= 0: # -1.0 or 0.0 signals auto
+                args.smoothing_factor = analysis.smoothing_factor
+                logger.info(f"[SmartAnalyzer] Using auto smoothing_factor: {args.smoothing_factor}")
+            else:
+                is_manual_tuning = True
+                logger.info(f"[SmartAnalyzer] Honoring manual smoothing_factor: {args.smoothing_factor}")
+
+            if args.corner_threshold <= 0: # -1.0 signals auto
+                args.corner_threshold = analysis.corner_threshold
+                logger.info(f"[SmartAnalyzer] Using auto corner_threshold: {args.corner_threshold}")
+            else:
+                is_manual_tuning = True
+                logger.info(f"[SmartAnalyzer] Honoring manual corner_threshold: {args.corner_threshold}")
+
+            # Treat 0 (Flutter default) or 200 (argparse default) as "Auto"
+            if args.global_threshold in [0, 200]:
+                args.global_threshold = analysis.global_threshold
+                logger.info(f"[SmartAnalyzer] Using auto global_threshold: {args.global_threshold}")
+            else:
+                is_manual_tuning = True
+                logger.info(f"[SmartAnalyzer] Honoring manual global_threshold: {args.global_threshold}")
+            
+            if is_manual_tuning:
+                logger.info("[SmartAnalyzer] Manual override detected for: smoothing_factor, corner_threshold, or global_threshold.")
             # ❌ لا تـoverride الـ halftone — المستخدم هو اللي بيقرر solid أو halftone
             args.lpi = analysis.lpi
 
@@ -1727,28 +1750,29 @@ def main() -> int:
                 logger.warning(f"[CacheGuard] Color mismatch for mask {i+1} — using defaults.")
             
             # Determine effective smoothing factor (Senior Standard hierarchy)
-            cli_smooth = getattr(args, 'smoothing_factor', None)
+            # Use reconciled values from the router
+            eff_smooth = getattr(pipeline_result, 'effective_smoothing', args.smoothing_factor)
             
-            # CRITICAL FIX: Use higher smoothing for TEXT_LOGO to eliminate aliasing
-            # Zero smoothing = pure polygonal output (visible pixel staircases)
-            # Industry standard: moderate Bezier smoothing even for sharp logos
-            if _route_class == 'text_logo':
+            # --- PHASE 25: UI SCALE ADAPTATION (Already handled in main() for manual, but ensure consistency) ---
+            # If eff_smooth is from auto-analysis, it will be 0.1-0.5. No further scaling needed here.
+            
+            eff_corner = args.corner_threshold
+            eff_no_blur = getattr(args, 'no_vector_blur', False) # UI choice for "sharp text"
+            
+            # CRITICAL ADAPTATION: Refine for TEXT_LOGO if not manually overridden
+            # We detect manual adjustment via the CLI argument vs analysis result.
+            has_manual_smooth = (args.smoothing_factor > 0 and any(a.startswith('--smoothing-factor') for a in sys.argv))
+            has_manual_corner = (args.corner_threshold > 0 and any(a.startswith('--corner-threshold') for a in sys.argv))
+
+            if _route_class == 'text_logo' and not has_manual_smooth and not has_manual_corner:
                 eff_smooth = 0.0  
                 eff_corner = 95.0  
                 eff_potrace = True  # Use potrace-style processing
-                logger.info('[Cache] TEXT_LOGO pipeline: smoothing=0.0, corners=95.0, potrace=True')
-            elif cli_smooth is not None and cli_smooth > 0:
-                eff_smooth = cli_smooth
-                eff_corner = getattr(analysis_obj, 'corner_threshold', 150.0)
-                eff_potrace = getattr(analysis_obj, 'use_potrace_style', False)
-            elif analysis_obj is not None:
-                eff_smooth = getattr(analysis_obj, 'smoothing_factor', 0.15)
-                eff_corner = getattr(analysis_obj, 'corner_threshold', 150.0)
-                eff_potrace = getattr(analysis_obj, 'use_potrace_style', False)
+                logger.info('[Cache] TEXT_LOGO auto-defaults: smoothing=0.0, corners=95.0, potrace=True')
+                eff_no_blur = True
             else:
-                eff_smooth = 0.15
-                eff_corner = 150.0
-                eff_potrace = False
+                eff_potrace = eff_no_blur
+                logger.info(f'[Cache] Effective params: smooth={eff_smooth:.4f}, corner={eff_corner:.1f}, no_blur={eff_no_blur}')
             
             cache.films.append(LockedFilm(
                 final_mask=mask,

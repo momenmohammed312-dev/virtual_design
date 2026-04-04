@@ -91,22 +91,11 @@ class AntiAliasPreserver:
                 lab[:, :, 0] = lut[lab[:, :, 0]]
                 img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-        # 3. Bilateral filter (edge-preserving denoise)
+        # 3. Edge-preserving smoothing (Lighter alternative to bilateral)
         if cfg.use_bilateral:
-            if is_gray:
-                img = cv2.bilateralFilter(
-                    img,
-                    d=cfg.bilateral_d,
-                    sigmaColor=cfg.bilateral_sigma_color,
-                    sigmaSpace=cfg.bilateral_sigma_space,
-                )
-            else:
-                img = cv2.bilateralFilter(
-                    img,
-                    d=cfg.bilateral_d,
-                    sigmaColor=cfg.bilateral_sigma_color,
-                    sigmaSpace=cfg.bilateral_sigma_space,
-                )
+            # Use small GaussianBlur instead of memory-heavy bilateralFilter
+            # for high-res images to prevent OutOfMemoryError
+            img = cv2.GaussianBlur(img, (3, 3), 0)
 
         # 4. Subpixel Gaussian smoothing
         ksize = cfg.gaussian_ksize

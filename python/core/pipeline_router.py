@@ -237,17 +237,11 @@ class PipelineRouter:
                 # FIXED: Don't add empty mask - skip it entirely (BUG-03 fix)
                 continue 
 
-        # Task 18 override: cap smoothing for artwork
-        # 🔥 CRITICAL FIX: Remove harsh capping for 1-color user choice
-        user_forced_1color = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
-        if user_forced_1color:
-            # Don't cap for user 1-color choice - respect user smoothing
-            effective_smooth = args.smoothing_factor
-            logger.info(f'[Router] User 1-color - respecting smoothing: {effective_smooth}')
-        else:
-            # Apply capping for auto-detected cases
-            effective_smooth = min(args.smoothing_factor, 0.25) if not args.halftone else 0.0
-            logger.info(f'[Router] Artwork smoothing capped: {args.smoothing_factor} -> {effective_smooth}')
+        # --- REAL UI CONTROL: Always respect smoothing_factor from args ---
+        # It's already been reconciled in main.py (Analysis vs Manual)
+        effective_smooth = args.smoothing_factor
+        logger.info(f'[Router] Artwork - using smoothing: {effective_smooth}')
+        # -----------------------------------------------------------------
         
         return PipelineResult(
             masks=processed_masks,

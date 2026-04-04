@@ -56,9 +56,9 @@ def _apply_upscale_if_needed(img: np.ndarray) -> np.ndarray:
     - MEMORY_SAFE_MP: 8.0 MP (Hard limit on total pixels)
     - TARGET_MIN_DIM: 1200 (Minimum dimension target for analysis)
     """
-    TARGET_MIN_DIM  = 1200
-    ABSOLUTE_MAX_PX = 3000
-    MEMORY_SAFE_MP  = 8.0
+    TARGET_MIN_DIM  = 1000
+    ABSOLUTE_MAX_PX = 2500
+    MEMORY_SAFE_MP  = 6.0
 
     h, w = img.shape[:2]
 

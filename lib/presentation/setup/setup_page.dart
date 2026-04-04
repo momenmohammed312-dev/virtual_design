@@ -66,6 +66,34 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Sync UI local state with Controller (The source of truth)
+    final controller = Get.find<SetupController>();
+    selectedColorCount = controller.selectedColors.value;
+    switch (controller.selectedDetail.value) {
+      case ps.DetailLevel.high:
+        selectedDetailLevel = DetailLevel.high;
+        break;
+      case ps.DetailLevel.medium:
+        selectedDetailLevel = DetailLevel.medium;
+        break;
+      case ps.DetailLevel.low:
+        selectedDetailLevel = DetailLevel.low;
+        break;
+    }
+    lpi = controller.lpiValue.value;
+    strokeWidth = controller.strokeWidth.value;
+    printQuality = controller.printQuality.value;
+    autoUpscale = controller.autoUpscale.value;
+    removeBackground = controller.removeBackground.value;
+    edgeEnhancement = controller.edgeEnhancement.value;
+    colorCorrection = controller.colorCorrection.value;
+    adaptiveThreshold = controller.adaptiveThreshold.value;
+    showHalftoneSettings = controller.isHalftone.value;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
@@ -118,8 +146,10 @@ class _SetupPageState extends State<SetupPage> {
                               const SizedBox(height: 30),
                               _buildPrintFinishSection(controller),
                               const SizedBox(height: 30),
-                              _buildEdgeSmoothingSection(controller),
-                              const SizedBox(height: 30),
+                              if (!controller.isHalftone.value) ...[
+                                _buildSolidTuningSection(controller),
+                                const SizedBox(height: 30),
+                              ],
                               _buildStrokeWidthSection(),
                               const SizedBox(height: 30),
                               _buildSpecificationsSection(),
@@ -1054,14 +1084,21 @@ class _SetupPageState extends State<SetupPage> {
     );
   }
 
-  // ============= Stroke Width Section =============
-  Widget _buildEdgeSmoothingSection(SetupController controller) {
+  // ============= Solid Image Tuning Section =============
+  Widget _buildSolidTuningSection(SetupController controller) {
     return Container(
       padding: const EdgeInsets.all(25),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE5E7EB)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1082,59 +1119,185 @@ class _SetupPageState extends State<SetupPage> {
               ),
               const SizedBox(width: 12),
               const Text(
-                '5. Edge Smoothing',
+                '5. Solid Image Tuning',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
-              const Spacer(),
-              Obx(() => Text(
-                '${controller.smoothingSlider.value}%',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: primaryBlue,
-                ),
-              )),
             ],
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 10),
           const Text(
-            'Controls how much the engine smooths the edges of your design. '
-            'Higher values create smoother curves but may lose small details.',
-            style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+            'Fine-tune how the engine handles shapes and lines.',
+            style: TextStyle(fontSize: 13, color: Color(0xFF6B7281)),
           ),
-          const SizedBox(height: 20),
-          Obx(() => SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: primaryBlue,
-              inactiveTrackColor: primaryBlue.withOpacity(0.1),
-              thumbColor: primaryBlue,
-            ),
-            child: Slider(
-              value: controller.smoothingSlider.value.toDouble(),
-              min: 0,
-              max: 100,
-              divisions: 100,
-              label: '${controller.smoothingSlider.value}%',
-              onChanged: (val) {
-                controller.smoothingSlider.value = val.round();
-              },
-            ),
-          )),
+          const SizedBox(height: 25),
+
+          // 1. Edge Smoothing (0-100%)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Sharp', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              Text(
-                'Recommended (35%)', 
-                style: TextStyle(
-                  fontSize: 11, 
-                  color: Colors.grey.withOpacity(0.8),
-                  fontStyle: FontStyle.italic,
-                )
+              const Text(
+                'Edge Smoothing (Strength)',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
               ),
-              const Text('Smooth', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              Obx(() => Text(
+                    '${controller.smoothingFactor.value.toInt()}%',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: primaryBlue,
+                    ),
+                  )),
             ],
           ),
+          const SizedBox(height: 10),
+          const Text(
+            'Anti-alias boost: smooths out jagged pixelation on low-resolution logos.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
+          Obx(() => SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: primaryBlue,
+                  inactiveTrackColor: primaryBlue.withOpacity(0.1),
+                  thumbColor: primaryBlue,
+                ),
+                child: Slider(
+                  value: controller.smoothingFactor.value.toDouble(),
+                  min: 0,
+                  max: 100,
+                  divisions: 100,
+                  onChanged: (val) {
+                    controller.smoothingFactor.value = val;
+                    controller.smoothingAdjustmentMade = true;
+                  },
+                ),
+              )),
+
+          const SizedBox(height: 25),
+
+          // 2. Corner Threshold (15-200°)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Corner Sharpness',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+              Obx(() => Text(
+                    '${controller.cornerThreshold.value.toInt()}°',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: primaryBlue,
+                    ),
+                  )),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Higher values (150-200°) force sharper, more mechanical corner points.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
+          Obx(() => SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: primaryBlue,
+                  inactiveTrackColor: primaryBlue.withOpacity(0.1),
+                  thumbColor: primaryBlue,
+                ),
+                child: Slider(
+                  value: controller.cornerThreshold.value.clamp(15.0, 200.0),
+                  min: 15,
+                  max: 200,
+                  divisions: 185,
+                  onChanged: (val) {
+                    controller.cornerThreshold.value = val;
+                    controller.cornerAdjustmentMade = true;
+                  },
+                ),
+              )),
+          const SizedBox(height: 5),
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Rounded (15°)',
+                  style: TextStyle(fontSize: 11, color: Colors.grey)),
+              Text('Sharp Core (120°)',
+                  style: TextStyle(fontSize: 11, color: Colors.grey)),
+              Text('Ultra Sharp (200°)',
+                  style: TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+
+          const SizedBox(height: 35),
+          const Divider(),
+          const SizedBox(height: 20),
+
+          // 3. Global Threshold (0-255)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Global Threshold',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('Expert', style: TextStyle(fontSize: 10, color: Colors.orange, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+              Obx(() => Text(
+                    '${controller.globalThreshold.value.toInt()}',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange,
+                    ),
+                  )),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Magic solution: Control line thickness/weight by manual binarization.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          ),
+          Obx(() => SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: Colors.orange,
+                  inactiveTrackColor: Colors.orange.withOpacity(0.1),
+                  thumbColor: Colors.orange,
+                ),
+                child: Slider(
+                  value: controller.globalThreshold.value,
+                  min: 0,
+                  max: 255,
+                  divisions: 255,
+                  onChanged: (val) {
+                    controller.globalThreshold.value = val;
+                    controller.thresholdAdjustmentMade = true;
+                  },
+                ),
+              )),
+          const SizedBox(height: 10),
+          Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextButton.icon(
+                    onPressed: () {
+                      controller.globalThreshold.value = 127;
+                      controller.thresholdAdjustmentMade = true;
+                    }, 
+                    icon: const Icon(Icons.refresh, size: 14), 
+                    label: const Text('Reset to 127', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
         ],
       ),
     );
@@ -1592,128 +1755,7 @@ class _SetupPageState extends State<SetupPage> {
                     },
                   ),
                   const SizedBox(height: 16),
-                  // Smoothing Factor — Auto-config when not Auto mode
-                  Obx(() {
-                    final ctrl = Get.find<SetupController>();
-                    final isAuto =
-                        ctrl.selectedImageType.value == ps.ImageType.auto;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Smoothing Factor',
-                                style: TextStyle(fontSize: 14)),
-                            Text(
-                              ctrl.smoothingFactor.value.toStringAsFixed(2),
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: isAuto ? Colors.grey : Colors.green),
-                            ),
-                          ],
-                        ),
-                        if (isAuto)
-                          Slider(
-                            value: ctrl.smoothingFactor.value,
-                            min: 0.05,
-                            max: 0.50,
-                            divisions: 45,
-                            onChanged: (val) {
-                              ctrl.smoothingFactor.value = val;
-                            },
-                          )
-                        else
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8.0),
-                            child: Text(
-                              'Auto-configured based on image type',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.green,
-                                  fontStyle: FontStyle.italic),
-                            ),
-                          ),
-                      ],
-                    );
-                  }),
                   const SizedBox(height: 16),
-                  // Corner Threshold — Auto-config when not Auto mode
-                  Obx(() {
-                    final ctrl = Get.find<SetupController>();
-                    final isAuto =
-                        ctrl.selectedImageType.value == ps.ImageType.auto;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Corner Threshold (°)',
-                                style: TextStyle(fontSize: 14)),
-                            Text(
-                              '${ctrl.cornerThreshold.value.toInt()}°',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: isAuto ? Colors.grey : Colors.green),
-                            ),
-                          ],
-                        ),
-                        if (isAuto)
-                          Slider(
-                            value: ctrl.cornerThreshold.value,
-                            min: 0,
-                            max: 90,
-                            divisions: 90,
-                            onChanged: (val) {
-                              ctrl.cornerThreshold.value = val;
-                            },
-                          )
-                        else
-                          const Padding(
-                            padding: EdgeInsets.only(top: 8.0),
-                            child: Text(
-                              'Auto-configured based on image type',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.green,
-                                  fontStyle: FontStyle.italic),
-                            ),
-                          ),
-                      ],
-                    );
-                  }),
-                  const SizedBox(height: 16),
-                  // Corner Threshold Slider
-                  Obx(() => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text('Corner Threshold (°)',
-                                  style: TextStyle(fontSize: 14)),
-                              Text(
-                                  '${Get.find<SetupController>().cornerThreshold.value.toInt()}°',
-                                  style: const TextStyle(
-                                      fontSize: 12, color: Colors.grey)),
-                            ],
-                          ),
-                          Slider(
-                            value: Get.find<SetupController>()
-                                .cornerThreshold
-                                .value,
-                            min: 0,
-                            max: 90,
-                            divisions: 90,
-                            onChanged: (val) {
-                              Get.find<SetupController>()
-                                  .cornerThreshold
-                                  .value = val;
-                            },
-                          ),
-                        ],
-                      )),
                 ],
               ),
             ),

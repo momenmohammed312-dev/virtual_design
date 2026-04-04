@@ -126,16 +126,39 @@ def fit_bezier_to_contour(
     return commands
 
 
-def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False) -> np.ndarray:
+def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smooth_factor: float = 0.0) -> np.ndarray:
+    """
+    Prepares a binary mask for vector tracing.
+    1. Upscales by 2x for subpixel precision.
+    2. Optional Gaussian Blur to 'melt' pixelation artifacts (essential for small logos).
+    3. Re-binarizes to maintain sharp edges.
+    """
     # 1) upscale (subpixel support)
     bw = cv2.resize(mask, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_LINEAR)
 
-    if apply_blur:
+    # Use a higher threshold for applying strong blur
+    # Note: smooth_factor here is expected to be in 0.0-1.0 range
+    if apply_blur or smooth_factor > 0.4:
         # 2) float smoothing (critical for artwork to melt artifacts)
         bw = bw.astype(np.float32) / 255.0
-        bw = cv2.GaussianBlur(bw, (3, 3), 0.5)
+        
+        # Determine blur strength: higher smoothing_factor -> larger kernel / sigma
+        if smooth_factor > 0.6:
+            k_size = (5, 5)
+            sigma = 1.0
+        elif smooth_factor > 0.4:
+            k_size = (3, 3)
+            sigma = 0.8
+        else:
+            k_size = (3, 3)
+            sigma = 0.5
+            
+        bw = cv2.GaussianBlur(bw, k_size, sigma)
+        
         # 3) threshold back
-        _, bw = cv2.threshold(bw, 0.5, 1.0, cv2.THRESH_BINARY)
+        # Use a slightly lower threshold if smooth_factor is very high to avoid eroding thin lines
+        thresh_val = 0.5 if smooth_factor < 0.7 else 0.45
+        _, bw = cv2.threshold(bw, thresh_val, 1.0, cv2.THRESH_BINARY)
         bw = (bw * 255).astype(np.uint8)
     else:
         # Zero blur for TEXT_LOGO, keep sharp
@@ -212,6 +235,9 @@ def export_vector_pdf(
             # Fallback calculation
             return px / dpi * 72.0
     
+    if (corner_threshold or 0.0) > 150.0:
+        logger.info(f"[VectorExporter] Applying Hard-Corner Logic (Threshold: {corner_threshold:.1f})")
+        
     c = rl_canvas.Canvas(str(output_path), pagesize=(page_w, page_h))
     
     MARGIN_PT = 40  # هامش في points
@@ -250,10 +276,12 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ═══ Advanced Mask Preprocessing (Anti-Jag Fix) ═══
-        if image_class == 'text_logo':
-            bw = preprocess_mask_for_vector(mask, apply_blur=False)
+        if image_class == 'text_logo' and smooth_factor < 0.2:
+            # Traditional sharp logos don't get blurred
+            bw = preprocess_mask_for_vector(mask, apply_blur=False, smooth_factor=smooth_factor)
         else:
-            bw = preprocess_mask_for_vector(mask, apply_blur=True)
+            # Illustrations or manual high-smoothing get blurred
+            bw = preprocess_mask_for_vector(mask, apply_blur=True, smooth_factor=smooth_factor)
         
         # 2. Contour Extraction: SIMPLE is better to avoid zigzag artifacts
         contours, hierarchy = cv2.findContours(
