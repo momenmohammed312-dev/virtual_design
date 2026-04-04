@@ -79,7 +79,7 @@ def _curvature_continuity(paths) -> float:
             if curr[0] != 'C' or nxt[0] not in ('C', 'L'):
                 continue
 
-            # Tangent out of curr  (cp2 → endpoint)
+            # Tangent out of curr  (cp2 -> endpoint)
             ep_x, ep_y = curr[5], curr[6]
             cp2_x, cp2_y = curr[3], curr[4]
             t_out = np.array([ep_x - cp2_x, ep_y - cp2_y])
@@ -320,7 +320,7 @@ class TestVectorHalftone:
 
     def test_raster_and_vector_differ_in_type(self):
         """
-        Raster engine → ndarray; Vector engine → list of dots.
+        Raster engine -> ndarray; Vector engine -> list of dots.
         They must NOT share output types.
         """
         from core.raster_halftone import RasterHalftoneEngine, RasterHalftoneConfig

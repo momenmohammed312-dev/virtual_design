@@ -5,7 +5,7 @@ Generates scalable SVG <circle> elements instead of a raster bitmap.
 Pipeline:
     1. Sample image on LPI-derived grid
     2. Compute local intensity per cell
-    3. Map intensity → dot radius (r = r_max * √intensity)
+    3. Map intensity -> dot radius (r = r_max * √intensity)
     4. Apply screen-angle rotation transform
     5. Output: list of SVG-compatible dot records OR inline SVG string
 
@@ -42,13 +42,13 @@ class VectorDot:
 @dataclass
 class VectorHalftoneConfig:
     lpi:         int       = 55          # Lines Per Inch
-    input_dpi:   int       = 300         # We need this to convert lpi→pixels
+    input_dpi:   int       = 300         # We need this to convert lpi->pixels
     angle:       float     = 45.0        # Screen angle (degrees)
     dot_shape:   DotShape  = "circle"
     gamma:       float     = 1.6         # Dot gain compensation
     shadow_gap:  float     = 0.90        # Max radius as fraction of half-cell
     min_radius:  float     = 0.8         # Minimum visible dot radius (px)
-    invert:      bool      = True        # True: dark pixel → large dot
+    invert:      bool      = True        # True: dark pixel -> large dot
 
 
 # ─── Engine ──────────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ class VectorHalftoneEngine:
         iy = np.clip(np.round(py).astype(int), 0, h - 1)
         pixel_vals = gray[iy, ix].astype(np.float32) / 255.0
 
-        # Ink fraction: dark pixel (low val) → large dot when invert=True
+        # Ink fraction: dark pixel (low val) -> large dot when invert=True
         if cfg.invert:
             ink = 1.0 - pixel_vals
         else:
@@ -258,7 +258,7 @@ def generate_vector_halftone(
     gamma: float = 1.6,
 ) -> List[VectorDot]:
     """
-    Quick helper: grayscale image → list of VectorDot objects.
+    Quick helper: grayscale image -> list of VectorDot objects.
 
     Note: This module is SEPARATE from raster_halftone.py.
     They share only: grayscale input channel + LPI/angle config.

@@ -10,9 +10,9 @@ Outputs:
     }
 
 Routing rules:
-    logo  → vector pipeline   (no early binarization)
-    photo → halftone pipeline
-    mixed → hybrid            (vector for shapes + halftone overlay)
+    logo  -> vector pipeline   (no early binarization)
+    photo -> halftone pipeline
+    mixed -> hybrid            (vector for shapes + halftone overlay)
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ class ImageClassifier:
         )
 
         logger.info(
-            f"[ImageClassifier] → {winner_type.upper()} "
+            f"[ImageClassifier] -> {winner_type.upper()} "
             f"(conf={confidence:.3f}  "
             f"logo={scores['logo']:.3f} "
             f"photo={scores['photo']:.3f} "
@@ -144,8 +144,8 @@ class ImageClassifier:
         edge_density = edge_px / N
 
         # ── 2. HoG Gradient Spread ────────────────────────────────────────────
-        # High spread → many different edge directions → photo/mixed
-        # Low spread  → few dominant directions      → logo
+        # High spread -> many different edge directions -> photo/mixed
+        # Low spread  -> few dominant directions      -> logo
         sobelx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
         sobely = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
         angles = np.arctan2(sobely, sobelx)          # [-π, π]
@@ -153,7 +153,7 @@ class ImageClassifier:
         angle_hist    = angle_hist.astype(np.float32)
         if angle_hist.sum() > 0:
             angle_hist /= angle_hist.sum()
-        gradient_spread = float(np.std(angle_hist))   # Low → uniform → logo
+        gradient_spread = float(np.std(angle_hist))   # Low -> uniform -> logo
 
         # ── 3. Color Variance ─────────────────────────────────────────────────
         b, g, r = cv2.split(bgr.astype(np.float32))
@@ -168,8 +168,8 @@ class ImageClassifier:
         sat_std   = float(np.std(chroma))
 
         # ── 5. Shannon Entropy ────────────────────────────────────────────────
-        # High entropy → complex texture → photo
-        # Low entropy  → flat regions   → logo
+        # High entropy -> complex texture -> photo
+        # Low entropy  -> flat regions   -> logo
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
         hist = hist / (hist.sum() + 1e-9)
         hist = hist[hist > 0]
@@ -181,7 +181,7 @@ class ImageClassifier:
         dark_px  = float(np.sum(gray < 64))  / N
         light_px = float(np.sum(gray > 192)) / N
         mid_px   = 1.0 - dark_px - light_px
-        bimodal  = dark_px + light_px          # High → logo
+        bimodal  = dark_px + light_px          # High -> logo
 
         # ── 7. Unique color count estimate (fast) ────────────────────────────
         tiny = cv2.resize(bgr, (64, 64), interpolation=cv2.INTER_AREA)
@@ -204,7 +204,7 @@ class ImageClassifier:
 
     @staticmethod
     def _ramp(value: float, lo: float, hi: float, invert: bool = False) -> float:
-        """Linear ramp in [lo, hi] → [0, 1]."""
+        """Linear ramp in [lo, hi] -> [0, 1]."""
         t = float(np.clip((value - lo) / (hi - lo + 1e-9), 0.0, 1.0))
         return (1.0 - t) if invert else t
 

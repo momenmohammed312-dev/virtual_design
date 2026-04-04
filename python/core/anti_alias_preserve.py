@@ -43,7 +43,7 @@ class AntiAliasConfig:
     gamma:        float = 1.0            # >1 brightens midtones before threshold
 
     # Output mode
-    keep_color: bool = False             # True → return BGR; False → grayscale
+    keep_color: bool = False             # True -> return BGR; False -> grayscale
 
 
 # ─── Preprocessor ────────────────────────────────────────────────────────────

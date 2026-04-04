@@ -162,21 +162,24 @@ class Binarizer:
                     from skimage.filters import threshold_sauvola
                 except Exception:
                     return None
-                # P1 ENHANCEMENT: Optimized Sauvola parameters for artwork class
-                # Dynamic window size based on image dimensions for better edge preservation
+                # P1 ENHANCEMENT: Massive window sizes for high-res images to prevent hollow text
+                # Large text requires large windows for local thresholding to see the "solid" center.
                 img_size = max(gray.shape)
-                if img_size > 2000:
-                    window_size = 35  # Larger window for high-res images
-                    k = 0.18  # Lower k for better thin stroke preservation
-                elif img_size > 1000:
-                    window_size = 25  # Standard window
-                    k = 0.20  # Standard k value
+                if img_size > 3000:
+                    window_size = 251  # Very large window for ultra-high res (300+ DPI text)
+                    k = 0.15
+                elif img_size > 1500:
+                    window_size = 151  # Large window for high-res images
+                    k = 0.18
+                elif img_size > 800:
+                    window_size = 75   # Standard large window
+                    k = 0.20
                 else:
-                    window_size = 15  # Smaller window for low-res images
-                    k = 0.22  # Higher k for stability
+                    window_size = 35   # Smaller window for low-res images
+                    k = 0.25
                 
                 # Ensure window size is odd and reasonable
-                window_size = max(7, min(51, window_size | 1))
+                window_size = max(15, min(301, window_size | 1))
                 
                 thresh = threshold_sauvola(gray, window_size=window_size, k=k)
                 res = (gray > thresh).astype(np.uint8) * 255

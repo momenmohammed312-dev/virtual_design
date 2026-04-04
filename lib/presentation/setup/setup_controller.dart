@@ -28,6 +28,7 @@ class SetupController extends GetxController {
 
   final RxDouble smoothingFactor = 0.25.obs;
   final RxDouble cornerThreshold = 45.0.obs;
+  final RxInt smoothingSlider = 35.obs;
 
   // Paper size
   final RxDouble paperWidthCm = 21.0.obs;
@@ -116,6 +117,7 @@ class SetupController extends GetxController {
       printQuality.value = settings.dpi;
       adaptiveThreshold.value = settings.adaptiveThreshold;
       selectedImageType.value = settings.imageType;
+      smoothingSlider.value = settings.smoothingSlider;
       if (settings.halftoneSettings != null) {
         lpiValue.value = settings.halftoneSettings!.lpi;
         selectedDotShape.value = settings.halftoneSettings!.dotShape;
@@ -144,6 +146,7 @@ class SetupController extends GetxController {
     selectedImageType.value = ps.ImageType.auto;
     smoothingFactor.value = 0.25;
     cornerThreshold.value = 45.0;
+    smoothingSlider.value = 35;
     update();
   }
 
@@ -213,6 +216,7 @@ class SetupController extends GetxController {
         imageType: selectedImageType.value,
         smoothingFactor: smoothingFactor.value,
         cornerThreshold: cornerThreshold.value,
+        smoothingSlider: smoothingSlider.value,
       );
 
       Get.log(

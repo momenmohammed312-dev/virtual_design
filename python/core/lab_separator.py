@@ -3,7 +3,7 @@ lab_separator.py — Phase 5: LAB Color Space Separation Upgrade
 Industry-grade color separation using perceptual clustering.
 
 Pipeline:
-    1. RGB → LAB conversion (perceptual uniformity)
+    1. RGB -> LAB conversion (perceptual uniformity)
     2. Adaptive K-means (elbow method for k selection)
     3. ΔE-based pixel assignment (perceptual accuracy)
     4. Per-mask morphological cleanup
@@ -65,10 +65,10 @@ class LABColorSeparator:
     Perceptual color separator using CIE LAB space + ΔE distance.
 
     Key improvements over RGB K-means:
-    • Perceptually uniform → equal ΔE means equal perceived difference
-    • Elbow-method adaptive K → no manual color count required
-    • Morphological mask cleanup → clean print-ready edges
-    • No hard-threshold segmentation → no color banding
+    • Perceptually uniform -> equal ΔE means equal perceived difference
+    • Elbow-method adaptive K -> no manual color count required
+    • Morphological mask cleanup -> clean print-ready edges
+    • No hard-threshold segmentation -> no color banding
     """
 
     def __init__(
@@ -127,7 +127,7 @@ class LABColorSeparator:
         # 3. Build label map (H×W)
         label_map = labels.reshape(h, w)
 
-        # 4. Sort clusters by LAB lightness (L channel) — dark → light
+        # 4. Sort clusters by LAB lightness (L channel) — dark -> light
         L_means = [float(np.mean(lab[:, :, 0][label_map == i])) for i in range(k)]
         order   = np.argsort(L_means)   # darkest first
 
@@ -136,7 +136,7 @@ class LABColorSeparator:
         for new_idx, old_idx in enumerate(order):
             lab_center = centers[old_idx]
 
-            # Convert LAB center → BGR → RGB
+            # Convert LAB center -> BGR -> RGB
             lab_px  = np.array([[lab_center]], dtype=np.float32).astype(np.uint8)
             bgr_px  = cv2.cvtColor(lab_px, cv2.COLOR_LAB2BGR)[0][0]
             rgb_px  = cv2.cvtColor(

@@ -51,41 +51,53 @@ def load_image_safely(path: str) -> np.ndarray:
 
 def _apply_upscale_if_needed(img: np.ndarray) -> np.ndarray:
     """
-    CRITICAL FIX: Apply LANCZOS4 upscale guard for small images.
-    Industry standard: upscale to 2400px minimum for proper analysis and processing.
+    CRITICAL FIX: Apply LANCZOS4 upscale guard for small images with Hard Memory Gates.
+    - ABSOLUTE_MAX_PX: 3000 (Hard limit on dimensions)
+    - MEMORY_SAFE_MP: 8.0 MP (Hard limit on total pixels)
+    - TARGET_MIN_DIM: 1200 (Minimum dimension target for analysis)
     """
-    # ─── Stability & Resolution Management ───
-    # [FIX] Limit upscale target to 1200px (instead of 2400px) for general analysis
-    # [FIX] Cap absolute max dimension to 3500px to prevent OOM/Process crashes
-    TARGET_MIN_DIM = 1200 
-    MAX_SAFE_DIM = 3500
-    
-    h, w = img.shape[:2]
-    min_dim = min(h, w)
-    max_dim = max(h, w)
-    
-    # Pre-check: if original is already gigantic, downscale it immediately
-    if max_dim > MAX_SAFE_DIM:
-        scale = MAX_SAFE_DIM / max_dim
-        new_w, new_h = int(w * scale), int(h * scale)
-        print(f"[ImageLoader] Downscaling GIGANTIC image from {w}x{h} to {new_w}x{new_h} for memory safety", flush=True)
-        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        return img
+    TARGET_MIN_DIM  = 1200
+    ABSOLUTE_MAX_PX = 3000
+    MEMORY_SAFE_MP  = 8.0
 
+    h, w = img.shape[:2]
+
+    # ① ABSOLUTE CAP — Hard Gate 1
+    if max(h, w) > ABSOLUTE_MAX_PX:
+        scale = ABSOLUTE_MAX_PX / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        print(f"[ImageLoader] HARD CAP: {w}x{h} -> {new_w}x{new_h}", flush=True)
+        return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # ② MEGAPIXEL CAP — Hard Gate 2
+    current_mp = (h * w) / 1_000_000
+    if current_mp > MEMORY_SAFE_MP:
+        scale = (MEMORY_SAFE_MP / current_mp) ** 0.5
+        new_w, new_h = int(w * scale), int(h * scale)
+        print(f"[ImageLoader] MP CAP: {current_mp:.1f}MP -> {new_w}x{new_h}", flush=True)
+        return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # ③ Small-Image Upscale (LANCZOS4)
+    min_dim = min(h, w)
     if min_dim < TARGET_MIN_DIM:
         scale = TARGET_MIN_DIM / min_dim
         new_w = int(w * scale)
         new_h = int(h * scale)
         
-        # Guard: Ensure upscale doesn't cross safety limit
-        if max(new_w, new_h) > MAX_SAFE_DIM:
-            scale = MAX_SAFE_DIM / max(new_w, new_h)
-            new_w, new_h = int(new_w * scale), int(new_h * scale)
+        # Guard: Upscale must not exceed limits
+        if max(new_w, new_h) > ABSOLUTE_MAX_PX:
+            scale = ABSOLUTE_MAX_PX / max(new_w, new_h)
+            new_w, new_h = int(w * scale), int(h * scale)
 
-        print(f"[ImageLoader] Upscaling image from {w}x{h} to {new_w}x{new_h} (scale: {scale:.2f}x)", flush=True)
+        # Final safety check for Megapixel budget
+        if (new_w * new_h) / 1_000_000 > MEMORY_SAFE_MP:
+            scale = (MEMORY_SAFE_MP * 1_000_000 / (h * w)) ** 0.5
+            new_w, new_h = int(w * scale), int(h * scale)
+
+        print(f"[ImageLoader] Upscaling {w}x{h} -> {new_w}x{new_h} (scale: {scale:.2f}x)", flush=True)
         img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-        print(f"[ImageLoader] Upscaled image shape: {img.shape}", flush=True)
     else:
-        print(f"[ImageLoader] Image size {w}x{h} already meets minimum requirement", flush=True)
+        print(f"[ImageLoader] Image {w}x{h} is within safe bounds", flush=True)
     
     return img
+

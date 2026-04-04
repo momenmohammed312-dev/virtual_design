@@ -93,7 +93,7 @@ class RasterHalftoneEngine:
             gray_g = gray
 
         # Threshold: ink where pixel < screen matrix threshold
-        # (dark pixels → big dots → more ink)
+        # (dark pixels -> big dots -> more ink)
         ink_float = 1.0 - (gray_g.astype(np.float32) / 255.0)
         screen_f  = screen_matrix.astype(np.float32) / 255.0
         bitmap    = (ink_float >= screen_f).astype(np.uint8) * 255
@@ -120,7 +120,7 @@ class RasterHalftoneEngine:
 
         Each cell has one dot; the threshold varies from 0 (centre) to 255
         (edge), so pixels with high ink density (low gray value) exceed
-        the threshold first → larger dots.
+        the threshold first -> larger dots.
         """
         h, w = shape[:2]
         dot_spacing = dpi / lpi       # pixels per half-tone cell
@@ -143,7 +143,7 @@ class RasterHalftoneEngine:
         Xc = (Xr % dot_spacing) / dot_spacing * 2 - 1   # [-1, 1]
         Yc = (Yr % dot_spacing) / dot_spacing * 2 - 1   # [-1, 1]
 
-        # Dot function → continuous threshold 0–1 (0=always ink, 1=never ink)
+        # Dot function -> continuous threshold 0–1 (0=always ink, 1=never ink)
         screen = self._dot_function(Xc, Yc, dot_fn)
 
         # Scale to uint8 (0–255)
@@ -154,7 +154,7 @@ class RasterHalftoneEngine:
     def _dot_function(Xc: np.ndarray, Yc: np.ndarray, fn: DotFunction) -> np.ndarray:
         """Compute dot threshold value [0,1] for each grid position."""
         if fn == "round":
-            # Euclidean distance from cell centre → circular dots
+            # Euclidean distance from cell centre -> circular dots
             r = np.sqrt(Xc**2 + Yc**2) / math.sqrt(2)   # max=1 at corners
             return np.clip(r, 0, 1)
 

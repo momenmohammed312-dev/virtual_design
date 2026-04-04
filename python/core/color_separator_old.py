@@ -91,7 +91,7 @@ class ColorSeparator:
             if inertias[i - 1] > 0:
                 drop = (inertias[i - 1] - inertias[i]) / inertias[i - 1]
                 
-                # أول drop كبير (>15%) = صورة بسيطة (لوجو/نص) → نقف عنده
+                # أول drop كبير (>15%) = صورة بسيطة (لوجو/نص) -> نقف عنده
                 if drop > 0.15:
                     best_k = i + 2
                     has_big_initial_drop = True
@@ -101,9 +101,9 @@ class ColorSeparator:
                 # نكمّل لحد ما نوصل لحد أقصى
                 elif drop > 0.05:
                     best_k = i + 2
-                # drop صغير جداً (<5%) → noise، نتجاهله
+                # drop صغير جداً (<5%) -> noise، نتجاهله
         
-        # لو مفيش drop كبير، الصورة معقدة (كثير ألوان) → best_k هي آخر K صالح
+        # لو مفيش drop كبير، الصورة معقدة (كثير ألوان) -> best_k هي آخر K صالح
         if not has_big_initial_drop:
             # cap على أقصى عدد ألوان (max_colors)
             best_k = min(best_k, max_colors)
@@ -173,7 +173,7 @@ class ColorSeparator:
         
         logger.info(f"[ColorSeparator] Starting: {num_colors} colors, LAB={use_lab}, image={image.shape}")
 
-        # تحويل BGR → RGB
+        # تحويل BGR -> RGB
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         h, w = img_rgb.shape[:2]
 
@@ -280,7 +280,7 @@ class ColorSeparator:
         # ════════════════════════════════════════════════════════════
 
         # ترتيب من الأغمق للأفتح
-        # Fix: Convert LAB→RGB first if using LAB color space
+        # Fix: Convert LAB->RGB first if using LAB color space
         if use_lab:
             centers_for_brightness = np.array([
                 cv2.cvtColor(c.astype(np.uint8).reshape(1, 1, 3), cv2.COLOR_LAB2RGB)[0][0]

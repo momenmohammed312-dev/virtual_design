@@ -38,7 +38,8 @@ def fit_bezier_to_contour(
     contour: np.ndarray,
     smooth_factor: float = 0.35,
     corner_threshold: float = 120.0,
-    image_class: str = 'auto'
+    image_class: str = 'auto',
+    epsilon: Optional[float] = None
 ) -> List[Tuple]:
     """
     Potrace-inspired Bezier fitting with three-phase approach:
@@ -77,7 +78,8 @@ def fit_bezier_to_contour(
         else:
             return base * 1.25 * scale
 
-    epsilon = compute_adaptive_epsilon(contour, image_class)
+    if epsilon is None:
+        epsilon = compute_adaptive_epsilon(contour, image_class)
     
     simplified = cv2.approxPolyDP(contour, epsilon, True)
     pts = simplified.reshape(-1, 2).astype(float)
@@ -154,6 +156,7 @@ def export_vector_pdf(
     page_size: str = 'A4',
     no_vector_blur: bool = False,
     image_class: str = 'auto',
+    epsilon: Optional[float] = None
 ) -> Path:
     """
     تصدير كل الأفلام في PDF واحد متعدد الصفحات بجودة vector حقيقية.
@@ -294,7 +297,14 @@ def export_vector_pdf(
             
             # CRITICAL FIX: Remove double simplification - pass raw contour directly
             # The fit_bezier_to_contour() function already handles intelligent simplification
-            bezier_cmds = fit_bezier_to_contour(contour_arr, smooth_factor, corner_threshold, image_class)
+            # CRITICAL FIX: Pass custom epsilon if provided by unified slider
+            bezier_cmds = fit_bezier_to_contour(
+                contour_arr, 
+                smooth_factor, 
+                corner_threshold, 
+                image_class,
+                epsilon=epsilon
+            )
             if not bezier_cmds:
                 return
             

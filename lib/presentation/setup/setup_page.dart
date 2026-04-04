@@ -118,6 +118,8 @@ class _SetupPageState extends State<SetupPage> {
                               const SizedBox(height: 30),
                               _buildPrintFinishSection(controller),
                               const SizedBox(height: 30),
+                              _buildEdgeSmoothingSection(controller),
+                              const SizedBox(height: 30),
                               _buildStrokeWidthSection(),
                               const SizedBox(height: 30),
                               _buildSpecificationsSection(),
@@ -557,7 +559,7 @@ class _SetupPageState extends State<SetupPage> {
               ),
               const SizedBox(width: 12),
               const Text(
-                '2. Print Type',
+                '3. Print Type',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
             ],
@@ -756,7 +758,7 @@ class _SetupPageState extends State<SetupPage> {
               ),
               const SizedBox(width: 12),
               const Text(
-                '3. Detail Level',
+                '4. Detail Level',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
             ],
@@ -1053,6 +1055,92 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   // ============= Stroke Width Section =============
+  Widget _buildEdgeSmoothingSection(SetupController controller) {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3E5F5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.auto_fix_high,
+                  color: Colors.purple,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                '5. Edge Smoothing',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              Obx(() => Text(
+                '${controller.smoothingSlider.value}%',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: primaryBlue,
+                ),
+              )),
+            ],
+          ),
+          const SizedBox(height: 15),
+          const Text(
+            'Controls how much the engine smooths the edges of your design. '
+            'Higher values create smoother curves but may lose small details.',
+            style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+          ),
+          const SizedBox(height: 20),
+          Obx(() => SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: primaryBlue,
+              inactiveTrackColor: primaryBlue.withOpacity(0.1),
+              thumbColor: primaryBlue,
+            ),
+            child: Slider(
+              value: controller.smoothingSlider.value.toDouble(),
+              min: 0,
+              max: 100,
+              divisions: 100,
+              label: '${controller.smoothingSlider.value}%',
+              onChanged: (val) {
+                controller.smoothingSlider.value = val.round();
+              },
+            ),
+          )),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Sharp', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              Text(
+                'Recommended (35%)', 
+                style: TextStyle(
+                  fontSize: 11, 
+                  color: Colors.grey.withOpacity(0.8),
+                  fontStyle: FontStyle.italic,
+                )
+              ),
+              const Text('Smooth', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============= Stroke Width Section =============
   Widget _buildStrokeWidthSection() {
     bool hasWarning = strokeWidth < 0.5 || strokeWidthInPixels < 6;
 
@@ -1084,7 +1172,7 @@ class _SetupPageState extends State<SetupPage> {
               ),
               const SizedBox(width: 12),
               const Text(
-                '5. Minimum Stroke Width',
+                '6. Minimum Stroke Width',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
             ],
@@ -1189,7 +1277,7 @@ class _SetupPageState extends State<SetupPage> {
               ),
               const SizedBox(width: 12),
               const Text(
-                '6. Specifications',
+                '7. Specifications',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
             ],

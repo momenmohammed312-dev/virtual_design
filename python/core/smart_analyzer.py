@@ -62,7 +62,7 @@ class SmartAnalyzer:
         
         # Phase 24: CRITICAL FIX - Deterministic Weighted Scoring (eliminates flip-flop)
         # Calculate final weighted score instead of rule-based overrides
-        color_norm = metrics['color_count_estimate'] / 8.0  # → 0.0 to 1.0
+        color_norm = metrics['color_count_estimate'] / 8.0  # -> 0.0 to 1.0
 
         final_text_score = (
             scores['text'] * 0.5 +      # Primary weight
@@ -238,7 +238,7 @@ class SmartAnalyzer:
         """Soft scoring using weighted features."""
         # Normalize features to 0-1 range
         f_mid = m["mid_ratio"]
-        f_col = m["color_count_estimate"] / 8.0  # Normalize 0-8 → 0-1
+        f_col = m["color_count_estimate"] / 8.0  # Normalize 0-8 -> 0-1
         f_edge = m["edge_density"]
         f_grad = m["gradient_ratio"]
         f_sat = m["sat_mean"]  # Already normalized to 0-1 in _extract_metrics

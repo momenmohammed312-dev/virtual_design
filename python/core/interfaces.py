@@ -3,9 +3,9 @@ interfaces.py — Phase 8: Clean Architecture Interfaces
 Domain interfaces that decouple the pipeline layers.
 
 Layer structure:
-    domain/      → Pure data types + interface definitions
-    application/ → Pipeline orchestration
-    infrastructure/ → Concrete implementations (cv2, reportlab, etc.)
+    domain/      -> Pure data types + interface definitions
+    application/ -> Pipeline orchestration
+    infrastructure/ -> Concrete implementations (cv2, reportlab, etc.)
 
 Consumers should depend on THESE interfaces, not concrete classes.
 """
@@ -135,8 +135,8 @@ class IHalftoneEngine(ABC):
     ) -> Any:
         """
         Returns:
-            Raster engine  → np.ndarray (uint8, 0/255 bitmap)
-            Vector engine  → List[VectorDot]
+            Raster engine  -> np.ndarray (uint8, 0/255 bitmap)
+            Vector engine  -> List[VectorDot]
         """
         ...
 

@@ -305,6 +305,9 @@ class PythonProcessor {
       args.add('--adaptive-threshold');
     }
 
+    // Unified Smoothing Slider (0-100)
+    args.addAll(['--smoothing-slider', settings.smoothingSlider.toString()]);
+
     // Image Processing Mode (Simple, Mixed, Complex, Auto)
     args.addAll(['--image-type', settings.imageType.name]);
 

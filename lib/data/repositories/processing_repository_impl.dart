@@ -85,6 +85,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
         'gradientMeshMode': settings.gradientMeshMode.name,
         'typographyMode': settings.typographyMode.name,
         'meshPreviewMode': settings.meshPreviewMode.name,
+        'smoothingSlider': settings.smoothingSlider,
       };
       await box.put('last_settings', json);
     } catch (e) {
@@ -171,6 +172,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
           (e) => e.name == rawJson['meshPreviewMode'] as String?,
           orElse: () => MeshPreviewMode.automatic,
         ),
+        smoothingSlider: (rawJson['smoothingSlider'] as num?)?.toInt() ?? 35,
       );
     } catch (e) {
       print(

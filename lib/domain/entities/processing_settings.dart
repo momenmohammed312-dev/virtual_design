@@ -89,6 +89,7 @@ class ProcessingSettings {
   final bool adaptiveThreshold;
   final String filmLabel;
   final ImageType imageType;
+  final int smoothingSlider;
 
   // Professional Features (all enabled by default)
   final PantoneMatching pantoneMatching;
@@ -128,6 +129,7 @@ class ProcessingSettings {
     this.gradientMeshMode = GradientMeshMode.automatic,
     this.typographyMode = TypographyMode.automatic,
     this.meshPreviewMode = MeshPreviewMode.automatic,
+    this.smoothingSlider = 35,
   });
 
   // ─── Mesh Count Calculations (MED #6 FIX) ──────────────────────────────
@@ -253,6 +255,7 @@ class ProcessingSettings {
     bool? adaptiveThreshold,
     String? filmLabel,
     ImageType? imageType,
+    int? smoothingSlider,
   }) =>
       ProcessingSettings(
         colorCount: colorCount ?? this.colorCount,
@@ -281,6 +284,7 @@ class ProcessingSettings {
         adaptiveThreshold: adaptiveThreshold ?? this.adaptiveThreshold,
         filmLabel: filmLabel ?? this.filmLabel,
         imageType: imageType ?? this.imageType,
+        smoothingSlider: smoothingSlider ?? this.smoothingSlider,
       );
 
   Map<String, dynamic> toJson() => {
@@ -310,6 +314,7 @@ class ProcessingSettings {
         'adaptiveThreshold': adaptiveThreshold,
         'filmLabel': filmLabel,
         'imageType': imageType.name,
+        'smoothingSlider': smoothingSlider,
       };
 
   factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
@@ -377,5 +382,6 @@ class ProcessingSettings {
           (e) => e.name == json['imageType'],
           orElse: () => ImageType.auto,
         ),
+        smoothingSlider: (json['smoothingSlider'] as int?) ?? 35,
       );
 }

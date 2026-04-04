@@ -55,6 +55,7 @@ class LockedFilm:
     corner_threshold: float
     use_potrace_style: bool
     is_halftone: bool
+    epsilon: Optional[float] = None # For unified slider
 
 @dataclass
 class ProcessedFilmCache:
@@ -166,6 +167,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOTAL_STEPS = 10
+MAX_SAFE_MEGAPIXELS = 8.0
+
+def enforce_memory_budget(image: np.ndarray, label: str = "") -> np.ndarray:
+    """Hard gate: Shrink image to ensure it doesn't exceed RAM budget."""
+    h, w = image.shape[:2]
+    mp = (h * w) / 1_000_000
+    if mp > MAX_SAFE_MEGAPIXELS:
+        scale = (MAX_SAFE_MEGAPIXELS / mp) ** 0.5
+        new_w, new_h = int(w * scale), int(h * scale)
+        logger.warning(
+            f"[MemoryBudget] {label}: {w}x{h} ({mp:.1f}MP) -> "
+            f"{new_w}x{new_h} ({MAX_SAFE_MEGAPIXELS}MP cap)"
+        )
+        return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return image
 
 
 def _check_modules() -> None:
@@ -319,34 +335,11 @@ def step1_load_image(input_path: str) -> np.ndarray:
     try:
         image = load_image_safely(input_path)
         logger.info(f"Loaded image via robust loader: shape={image.shape}, dtype={image.dtype}, channels={image.shape[2] if len(image.shape) > 2 else 1}")
-        if image.shape[2] == 4:
+        if len(image.shape) > 2 and image.shape[2] == 4:
             image = image[:, :, :3]
         
-        # ─── Stability & Resolution Management ───
-        # [AUDIO_TASK] Ignore "unsupported format" warnings if encountered externally; formats are valid.
-        h, w = image.shape[:2]
-        
-        # Scale to minimum 1200px for analysis quality
-        target_width = 1200
-        if w < target_width:
-            scale_factor = target_width / w
-            new_w = int(w * scale_factor)
-            new_h = int(h * scale_factor)
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
-            image = cv2.GaussianBlur(image, (3, 3), 0)
-            logger.info(f"Upscaled for analysis: {w}x{h} → {new_w}x{new_h} (scale: {scale_factor:.2f}) [CUBIC+GaussianBlur]")
-            # Update h, w after resize
-            h, w = image.shape[:2]
-        
-        # [FIX] Capping max dimension to 3500px to prevent OOM/Process crashes
-        # Professional standard: 3500px @ 300dpi covers 11.6 inches - more than enough for A4 films.
-        max_dim = 3500
-        if max(h, w) > max_dim:
-            scale = max_dim / max(h, w)
-            new_w, new_h = int(w * scale), int(h * scale)
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-            logger.info(f"[Fixed] Capped image resolution to {new_w}x{new_h} for processing stability")
-            
+        # FATAL #1: enforce memory budget immediately after loading
+        image = enforce_memory_budget(image, "post-load")
         return image
     except Exception as e:
         logger.error(f"Robust image loader failed: {e}")
@@ -827,7 +820,7 @@ def _make_single_color_separation(image: np.ndarray, white_threshold: int = 240)
     h, w = image.shape[:2]
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Label mapping: bg >= white_threshold → -1, design < white_threshold → 0
+    # Label mapping: bg >= white_threshold -> -1, design < white_threshold -> 0
     label_map = np.full((h, w), -1, dtype=np.int32)
     label_map[gray < white_threshold] = 0
     
@@ -1127,10 +1120,11 @@ def step9_export(
             i = film.film_index
             mask = film.final_mask
             
-            # 🔥 FIX 4: Fail-safe قبل export
-            # If the mask average is extremely high it means it's >99% white (no ink)
-            if np.mean(mask) > 250:
-                logger.error(f"Mask {i+1} is empty (mean > 250) → abort export")
+            # 🔥 FIX 4: Fail-safe before export
+            # If the mask average is extremely high it means it's nearly 100% white (no ink)
+            # Use 254.5 (~0.2% coverage) as a more relaxed threshold for sparse logos
+            if np.mean(mask) > 254.5:
+                logger.error(f"Mask {i+1} is empty (mean > 254.5) -> abort export")
                 continue
 
             # Use color info from film cache (already populated)
@@ -1230,7 +1224,7 @@ def step9_export(
                 else:
                     # TRUE HIGH-FIDELITY VECTOR for solids
                     # REVERT: vector_exporter expects ink=255 (design=white) for findContours
-                    # film_gray has ink=0 (film polarity) → must invert
+                    # film_gray has ink=0 (film polarity) -> must invert
                     ink_mask_pdf = cv2.bitwise_not(film_gray)
 
                     export_vector_pdf(
@@ -1242,7 +1236,8 @@ def step9_export(
                         smooth_factor=eff_smooth,
                         corner_threshold=eff_corner,
                         no_vector_blur=eff_no_blur,
-                        image_class=film.image_class
+                        image_class=film.image_class,
+                        epsilon=film.epsilon
                     )
                     exported_paths.append(pdf_filepath)
                 
@@ -1287,7 +1282,8 @@ def step9_export(
                     smooth_factor=eff_smooth,
                     corner_threshold=eff_corner,
                     no_vector_blur=eff_no_blur,
-                    image_class=first_film.image_class if first_film else 'auto'
+                    image_class=first_film.image_class if first_film else 'auto',
+                    epsilon=first_film.epsilon if first_film else None
                 )
                 exported_paths.append(combined_pdf_path)
                 logger.info(f"  Exported all_films_combined.pdf (Smooth: {eff_smooth})")
@@ -1385,7 +1381,7 @@ def parse_args() -> argparse.Namespace:
         help="Halftone dot shape function (for raster mode)"
     )
     parser.add_argument("--detail-level", choices=["high", "medium", "low"], default="medium")
-    parser.add_argument("--clean", action="store_true", help="Apply edge cleaning")
+    parser.add_argument("--clean", action="store_true", help="Clean up temporary normalized input file after processing")
     parser.add_argument("--validate-strokes", action="store_true", help="Validate stroke widths")
     parser.add_argument("--min-stroke", type=float, default=0.0, help="Min stroke width in mm (disabled)")
     parser.add_argument("--edge-enhance", choices=["none", "light", "strong"], default="light")
@@ -1492,6 +1488,11 @@ def parse_args() -> argparse.Namespace:
         help="Preserve edges during binarization (recommended for sharp artwork)"
     )
     
+    parser.add_argument(
+        "--smoothing-slider", type=int, default=None,
+        help="Unified smoothing slider (0-100). Overrides smoothing-factor and epsilon."
+    )
+    
     return parser.parse_args()
 
 
@@ -1499,6 +1500,12 @@ def main() -> int:
     args = parse_args()
     start_time = time.time()
     _check_modules()
+
+    # ═══ Mapping Slider to Parameters ═══
+    if getattr(args, 'smoothing_slider', None) is not None:
+        from utils.validators import Validators
+        args.smoothing_factor, args.epsilon = Validators.slider_to_smoothing_params(args.smoothing_slider)
+        logger.info(f"[Slider] Unified mapping: {args.smoothing_slider} -> factor={args.smoothing_factor}, epsilon={args.epsilon}")
 
     # ═══ Auto-set parameters based on image type ═══
     # When image_type is simple/mixed/complex, override all related params unconditionally.
@@ -1607,18 +1614,27 @@ def main() -> int:
             args._image_class = analysis.image_class
             args._analysis_confidence = analysis.confidence
 
-            # Auto-detect colors if not specified
-            if args.colors <= 1 and analysis.image_class.value in ['artwork', 'photo']:
-                args.colors = max(analysis.num_colors, (analysis.color_count_estimate if hasattr(analysis, 'color_count_estimate') else 4))
-                logger.info(f"[Fixed] Auto-adjusted colors to {args.colors} based on SmartAnalysis (Override from 1)")
-            elif args.colors == 0:
-                args.colors = analysis.num_colors  # Use SmartAnalyzer estimate
-                logger.info(f"[Connectivity] SmartAnalyzer recommends {args.colors} colors. Applied.")
+            # Snippet 2: Conflict Resolution — Prioritize SmartAnalyzer when user doesn't specify
+            USER_EXPLICITLY_SET_COLORS = (args.colors > 0 and any(a.startswith('--colors') for a in sys.argv))
+
+            if not USER_EXPLICITLY_SET_COLORS:
+                # User didn't override — use SmartAnalyzer
+                if analysis.image_class.value in ['artwork', 'photo']:
+                    args.colors = max(analysis.num_colors, 2)
+                else:
+                    args.colors = 1
+                logger.info(f"[AutoColor] Auto-set colors={args.colors} from SmartAnalyzer (image_class={analysis.image_class.value})")
+            elif args.colors <= 1 and analysis.image_class.value in ['artwork', 'photo']:
+                # User forced 1 color but it's artwork — warn but respect
+                logger.warning(
+                    f"[ConflictWarning] User forced --colors {args.colors} but SmartAnalyzer detected {analysis.image_class.value}. "
+                    f"Recommended: {analysis.num_colors} colors. Using user override."
+                )
 
             # ── Phase 4 guard: if ImageClassifier says LOGO with high confidence,
             #    force skip_halftone so edge_aware_binarizer is never applied
             #    before vector pipeline. ──
-            if args._clf_type == 'logo' and args._clf_confidence > 0.25:
+            if args._clf_type == 'logo' and args._clf_confidence > 0.15:
                 args.skip_halftone = True
                 logger.info(
                     "[ClassifierGuard] Logo detected by ImageClassifier "
@@ -1698,8 +1714,15 @@ def main() -> int:
         # Create ProcessedFilmCache — Lock Preview Output (BUG-01 fix)
         cache = ProcessedFilmCache()
         for i, mask in enumerate(masks):
-            color_entry = separation_result['colors'][i] if i < len(separation_result['colors']) else (0,0,0)
-            name_entry  = separation_result['color_names'][i] if i < len(separation_result['color_names']) else f'Film_{i+1}'
+            # IndexError Guard: ensure index is within range of color lists
+            num_colors_in_result = len(separation_result.get('colors', []))
+            if i < num_colors_in_result:
+                color_entry = separation_result['colors'][i]
+                name_entry  = separation_result['color_names'][i]
+            else:
+                color_entry = (0, 0, 0)
+                name_entry  = f'Film_{i+1}'
+                logger.warning(f"[CacheGuard] Color mismatch for mask {i+1} — using defaults.")
             
             # Determine effective smoothing factor (Senior Standard hierarchy)
             cli_smooth = getattr(args, 'smoothing_factor', None)
@@ -1735,6 +1758,7 @@ def main() -> int:
                 corner_threshold=eff_corner,
                 use_potrace_style=eff_potrace,
                 is_halftone=args.halftone or (analysis_obj is not None and getattr(analysis_obj, 'use_halftone', False)),
+                epsilon=getattr(args, 'epsilon', None)
             ))
         cache.lock()  # Snapshot all masks — export is now deterministic
         
@@ -1776,6 +1800,19 @@ def main() -> int:
         # 3. Final Content Audit: List every file written to output dir
         final_files = os.listdir(output_dir)
         logger.info(f"[FinalAudit] Files in {output_dir}: {final_files}")
+
+        # Step 10 — Cleanup (Technical Cleanliness)
+        if args.clean and args.input:
+            # Only delete if it's a normalized temp file from Flutter
+            input_path = os.path.abspath(args.input)
+            if "vd_normalized_" in os.path.basename(input_path):
+                try:
+                    # Give a small delay to ensure file handles are closed
+                    time.sleep(0.1)
+                    os.remove(input_path)
+                    logger.info(f"[Cleanup] Deleted temporary input file: {input_path}")
+                except Exception as e:
+                    logger.warning(f"[Cleanup] Failed to delete {input_path}: {e}")
 
         # FATAL #3 FIX: آخر سطر دائماً — Dart يقرأه ليعرف مسار الـ output
         _output_dir_signal(output_dir)

@@ -87,7 +87,7 @@ class HalftoneGenerator:
 
         # TASK 16: LPI-adaptive shadow gap (BUG-09 fix)
         # Industry standard: fine screens need more gap, coarse screens can use less
-        shadow_gap = 0.90 - (lpi / 1000.0)  # 55 LPI → 0.845, 120 LPI → 0.78
+        shadow_gap = 0.90 - (lpi / 1000.0)  # 55 LPI -> 0.845, 120 LPI -> 0.78
         shadow_gap = max(0.75, min(0.92, shadow_gap))
         # FIXED: Use dot_spacing * 0.45 (not dot_spacing / 2.0) for proper full-dot coverage
         radii = intensities * dot_spacing * 0.45 * shadow_gap

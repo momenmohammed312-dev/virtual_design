@@ -31,20 +31,35 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 def edge_aware_binarize(gray: np.ndarray) -> np.ndarray:
-    blur = cv2.GaussianBlur(gray, (15, 15), 0)
+    """
+    Improved binarization that preserves solid fill for large text characters.
+    Uses large-block adaptive thresholding to avoid hollow outlines.
+    """
+    # 1. Global Baseline (Otsu)
+    _, th_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    diff = gray.astype(np.float32) - blur.astype(np.float32)
-    base = np.zeros_like(gray)
-    base[diff > 5] = 255
+    # 2. Local Edge Sharpness
+    # Use a large block size (relative to image) to ensure solid centers are captured
+    h, w = gray.shape[:2]
+    block_size = int(min(h, w) * 0.15) | 1  # 15% of dimension, must be odd
+    block_size = max(51, min(255, block_size))
     
-    edges = cv2.Canny(gray, 50, 150)
-    # enforce edges
-    base[edges > 0] = 255
+    th_adaptive = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY_INV, block_size, 10
+    )
     
-    # morphology cleanup
-    kernel = np.ones((2, 2), np.uint8)
+    # 3. Combine: Union of global and local to prevent gaps
+    # If Otsu returned black design on white bg, we need to invert it for bitwise_or
+    if np.mean(th_otsu) > 127: # mostly white bg
+        th_otsu = cv2.bitwise_not(th_otsu)
+        
+    base = cv2.bitwise_or(th_otsu, th_adaptive)
+    
+    # 4. morphology cleanup to smooth edges
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
     base = cv2.morphologyEx(base, cv2.MORPH_CLOSE, kernel)
-    base = cv2.morphologyEx(base, cv2.MORPH_OPEN, kernel)
+    
     return base
 
 @dataclass
@@ -158,15 +173,25 @@ class PipelineRouter:
             sep_result = _make_single_color_separation(image)
             masks = [m]
         else:
-            sep_result = self.separator.separate(preprocessed, num_colors=target_colors)
+            # BUG-F3 Guard: KMeans n_clusters must be >= 2
+            kmeans_colors = max(target_colors, 2)
+            sep_result = self.separator.separate(preprocessed, num_colors=kmeans_colors)
             
             # 3. Generate Masks
-            # CRITICAL FIX: Use grayscale_output=True when halftone is enabled or gradients detected
-            # Halftone needs grayscale values to compute dot sizes properly
-            # Phase 24 Connect: Auto-detect if artwork needs halftoning based on gradient/photo score
             should_halftone = args.halftone or (analysis and (analysis.score_photo > 0.4 or analysis.use_halftone))
             use_grayscale = should_halftone
             masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=use_grayscale)
+
+            # Snippet 3: IndexError Guard - Align masks and colors count
+            num_sep_colors = len(sep_result.get('colors', []))
+            if len(masks) != num_sep_colors:
+                logger.warning(f"[MaskColorMismatch] masks={len(masks)}, colors={num_sep_colors}. Aligning...")
+                if len(masks) > num_sep_colors:
+                    masks = masks[:num_sep_colors]
+                else:
+                    empty = np.full(masks[0].shape, 255, dtype=np.uint8)
+                    while len(masks) < num_sep_colors:
+                        masks.append(empty.copy())
         
         # 4. Halftone (if requested or auto-detected for artwork)
         if should_halftone:
@@ -178,7 +203,7 @@ class PipelineRouter:
         for i, m in enumerate(masks):
             # 🔥 FIX 1: Guard ضد mask الفاضية
             if np.std(m) < 5:
-                logger.warning(f"Mask {i} is flat (std={np.std(m):.2f}) → fallback to simple threshold")
+                logger.warning(f"Mask {i} is flat (std={np.std(m):.2f}) -> fallback to simple threshold")
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                 _, m = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
                 

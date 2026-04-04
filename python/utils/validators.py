@@ -124,3 +124,35 @@ class Validators:
             return True, "⚠️  Warning: LPI above 85 may cause screen clogging"
         
         return True, None
+
+    @staticmethod
+    def slider_to_smoothing_params(slider_value: int) -> Tuple[float, float]:
+        """
+        Converts unified smoothing slider (0-100) to smoothing_factor and epsilon.
+        
+        Design principles:
+        - 0-30: sharp logos, text
+        - 30-70: artwork balanced
+        - 70-100: smooth illustrations
+        
+        Args:
+            slider_value: 0 (sharp) to 100 (smooth)
+        Returns:
+            (smoothing_factor, epsilon)
+        """
+        # Clamp slider value
+        slider_value = max(0, min(100, slider_value))
+        t = float(slider_value) / 100.0  # normalize to [0, 1]
+        
+        # ① Smoothing Factor: S-curve (ease-in-out) to avoid sudden jumps
+        # Formula: 3t² - 2t³ (Hermite interpolation)
+        smooth_t = 3 * (t**2) - 2 * (t**3)
+        # Smoothing factor: 0.0 (sharp) -> 0.45 (very smooth)
+        smoothing_factor = 0.0 + smooth_t * 0.45
+        
+        # ② Epsilon: Quadratic inverse - logo needs very small epsilon
+        # Slider=0 -> epsilon=0.3 (fine details)
+        # Slider=100 -> epsilon=8.0 (strong smoothing)
+        epsilon = 0.3 + (t ** 1.5) * 7.7
+        
+        return round(float(smoothing_factor), 3), round(float(epsilon), 2)

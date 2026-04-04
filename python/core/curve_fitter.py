@@ -1,6 +1,6 @@
 """
 curve_fitter.py — Phase 3: True Curve Reconstruction
-Feature-first vectorization:  grayscale → edge detect → contour → Bézier
+Feature-first vectorization:  grayscale -> edge detect -> contour -> Bézier
 
 Pipeline:
     A) Gaussian pre-blur (subpixel edge stabilization)
@@ -80,7 +80,7 @@ class CurveFitter:
 
     def extract_paths(self, image: np.ndarray) -> List[ContourPath]:
         """
-        Full pipeline: image → smooth Bézier paths.
+        Full pipeline: image -> smooth Bézier paths.
 
         Args:
             image: uint8 grayscale or BGR image
@@ -101,7 +101,7 @@ class CurveFitter:
             blurred = cv2.GaussianBlur(gray, (3, 3), 0.8)
             edge_map = cv2.Canny(blurred, cfg.canny_low, cfg.canny_high)
         else:
-            # Already binary mask → invert so ink=255, background=0
+            # Already binary mask -> invert so ink=255, background=0
             _, edge_map = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
 
         # C) Find contours on edge map
@@ -120,7 +120,7 @@ class CurveFitter:
                 paths.append(path)
 
         logger.debug(
-            f"[CurveFitter] {len(contours)} contours → "
+            f"[CurveFitter] {len(contours)} contours -> "
             f"{len(paths)} valid paths (min_area={cfg.min_area})"
         )
         return paths
@@ -130,7 +130,7 @@ class CurveFitter:
     def _contour_to_bezier(self, contour: np.ndarray) -> ContourPath:
         """
         Convert one OpenCV contour to a Bézier path.
-        Stages: RDP → Chaikin → Bézier fitting
+        Stages: RDP -> Chaikin -> Bézier fitting
         """
         pts = contour.reshape(-1, 2).astype(float)
         if len(pts) < 3:
@@ -201,7 +201,7 @@ class CurveFitter:
         """
         Convert a smooth polygon to cubic Bézier curves.
 
-        Uses Catmull-Rom → Cubic Bézier conversion:
+        Uses Catmull-Rom -> Cubic Bézier conversion:
             CP1 = P1 + (P2 - P0) * tension
             CP2 = P2 - (P3 - P1) * tension
 

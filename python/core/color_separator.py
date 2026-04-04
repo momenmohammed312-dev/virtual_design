@@ -1,7 +1,7 @@
 """
-color_separator.py — Color Separation with LAB→RGB brightness sorting fix
+color_separator.py — Color Separation with LAB->RGB brightness sorting fix
 Virtual Design Silk Screen Studio
-FIXED: BUG D - LAB→RGB brightness calculation for correct color ordering
+FIXED: BUG D - LAB->RGB brightness calculation for correct color ordering
 """
 
 import cv2
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ColorSeparator:
     """
     Separate image into color layers using K-means clustering.
-    FIXED: LAB→RGB brightness sorting for correct color layer ordering.
+    FIXED: LAB->RGB brightness sorting for correct color layer ordering.
     """
 
     def separate(
@@ -238,7 +238,7 @@ class ColorSeparator:
         else:
             centers_bgr = best_centers.copy()
 
-        # FIXED: Sort colors by brightness (convert LAB→RGB first, then calculate brightness)
+        # FIXED: Sort colors by brightness (convert LAB->RGB first, then calculate brightness)
         brightness = self._calculate_brightness(centers_bgr, use_lab)
         sorted_indices = np.argsort(brightness)
         
@@ -251,7 +251,7 @@ class ColorSeparator:
         # Apply mapping to label map
         # IMPORTANT: label_mapping only covers 0..K-1. Background pixels have label=-1.
         # Using lambda with default=-1 preserves background pixels correctly.
-        # (np.vectorize(label_mapping.get) would return None for -1 → object array → crash)
+        # (np.vectorize(label_mapping.get) would return None for -1 -> object array -> crash)
         sorted_label_map = np.vectorize(lambda x: label_mapping.get(x, -1))(label_map)
 
         # Generate color information
@@ -315,7 +315,7 @@ class ColorSeparator:
             'compactness': float(best_compactness),
             'color_space': color_space,
             # Keys required by the rest of the pipeline:
-            'colors': colors_rgb,           # List of RGB tuples, light→dark sorted
+            'colors': colors_rgb,           # List of RGB tuples, light->dark sorted
             'color_names': color_names,     # Pantone name or 'color_NN'
             'image': None,                  # Placeholder (image not stored to save memory)
         }
