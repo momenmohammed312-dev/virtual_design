@@ -129,7 +129,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
             : null,
         // Advanced tuning
         globalThreshold:
-            (rawJson['globalThreshold'] as num?)?.toDouble() ?? 200.0,
+            (rawJson['globalThreshold'] as num?)?.toDouble() ?? 180.0,
         smoothingFactor:
             (rawJson['smoothingFactor'] as num?)?.toDouble() ?? 0.25,
         cornerThreshold:

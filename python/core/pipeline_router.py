@@ -34,37 +34,40 @@ logger = logging.getLogger(__name__)
 def edge_aware_binarize(gray: np.ndarray) -> np.ndarray:
     """
     Improved binarization that preserves solid fill for large text characters.
-    Uses large-block adaptive thresholding to avoid hollow outlines.
-    🔥 Enhanced with bilateral filter to reduce edge erosion.
+    🔥 Enhanced with constant threshold to prevent bloating and preserve thin strokes.
     """
     # 0. 🔥 CRITICAL FIX: Bilateral filter to preserve edges while smoothing noise
     # This prevents the "chewed up"/erosion effect
     bilateral = cv2.bilateralFilter(gray, 9, 75, 75)
     
-    # 1. Global Baseline (Otsu)
-    _, th_otsu = cv2.threshold(bilateral, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # 1. 🔥 KEY FIX: Use constant threshold instead of Otsu for sharper text
+    # Otsu causes bloating by including gray edges. Constant threshold captures only dark core.
+    threshold_value = 180  # High value to avoid gray edges and preserve thin strokes
+    _, th_const = cv2.threshold(bilateral, threshold_value, 255, cv2.THRESH_BINARY)
     
-    # 2. Local Edge Sharpness
-    # Use a large block size (relative to image) to ensure solid centers are captured
-    h, w = bilateral.shape[:2]  # Use bilateral instead of gray
-    block_size = int(min(h, w) * 0.15) | 1  # 15% of dimension, must be odd
-    block_size = max(51, min(255, block_size))
-    
-    th_adaptive = cv2.adaptiveThreshold(
-        bilateral, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY_INV, block_size, 10
-    )
-    
-    # 3. Combine: Union of global and local to prevent gaps
-    # If Otsu returned black design on white bg, we need to invert it for bitwise_or
-    if np.mean(th_otsu) > 127: # mostly white bg
-        th_otsu = cv2.bitwise_not(th_otsu)
+    # 2. Local Edge Sharpness (only for very fine details)
+    # Use adaptive thresholding only for small areas to preserve counters
+    h, w = bilateral.shape[:2]
+    # Only use adaptive for small text to avoid over-bloating
+    if min(h, w) < 800:  # Small image - use adaptive to preserve details
+        block_size = int(min(h, w) * 0.1) | 1  # Smaller block for precision
+        block_size = max(31, min(101, block_size))
         
-    base = cv2.bitwise_or(th_otsu, th_adaptive)
+        th_adaptive = cv2.adaptiveThreshold(
+            bilateral, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY_INV, block_size, 8
+        )
+        
+        # Combine: Use constant threshold as base, add adaptive only for fine details
+        base = cv2.bitwise_and(th_const, cv2.bitwise_not(th_adaptive))
+    else:
+        # Large image - use constant threshold only for maximum sharpness
+        base = th_const
     
-    # 4. morphology cleanup to smooth edges
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-    base = cv2.morphologyEx(base, cv2.MORPH_CLOSE, kernel)
+    # 3. 🔥 Minimal morphological cleanup to preserve thin strokes
+    # Very small kernel to avoid bloating
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    base = cv2.morphologyEx(base, cv2.MORPH_CLOSE, kernel, iterations=1)
     
     return base
 

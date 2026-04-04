@@ -42,7 +42,7 @@ class PreviewController extends GetxController {
   final RxDouble zoomLevel = 1.0.obs;
 
   // --- Adjustment State (Senior Perspective) ---
-  final RxDouble globalThreshold = 200.0.obs;
+  final RxDouble globalThreshold = 180.0.obs;
   final RxDouble smoothingFactor = 0.25.obs; // Match setup controller default
   final RxDouble cornerThreshold = 45.0.obs; // Match setup controller default
   final RxInt noiseRemoval = 3.obs;
