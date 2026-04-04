@@ -134,7 +134,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
             (rawJson['smoothingFactor'] as num?)?.toDouble() ?? 0.25,
         cornerThreshold:
             (rawJson['cornerThreshold'] as num?)?.toDouble() ?? 45.0,
-        noiseRemoval: (rawJson['noiseRemoval'] as num?)?.toInt() ?? 10,
+        noiseRemoval: (rawJson['noiseRemoval'] as num?)?.toInt() ?? 3,
         autoCrop: (rawJson['autoCrop'] as bool?) ?? false,
         forceHalftone: (rawJson['forceHalftone'] as bool?) ?? false,
         adaptiveThreshold: (rawJson['adaptiveThreshold'] as bool?) ?? false,

@@ -757,9 +757,9 @@ def step7_final_binarization(masks: list, args: argparse.Namespace) -> list:
 
         # Final Guard: Enforce polarity and audit
         if HAS_CONTROLLER:
-            # 🔥 CRITICAL FIX: Don't invert for 1-color user choice
-            force_no_invert = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
-            binary = controller.enforce_polarity(binary, stage=f"final_bin/{i+1}", force_no_invert=force_no_invert)
+            # 🔥 CRITICAL FIX: Force black ink for 1-color user choice
+            force_black_ink = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
+            binary = controller.enforce_polarity(binary, stage=f"final_bin/{i+1}", force_black_ink=force_black_ink)
             controller.audit(binary, stage=f"final_bin_audit/{i+1}")
 
         # Noise removal (skip if edge-aware already handled it)

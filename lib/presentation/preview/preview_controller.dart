@@ -45,7 +45,7 @@ class PreviewController extends GetxController {
   final RxDouble globalThreshold = 200.0.obs;
   final RxDouble smoothingFactor = 0.25.obs; // Match setup controller default
   final RxDouble cornerThreshold = 45.0.obs; // Match setup controller default
-  final RxInt noiseRemoval = 10.obs;
+  final RxInt noiseRemoval = 3.obs;
   final RxBool forceHalftone = false.obs;
   final RxBool adaptiveThreshold = false.obs;
   final RxString filmLabel = "".obs;

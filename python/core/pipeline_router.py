@@ -133,9 +133,9 @@ class PipelineRouter:
         binary = edge_aware_binarize(gray)
         
         # 3. Enforce Polarity & Validate
-        # 🔥 CRITICAL FIX: Don't invert for 1-color user choice
-        force_no_invert = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
-        binary = self.controller.enforce_polarity(binary, stage="text_logo", force_no_invert=force_no_invert)
+        # 🔥 CRITICAL FIX: Force black ink for 1-color user choice
+        force_black_ink = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
+        binary = self.controller.enforce_polarity(binary, stage="text_logo", force_black_ink=force_black_ink)
         self.controller.validate_mask_coverage(binary, "text_logo")
         
         # 4. Cleanup (remove tiny noise)
@@ -179,9 +179,9 @@ class PipelineRouter:
             gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
             m = edge_aware_binarize(gray)
             
-            # 🔥 CRITICAL FIX: Don't invert for 1-color user choice
-            force_no_invert = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
-            m = self.controller.enforce_polarity(m, stage="artwork_1color", force_no_invert=force_no_invert)
+            # 🔥 CRITICAL FIX: Force black ink for 1-color user choice
+            force_black_ink = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
+            m = self.controller.enforce_polarity(m, stage="artwork_1color", force_black_ink=force_black_ink)
             
             sep_result = _make_single_color_separation(image)
             masks = [m]

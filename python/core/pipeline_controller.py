@@ -39,7 +39,7 @@ class PipelineController:
     def __init__(self):
         self._audit_log = []
 
-    def enforce_polarity(self, mask: np.ndarray, stage: str = "unknown", force_no_invert: bool = False) -> np.ndarray:
+    def enforce_polarity(self, mask: np.ndarray, stage: str = "unknown", force_black_ink: bool = False) -> np.ndarray:
         """
         The ONLY function allowed to do inversion.
         Ensures: ink=BLACK(0), background=WHITE(255)
@@ -47,7 +47,8 @@ class PipelineController:
         Decision: if mean(mask) <= 127 -> polarity is wrong -> invert
         
         Args:
-            force_no_invert: If True, never invert (used for 1-color user choice)
+            force_black_ink: If True, ensure design is black ink on white background
+                           (used for 1-color user choice to avoid white-on-black)
         """
         if mask is None:
             return None
@@ -71,9 +72,16 @@ class PipelineController:
         # Exception: allow ink_ratio up to 0.98 before forcing inversion
         # (solid fills like full-coverage logos should NOT be inverted)
         
-        # 🔥 CRITICAL FIX: Don't invert for 1-color user choice
-        if force_no_invert:
-            logger.info(f"  [Polarity] {stage}: User forced 1-color -> skipping inversion")
+        # 🔥 CRITICAL FIX: For 1-color user choice, ensure BLACK ink on WHITE background
+        if force_black_ink:
+            # For 1-color artwork, we want: design=black(0), background=white(255)
+            # Check if current polarity is wrong (design is white)
+            if ink_ratio > bg_ratio:
+                # Design is currently white - invert to make it black
+                logger.info(f"  [Polarity] {stage}: 1-color user choice -> forcing black ink (ink={ink_ratio:.1%} > bg={bg_ratio:.1%})")
+                mask = cv2.bitwise_not(mask)
+            else:
+                logger.info(f"  [Polarity] {stage}: 1-color user choice -> polarity correct (ink={ink_ratio:.1%} ≤ bg={bg_ratio:.1%})")
             return mask
             
         if bg_ratio < 0.02:
