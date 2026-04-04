@@ -39,12 +39,15 @@ class PipelineController:
     def __init__(self):
         self._audit_log = []
 
-    def enforce_polarity(self, mask: np.ndarray, stage: str = "unknown") -> np.ndarray:
+    def enforce_polarity(self, mask: np.ndarray, stage: str = "unknown", force_no_invert: bool = False) -> np.ndarray:
         """
         The ONLY function allowed to do inversion.
         Ensures: ink=BLACK(0), background=WHITE(255)
         
         Decision: if mean(mask) <= 127 -> polarity is wrong -> invert
+        
+        Args:
+            force_no_invert: If True, never invert (used for 1-color user choice)
         """
         if mask is None:
             return None
@@ -67,6 +70,12 @@ class PipelineController:
         # Expected: ink=0 (minority), background=255 (majority)
         # Exception: allow ink_ratio up to 0.98 before forcing inversion
         # (solid fills like full-coverage logos should NOT be inverted)
+        
+        # 🔥 CRITICAL FIX: Don't invert for 1-color user choice
+        if force_no_invert:
+            logger.info(f"  [Polarity] {stage}: User forced 1-color -> skipping inversion")
+            return mask
+            
         if bg_ratio < 0.02:
             # Fully flooded mask — don't invert, raise warning
             logger.warning(f"  [Polarity] {stage}: bg_ratio={bg_ratio:.1%} — possible solid fill, skipping inversion")

@@ -34,18 +34,23 @@ def edge_aware_binarize(gray: np.ndarray) -> np.ndarray:
     """
     Improved binarization that preserves solid fill for large text characters.
     Uses large-block adaptive thresholding to avoid hollow outlines.
+    🔥 Enhanced with bilateral filter to reduce edge erosion.
     """
+    # 0. 🔥 CRITICAL FIX: Bilateral filter to preserve edges while smoothing noise
+    # This prevents the "chewed up"/erosion effect
+    bilateral = cv2.bilateralFilter(gray, 9, 75, 75)
+    
     # 1. Global Baseline (Otsu)
-    _, th_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, th_otsu = cv2.threshold(bilateral, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
     # 2. Local Edge Sharpness
     # Use a large block size (relative to image) to ensure solid centers are captured
-    h, w = gray.shape[:2]
+    h, w = bilateral.shape[:2]  # Use bilateral instead of gray
     block_size = int(min(h, w) * 0.15) | 1  # 15% of dimension, must be odd
     block_size = max(51, min(255, block_size))
     
     th_adaptive = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        bilateral, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
         cv2.THRESH_BINARY_INV, block_size, 10
     )
     
@@ -127,7 +132,9 @@ class PipelineRouter:
         binary = edge_aware_binarize(gray)
         
         # 3. Enforce Polarity & Validate
-        binary = self.controller.enforce_polarity(binary, stage="text_logo")
+        # 🔥 CRITICAL FIX: Don't invert for 1-color user choice
+        force_no_invert = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
+        binary = self.controller.enforce_polarity(binary, stage="text_logo", force_no_invert=force_no_invert)
         self.controller.validate_mask_coverage(binary, "text_logo")
         
         # 4. Cleanup (remove tiny noise)
@@ -170,6 +177,11 @@ class PipelineRouter:
             from core.router_utils import _make_single_color_separation
             gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
             m = edge_aware_binarize(gray)
+            
+            # 🔥 CRITICAL FIX: Don't invert for 1-color user choice
+            force_no_invert = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
+            m = self.controller.enforce_polarity(m, stage="artwork_1color", force_no_invert=force_no_invert)
+            
             sep_result = _make_single_color_separation(image)
             masks = [m]
         else:
@@ -222,9 +234,16 @@ class PipelineRouter:
                 continue 
 
         # Task 18 override: cap smoothing for artwork
-        # FIXED: Don't mutate args - calculate effective smoothing for return (BUG-11)
-        effective_smooth = min(args.smoothing_factor, 0.15) if not args.halftone else 0.0
-        logger.info(f'[Router] Artwork smoothing capped: {args.smoothing_factor} -> {effective_smooth}')
+        # 🔥 CRITICAL FIX: Remove harsh capping for 1-color user choice
+        user_forced_1color = (args.colors == 1 and any(a.startswith('--colors') for a in sys.argv))
+        if user_forced_1color:
+            # Don't cap for user 1-color choice - respect user smoothing
+            effective_smooth = args.smoothing_factor
+            logger.info(f'[Router] User 1-color - respecting smoothing: {effective_smooth}')
+        else:
+            # Apply capping for auto-detected cases
+            effective_smooth = min(args.smoothing_factor, 0.25) if not args.halftone else 0.0
+            logger.info(f'[Router] Artwork smoothing capped: {args.smoothing_factor} -> {effective_smooth}')
         
         return PipelineResult(
             masks=processed_masks,
