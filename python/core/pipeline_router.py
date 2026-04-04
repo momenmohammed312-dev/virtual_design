@@ -6,6 +6,7 @@ Virtual Design Silk Screen Studio
 import cv2
 import numpy as np
 import logging
+import sys
 import argparse
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
