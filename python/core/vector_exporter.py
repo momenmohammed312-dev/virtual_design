@@ -8,6 +8,7 @@ NEW: Professional fit-to-page scaling with configurable modes.
 import cv2
 import numpy as np
 import math
+import io
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Literal
 import logging
