@@ -107,6 +107,13 @@ class MaskGenerator:
         """
         label_map = separation_result["label_map"]
         num_colors = separation_result["num_colors"]
+        
+        # 🔥 NEW: Get background mask if available
+        bg_mask = separation_result.get("bg_mask", None)
+        bg_pixels = 0
+        if bg_mask is not None:
+            bg_pixels = np.sum(bg_mask)
+            logger.info(f"[MaskGenerator] Background mask found: {bg_pixels} bg pixels will stay white")
 
         logger.info(f"[MaskGenerator] Generating {num_colors} masks (grayscale_output={grayscale_output})")
         masks = []
@@ -123,19 +130,40 @@ class MaskGenerator:
             mask = np.full(label_map.shape, 255, dtype=np.uint8)
             mask[label_map == i] = 0  # Design pixels = BLACK (ink)
             
+            # 🔥 NEW: Ensure background pixels stay white (255)
+            if bg_mask is not None:
+                mask[bg_mask] = 255  # Background always white (transparent on film)
+            # Also handle label_map == -1 (background label)
+            mask[label_map == -1] = 255
+            
             if grayscale_output:
                 # For halftone: preserve grayscale intensity from original image
                 # Only apply grayscale to design pixels (where mask == 0)
                 selected_pixels = (label_map == i)
                 if np.any(selected_pixels):
                     mask[selected_pixels] = gray_orig[selected_pixels]
+                
+                # Ensure background stays white even in grayscale mode
+                if bg_mask is not None:
+                    mask[bg_mask] = 255
+                mask[label_map == -1] = 255
 
             if apply_cleanup and not grayscale_output:
                 mask = self._cleanup_mask(mask, morph_kernel_size, min_area)
+                # After cleanup, ensure background is still white
+                if bg_mask is not None:
+                    mask[bg_mask] = 255
+                mask[label_map == -1] = 255
 
             # FIXED: Log correct ink coverage (design pixels = 0)
             coverage = self.get_mask_stats(mask)["filled_pixels"]
-            logger.info(f"  Mask {i+1}: {coverage} pixels ({coverage/label_map.size:.1%} coverage)")
+            # Calculate coverage excluding background
+            if bg_mask is not None:
+                fg_pixels_only = np.sum(~bg_mask)
+                coverage_excl_bg = coverage / fg_pixels_only * 100 if fg_pixels_only > 0 else 0
+                logger.info(f"  Mask {i+1}: {coverage} ink pixels ({coverage_excl_bg:.1f}% of foreground)")
+            else:
+                logger.info(f"  Mask {i+1}: {coverage} pixels ({coverage/label_map.size:.1%} coverage)")
 
             masks.append(mask)
 

@@ -2,12 +2,15 @@
 color_separator.py — Color Separation with LAB->RGB brightness sorting fix
 Virtual Design Silk Screen Studio
 FIXED: BUG D - LAB->RGB brightness calculation for correct color ordering
+FIXED: Background detection and removal for clean color separation
 """
 
 import cv2
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 import logging
+
+from core.background_detector import detect_background, BackgroundMode
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +29,12 @@ class ColorSeparator:
         max_iterations: int = 20,
         epsilon: float = 1.0,
         attempts: int = 3,
+        background_mode: BackgroundMode = "auto",
+        bg_tolerance: int = 30,
     ) -> Dict:
         """
-        Separate image into specified number of color layers.
+        Separate image into color layers using K-means clustering.
+        🔥 NEW: Proper background detection and removal before clustering.
 
         Args:
             image: Input image (BGR format)
@@ -37,17 +43,25 @@ class ColorSeparator:
             max_iterations: Maximum K-means iterations
             epsilon: K-means convergence epsilon
             attempts: Number of K-means attempts (best result kept)
+            background_mode: Background detection mode ("auto", "remove_white", "remove_black", "keep_all")
+            bg_tolerance: Color distance tolerance for background matching
 
         Returns:
             Dictionary with separation results:
-            - 'label_map': Array with pixel labels (0 to num_colors-1)
+            - 'label_map': Array with pixel labels (-1 for background, 0..N-1 for colors)
             - 'centers': Color centers (in original BGR format)
             - 'num_colors': Actual number of colors
             - 'labels': List of labels for each color (sorted by brightness)
             - 'color_masks': List of binary masks for each color
+            - 'bg_mask': Boolean mask of background pixels
+            - 'fg_mask': Boolean mask of foreground pixels
+            - 'bg_stats': Background detection statistics
         """
         if len(image.shape) != 3 or image.shape[2] != 3:
             raise ValueError("Input image must be BGR format with 3 channels")
+        
+        h, w = image.shape[:2]
+        logger.info(f"[ColorSeparator] Starting separation: {w}x{h}, {num_colors} colors, bg_mode='{background_mode}'")
 
         h, w, _ = image.shape
         total_pixels = h * w
@@ -58,45 +72,43 @@ class ColorSeparator:
         img_small = cv2.resize(image, (50, 50), interpolation=cv2.INTER_AREA)
         total_unique_colors = len(np.unique(img_small.reshape(-1, 3), axis=0))
         
-        # Also check histogram concentration: if >80% of pixels are within 15 luma of the mode, it's solid
+        # ── Background Detection & Removal ──────────────────────────────────
+        # 🔥 NEW: Robust background detection using border sampling
+        
+        # Check if image is solid (few unique colors) - skip background removal
         hist = cv2.calcHist([cv2.cvtColor(img_small, cv2.COLOR_BGR2GRAY)], [0], None, [256], [0, 256]).flatten()
         mode_luma = int(np.argmax(hist))
         mode_concentration = np.sum(hist[max(0, mode_luma-7):min(256, mode_luma+8)]) / (hist.sum() + 1e-6)
-        
         is_solid = (total_unique_colors < 10) or (mode_concentration > 0.80)
-
-        # ── Global Background Pre-Filtering ──────────────────────────────────
-        # FIXED: Use histogram mode instead of corner sampling (BUG-07)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
         if is_solid:
             # Solid image — skip background detection, cluster everything
             logger.info(f"[ColorSeparator] Solid image detected ({total_unique_colors} unique colors). Skipping background removal.")
             bg_mask = np.zeros((h, w), dtype=bool)
+            fg_mask = np.ones((h, w), dtype=bool)
+            bg_stats = {
+                "mode": "solid_skip",
+                "bg_pixels": 0,
+                "fg_pixels": total_pixels,
+                "bg_coverage": 0.0,
+                "fg_coverage": 100.0
+            }
         else:
-            # Use histogram mode for robust background detection
-            # 🔥 FIX 2: Fix background detection
-            hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-            bg_luma = int(np.argmax(hist))
-            
-            # sanity check
-            if bg_luma < 50:
-                bg_type = "dark"
-                logger.info(f"[ColorSeparator] Adaptive: Detected BLACK background (luma={bg_luma})")
-                bg_mask = np.abs(gray.astype(int) - bg_luma) < 15
-            elif bg_luma > 200:
-                bg_type = "light"
-                logger.info(f"[ColorSeparator] Adaptive: Detected WHITE background (luma={bg_luma})")
-                bg_mask = np.abs(gray.astype(int) - bg_luma) < 15
+            # Use robust background detector
+            if background_mode == "keep_all":
+                bg_mode = "keep_all"
+            elif background_mode == "remove_white":
+                bg_mode = "remove_white"
+            elif background_mode == "remove_black":
+                bg_mode = "remove_black"
             else:
-                bg_type = "uncertain"
-                logger.info(f"[ColorSeparator] Adaptive: UNCERTAIN background (luma={bg_luma}) -> fallback")
-                # use adaptive threshold fallback or just let kmeans handle all pixels
-                _, otsu_thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                bg_mask = np.zeros((h, w), dtype=bool)
+                bg_mode = "auto"
             
-        fg_mask = ~bg_mask
+            bg_mask, fg_mask, bg_stats = detect_background(image, mode=bg_mode, tolerance=bg_tolerance)
+            logger.info(f"[ColorSeparator] Background detection: {bg_stats['bg_pixels']} bg, {bg_stats['fg_pixels']} fg pixels")
+        
         fg_pixel_count = int(np.sum(fg_mask))
+        bg_pixel_count = int(np.sum(bg_mask))
         
         logger.info(f"[ColorSeparator] Separating {num_colors} colors (LAB={use_lab}, "
                     f"fg_pixels={fg_pixel_count}/{total_pixels} = "
@@ -285,6 +297,11 @@ class ColorSeparator:
         except Exception:
             pass 
 
+        # 🔥 NEW: Log background/foreground separation stats
+        logger.info(f"[ColorSeparator] Final separation: {fg_pixel_count} foreground pixels "
+                   f"({fg_pixel_count/total_pixels*100:.1f}%), "
+                   f"{bg_pixel_count} background pixels removed")
+        
         return {
             'label_map': sorted_label_map,
             'centers': sorted_centers,
@@ -295,7 +312,10 @@ class ColorSeparator:
             'compactness': float(best_compactness),
             'color_space': color_space,
             'colors': colors_rgb,           
-            'color_names': color_names,     
+            'color_names': color_names,
+            'bg_mask': bg_mask,
+            'fg_mask': fg_mask,
+            'bg_stats': bg_stats,
             'image': None,                  
         }
 
