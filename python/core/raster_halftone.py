@@ -33,7 +33,7 @@ DotFunction = Literal["round", "ellipse", "euclidean", "line"]
 
 @dataclass
 class RasterHalftoneConfig:
-    lpi:       int   = 55          # Lines Per Inch
+    lpi:       int   = 85          # Lines Per Inch (higher = smaller dots)
     dpi:       int   = 1200        # Output device resolution
     angle:     float = 45.0        # Screen angle (degrees)
     dot_fn:    DotFunction = "round"

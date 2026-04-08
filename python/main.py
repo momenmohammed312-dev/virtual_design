@@ -295,7 +295,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="Output directory")
     parser.add_argument("--dpi", type=int, default=300, help="Output resolution (DPI)")
     parser.add_argument("--mesh-count", type=int, default=160, help="Screen mesh count")
-    parser.add_argument("--lpi", type=int, default=55, help="Halftone LPI limit")
+    parser.add_argument("--lpi", type=int, default=85, help="Halftone LPI limit (higher = smaller dots)")
     parser.add_argument("--colors", type=int, default=0, help="Number of colors (0=auto)")
     parser.add_argument("--image-type", choices=["text_logo", "artwork", "photo", "auto"], default="auto")
     parser.add_argument("--halftone", action="store_true", help="Force halftone mode")
@@ -333,7 +333,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--auto-colors", action="store_true", help="Enable AI-based automatic parameters optimization")
     
     # AI Vision Extended Parameters
-    parser.add_argument("--dot-shape", choices=["round", "ellipse", "line", "square"], default="round")
+    parser.add_argument("--dot-shape", choices=["round", "ellipse", "line", "square"], default="ellipse")
     parser.add_argument("--upscale-factor", type=float, default=1.0)
     parser.add_argument("--denoise-strength", type=int, default=3)
     parser.add_argument("--contour-min-area", type=int, default=50)

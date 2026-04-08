@@ -413,13 +413,22 @@ class PythonProcessor {
         pythonCommand,
         args,
         workingDirectory: scriptsDir,
+        environment: {
+          ...Platform.environment,
+          'PYTHONUNBUFFERED': '1',
+        },
       );
 
       final stdoutBuffer = StringBuffer();
       final stderrBuffer = StringBuffer();
-      process.stdout.transform(utf8.decoder).listen(stdoutBuffer.write);
-      process.stderr.transform(utf8.decoder).listen(stderrBuffer.write);
 
+      // 🔥 FIX: Properly await both stdout and stderr streams before checking exit code
+      final stdoutFuture =
+          process.stdout.transform(utf8.decoder).forEach(stdoutBuffer.write);
+      final stderrFuture =
+          process.stderr.transform(utf8.decoder).forEach(stderrBuffer.write);
+
+      // Wait for exit code
       final exitCode = await process.exitCode.timeout(
         const Duration(seconds: 120),
         onTimeout: () {
@@ -428,8 +437,12 @@ class PythonProcessor {
         },
       );
 
+      // 🔥 FIX: Wait for streams to complete
+      await Future.wait([stdoutFuture, stderrFuture]);
+
       if (exitCode == 0) {
         final output = stdoutBuffer.toString();
+        debugPrint('[PythonProcessor] Auto-Fix stdout: $output');
         // Parse JSON response
         final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(output);
         if (jsonMatch != null) {
@@ -440,7 +453,7 @@ class PythonProcessor {
       }
 
       debugPrint(
-          '[PythonProcessor] Auto-Fix failed: ${stderrBuffer.toString()}');
+          '[PythonProcessor] Auto-Fix failed (exit=$exitCode): ${stderrBuffer.toString()}');
       return null;
     } catch (e) {
       debugPrint('[PythonProcessor] Auto-Fix error: $e');
@@ -487,9 +500,14 @@ class PythonProcessor {
 
       final stdoutBuffer = StringBuffer();
       final stderrBuffer = StringBuffer();
-      process.stdout.transform(utf8.decoder).listen(stdoutBuffer.write);
-      process.stderr.transform(utf8.decoder).listen(stderrBuffer.write);
 
+      // 🔥 FIX: Properly await both stdout and stderr streams before checking exit code
+      final stdoutFuture =
+          process.stdout.transform(utf8.decoder).forEach(stdoutBuffer.write);
+      final stderrFuture =
+          process.stderr.transform(utf8.decoder).forEach(stderrBuffer.write);
+
+      // Wait for exit code
       final exitCode = await process.exitCode.timeout(
         const Duration(seconds: 120),
         onTimeout: () {
@@ -498,8 +516,12 @@ class PythonProcessor {
         },
       );
 
+      // 🔥 FIX: Wait for streams to complete
+      await Future.wait([stdoutFuture, stderrFuture]);
+
       if (exitCode == 0) {
         final output = stdoutBuffer.toString();
+        debugPrint('[PythonProcessor] Auto-Fix stdout: $output');
         final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(output);
         if (jsonMatch != null) {
           final json = jsonDecode(jsonMatch.group(0)!);
@@ -509,7 +531,7 @@ class PythonProcessor {
       }
 
       debugPrint(
-          '[PythonProcessor] Auto-Fix with prompt failed: ${stderrBuffer.toString()}');
+          '[PythonProcessor] Auto-Fix with prompt failed (exit=$exitCode): ${stderrBuffer.toString()}');
       return null;
     } catch (e) {
       debugPrint('[PythonProcessor] Auto-Fix with prompt error: $e');

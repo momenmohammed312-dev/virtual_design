@@ -22,7 +22,7 @@ class SmartResult:
     corner_threshold: float = 30.0
     global_threshold: int = 127
     use_halftone: bool = False
-    lpi: int = 55
+    lpi: int = 85
     num_colors: int = 0
     use_potrace_style: bool = False
     
@@ -145,7 +145,7 @@ class SmartAnalyzer:
             corner_threshold=params.get('corner_threshold', 30.0),
             global_threshold=params.get('global_threshold', 127),
             use_halftone=params.get('use_halftone', False),
-            lpi=params.get('lpi', 55),
+            lpi=params.get('lpi', 85),
             num_colors=params.get('num_colors', 0),
             use_potrace_style=params.get('use_potrace_style', False),
             edge_density=float(metrics['edge_density']),

@@ -427,7 +427,7 @@ def _parse_response(raw: str) -> Optional[dict]:
     result["num_colors"]      = max(1, min(8, result["num_colors"]))
     result["smoothing_factor"]= max(0.1, min(0.5, result["smoothing_factor"]))
     result["corner_threshold"]= float(max(30, min(140, result.get("corner_threshold", 95.0))))
-    result["lpi"]             = int(max(45, min(85, result.get("lpi", 55))))
+    result["lpi"]             = int(max(65, min(150, result.get("lpi", 85))))
 
     # Enforce constraints
     if result["image_class"] == "photo":

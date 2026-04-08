@@ -132,8 +132,8 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     
     # Auto-calc LPI if needed
     effective_lpi = args.lpi
-    if effective_lpi == 65:  # default
-        effective_lpi = min(120, max(55, output_dpi // 5))
+    if effective_lpi == 85:  # default
+        effective_lpi = min(150, max(65, output_dpi // 5))
 
     cmyk_angles = [15.0, 45.0, 75.0, 0.0]
     result = []
@@ -183,8 +183,8 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
 def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[np.ndarray]:
     """Fallback legacy halftone if RasterHalftoneEngine unavailable."""
     effective_lpi = args.lpi
-    if effective_lpi == 65:
-        effective_lpi = min(120, max(55, args.dpi // 5))
+    if effective_lpi == 85:
+        effective_lpi = min(150, max(65, args.dpi // 5))
     cmyk_angles = [15.0, 45.0, 75.0, 0.0]
     result = []
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))

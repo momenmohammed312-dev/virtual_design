@@ -130,7 +130,7 @@ class IHalftoneEngine(ABC):
     def generate(
         self,
         grayscale: np.ndarray,
-        lpi: int = 55,
+        lpi: int = 85,
         angle: float = 45.0,
     ) -> Any:
         """
@@ -258,7 +258,7 @@ class VectorizerAdapter(IVectorizer):
 class RasterHalftoneAdapter(IHalftoneEngine):
     """Wraps RasterHalftoneEngine behind IHalftoneEngine."""
 
-    def generate(self, grayscale: np.ndarray, lpi: int = 55, angle: float = 45.0) -> np.ndarray:
+    def generate(self, grayscale: np.ndarray, lpi: int = 85, angle: float = 45.0) -> np.ndarray:
         from core.raster_halftone import RasterHalftoneConfig, RasterHalftoneEngine
         cfg = RasterHalftoneConfig(lpi=lpi, angle=angle)
         return RasterHalftoneEngine(cfg).generate(grayscale)
@@ -270,7 +270,7 @@ class VectorHalftoneAdapter(IHalftoneEngine):
     def __init__(self, input_dpi: int = 300):
         self._dpi = input_dpi
 
-    def generate(self, grayscale: np.ndarray, lpi: int = 55, angle: float = 45.0):
+    def generate(self, grayscale: np.ndarray, lpi: int = 85, angle: float = 45.0):
         from core.vector_halftone import VectorHalftoneConfig, VectorHalftoneEngine
         cfg = VectorHalftoneConfig(lpi=lpi, input_dpi=self._dpi, angle=angle)
         return VectorHalftoneEngine(cfg).generate(grayscale)

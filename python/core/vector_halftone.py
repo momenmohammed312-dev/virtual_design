@@ -41,7 +41,7 @@ class VectorDot:
 
 @dataclass
 class VectorHalftoneConfig:
-    lpi:         int       = 55          # Lines Per Inch
+    lpi:         int       = 85          # Lines Per Inch (higher = smaller dots)
     input_dpi:   int       = 300         # We need this to convert lpi->pixels
     angle:       float     = 45.0        # Screen angle (degrees)
     dot_shape:   DotShape  = "circle"
