@@ -36,6 +36,13 @@ class SetupController extends GetxController {
   bool cornerAdjustmentMade = false;
   bool thresholdAdjustmentMade = false;
 
+  // AI Auto-Fix controls
+  final RxBool isAiAutoFix = true.obs; // Auto-adjust sliders by AI
+  final RxInt selectedDpi = 1200.obs; // Default high DPI for halftone
+  final RxString colorComplexity = 'Auto'.obs; // Auto or 1-8 colors
+
+  // Available DPI options
+  final List<int> dpiOptions = [300, 450, 600, 1200, 2400];
 
   // Paper size
   final RxDouble paperWidthCm = 21.0.obs;
@@ -162,6 +169,10 @@ class SetupController extends GetxController {
     smoothingAdjustmentMade = false;
     cornerAdjustmentMade = false;
     thresholdAdjustmentMade = false;
+    // New AI controls
+    isAiAutoFix.value = true;
+    selectedDpi.value = 1200;
+    colorComplexity.value = 'Auto';
     update();
   }
 

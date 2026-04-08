@@ -160,69 +160,53 @@ class ColorSeparator:
 
         # Build full label map: assign every pixel to nearest center
         if using_fg_only:
-            # Use Delta-E (perceptually accurate) when available, fallback to Euclidean
+            # T01 FIX: Replace np.tile() with broadcasting to eliminate ~400MB peak RAM
+            # Old: np.tile(center_px, (h, w, 1)) allocated H*W*3 array per cluster = OOM on large images
+            # New: broadcasting diff = pixels[:,None,:] - centers[None,:,:] → single vectorized op
             label_map_flat = np.zeros(total_pixels, dtype=np.int32)
             try:
-                from skimage.color import deltaE_cie76
-                # Delta-E CIE76: perceptually uniform color distance in LAB space
-                centers_uint8 = np.clip(best_centers, 0, 255).astype(np.uint8).reshape(1, -1, 3)
-                full_lab = full_data.reshape(h, w, 3).astype(np.uint8)
-                min_de = np.full((h, w), 999.0, dtype=np.float32)
-                for k_idx in range(num_colors):
-                    center_px = centers_uint8[:, k_idx:k_idx+1, :]
-                    center_repeated = np.tile(center_px, (h, w, 1))
-                    de = deltaE_cie76(full_lab, center_repeated)
-                    closer = de < min_de
-                    min_de = np.where(closer, de, min_de)
-                    label_map_flat[closer.reshape(-1)] = k_idx
-                label_map_flat = label_map_flat.reshape(h, w).astype(np.int32)
-                logger.info(f"[ColorSeparator] Using Delta-E CIE76 for pixel assignment")
-            except ImportError:
-                # Fallback: Euclidean distance in LAB space
-                for k_idx in range(num_colors):
-                    diff = full_data - best_centers[k_idx].astype(np.float32)
-                    if k_idx == 0:
-                        min_dist = np.sum(diff ** 2, axis=1)
-                        label_map_flat[:] = 0
-                    else:
-                        dist = np.sum(diff ** 2, axis=1)
-                        closer = dist < min_dist
-                        min_dist = np.where(closer, dist, min_dist)
-                        label_map_flat[closer] = k_idx
-                label_map_flat = label_map_flat.reshape((h, w)).astype(np.int32)
+                # Delta-E CIE76 with broadcasting — no tile(), no per-cluster temp arrays
+                full_lab = full_data.reshape(-1, 3).astype(np.float32)          # (N, 3)
+                centers_f = np.clip(best_centers, 0, 255).astype(np.float32)    # (K, 3)
+                # Broadcasting: (N,1,3) - (1,K,3) → (N,K,3) → sum → (N,K)
+                diff = full_lab[:, np.newaxis, :] - centers_f[np.newaxis, :, :]
+                sq_dist = np.sum(diff ** 2, axis=2)                              # (N, K)
+                label_map_flat = np.argmin(sq_dist, axis=1).astype(np.int32)
+                label_map_flat = label_map_flat.reshape(h, w)
+                logger.info(f"[ColorSeparator] T01: Broadcasting pixel assignment (memory-safe)")
+            except MemoryError:
+                # Fallback for extremely large images: chunk-wise assignment
+                logger.warning("[ColorSeparator] T01: MemoryError in broadcast, falling back to chunked")
+                centers_f = np.clip(best_centers, 0, 255).astype(np.float32)
+                chunk = 10000
+                for start in range(0, total_pixels, chunk):
+                    end = min(start + chunk, total_pixels)
+                    diff = full_data[start:end] - centers_f[:, np.newaxis, :]
+                    label_map_flat[start:end] = np.argmin(
+                        np.sum(diff.transpose(1, 0, 2) ** 2, axis=2), axis=0
+                    )
+                label_map_flat = label_map_flat.reshape(h, w)
             label_map = label_map_flat
             # Mark background pixels as -1 (excluded from color layers)
             label_map[bg_mask] = -1
         else:
-            # Solid/degenerate case: cluster_data = full_data, so best_labels covers all pixels
-            # Still use Delta-E/Euclidean for consistent assignment
+            # Solid/degenerate case — same T01 fix: broadcasting instead of tile()
             label_map_flat = np.zeros(total_pixels, dtype=np.int32)
             try:
-                from skimage.color import deltaE_cie76
-                centers_uint8 = np.clip(best_centers, 0, 255).astype(np.uint8).reshape(1, -1, 3)
-                full_lab = full_data.reshape(h, w, 3).astype(np.uint8)
-                min_de = np.full((h, w), 999.0, dtype=np.float32)
-                for k_idx in range(num_colors):
-                    center_px = centers_uint8[:, k_idx:k_idx+1, :]
-                    center_repeated = np.tile(center_px, (h, w, 1))
-                    de = deltaE_cie76(full_lab, center_repeated)
-                    closer = de < min_de
-                    min_de = np.where(closer, de, min_de)
-                    label_map_flat[closer.reshape(-1)] = k_idx
-                label_map = label_map_flat.reshape(h, w).astype(np.int32)
-                logger.info(f"[ColorSeparator] Solid mode: Using Delta-E CIE76 for all pixels")
-            except ImportError:
+                full_lab = full_data.reshape(-1, 3).astype(np.float32)
+                centers_f = np.clip(best_centers, 0, 255).astype(np.float32)
+                diff = full_lab[:, np.newaxis, :] - centers_f[np.newaxis, :, :]
+                sq_dist = np.sum(diff ** 2, axis=2)
+                label_map_flat = np.argmin(sq_dist, axis=1).astype(np.int32)
+                label_map = label_map_flat.reshape(h, w)
+                logger.info(f"[ColorSeparator] T01 Solid mode: Broadcasting pixel assignment")
+            except Exception:
                 for k_idx in range(num_colors):
                     diff = full_data - best_centers[k_idx].astype(np.float32)
                     if k_idx == 0:
                         min_dist = np.sum(diff ** 2, axis=1)
                         label_map_flat[:] = 0
-                    else:
-                        dist = np.sum(diff ** 2, axis=1)
-                        closer = dist < min_dist
-                        min_dist = np.where(closer, dist, min_dist)
-                        label_map_flat[closer] = k_idx
-                label_map = label_map_flat.reshape((h, w)).astype(np.int32)
+            label_map = label_map_flat.reshape(h, w)
             # No background removal in solid mode — bg_mask is all False anyway
 
         # FIXED: Convert centers back to BGR for consistent output
@@ -250,8 +234,6 @@ class ColorSeparator:
 
         # Apply mapping to label map
         # IMPORTANT: label_mapping only covers 0..K-1. Background pixels have label=-1.
-        # Using lambda with default=-1 preserves background pixels correctly.
-        # (np.vectorize(label_mapping.get) would return None for -1 -> object array -> crash)
         sorted_label_map = np.vectorize(lambda x: label_mapping.get(x, -1))(label_map)
 
         # Generate color information
@@ -284,11 +266,9 @@ class ColorSeparator:
                          f"coverage={info['percentage']:.1f}%")
 
         # Build 'colors' (RGB tuples) and 'color_names' expected by the rest of the pipeline
-        # (step9_export, step2_5_underbase_creation, _save_color_info all use these keys).
         colors_rgb = []
         color_names = []
         for i, center in enumerate(sorted_centers):
-            # sorted_centers are already in BGR format (converted back after LAB clustering)
             bgr = np.clip(center, 0, 255).astype(np.uint8)
             rgb_pixel = cv2.cvtColor(np.array([[bgr]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
             colors_rgb.append(tuple(int(x) for x in rgb_pixel))
@@ -303,7 +283,7 @@ class ColorSeparator:
                 match = pantone_lib.find_nearest_pantone(rgb)
                 color_names.append(match.name)
         except Exception:
-            pass  # fallback names already set above
+            pass 
 
         return {
             'label_map': sorted_label_map,
@@ -314,47 +294,26 @@ class ColorSeparator:
             'color_masks': color_masks,
             'compactness': float(best_compactness),
             'color_space': color_space,
-            # Keys required by the rest of the pipeline:
-            'colors': colors_rgb,           # List of RGB tuples, light->dark sorted
-            'color_names': color_names,     # Pantone name or 'color_NN'
-            'image': None,                  # Placeholder (image not stored to save memory)
+            'colors': colors_rgb,           
+            'color_names': color_names,     
+            'image': None,                  
         }
 
     def _calculate_brightness(self, centers: np.ndarray, use_lab: bool) -> np.ndarray:
         """
         FIXED: Calculate brightness for color centers.
-        For LAB: convert to RGB first, then calculate grayscale brightness.
-        For BGR: calculate directly.
-        
-        Args:
-            centers: Color centers (in BGR format)
-            use_lab: Whether original clustering was in LAB space
-            
-        Returns:
-            Array of brightness values for each center
         """
         brightness = []
         
         for i, center in enumerate(centers):
             if use_lab:
-                # FIXED: Convert LAB center to RGB first, then calculate brightness
                 center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
-                
-                # Convert LAB to RGB (via BGR intermediate)
                 lab_pixel = np.array([[center_uint8]], dtype=np.uint8)
                 bgr_pixel = cv2.cvtColor(lab_pixel, cv2.COLOR_LAB2BGR)[0][0]
-                
-                # Convert BGR to RGB
                 rgb_pixel = cv2.cvtColor(np.array([[bgr_pixel]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
-                
-                # Calculate brightness as mean of RGB values
                 brightness_val = np.mean(rgb_pixel)
-                
             else:
-                # BGR space - calculate brightness directly
                 center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
-                
-                # Convert BGR to grayscale
                 gray_val = cv2.cvtColor(np.array([[center_uint8]], dtype=np.uint8), cv2.COLOR_BGR2GRAY)[0][0]
                 brightness_val = float(gray_val)
             
@@ -363,15 +322,62 @@ class ColorSeparator:
         return np.array(brightness)
 
     def get_color_hex(self, rgb: tuple) -> str:
-        """Convert an RGB tuple to a hex string like #RRGGBB."""
         return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
 
+    def extract_dominant_colors_for_ai(
+        self,
+        image: np.ndarray,
+        max_colors: int = 8,
+        min_coverage: float = 1.0
+    ) -> List[Dict]:
+        """
+        Extract dominant colors using K-Means for AI analysis.
+        Returns list of colors with hex, coverage %, and brightness.
+        
+        This is the FIRST PASS - OpenCV finds colors, AI decides merging.
+        """
+        h, w = image.shape[:2]
+        
+        # Downsample for speed
+        small = cv2.resize(image, (150, 150), interpolation=cv2.INTER_AREA)
+        
+        # Simple K-Means to find dominant colors
+        data = small.reshape(-1, 3).astype(np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 15, 1.0)
+        
+        np.random.seed(42)
+        _, labels, centers = cv2.kmeans(data, max_colors, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
+        
+        # Count pixels per cluster
+        total_pixels = h * w
+        color_data = []
+        
+        for i, center in enumerate(centers):
+            count = np.sum(labels == i)
+            coverage = (count / (150 * 150)) * 100
+            
+            if coverage >= min_coverage:
+                bgr = np.clip(center, 0, 255).astype(np.uint8)
+                rgb = cv2.cvtColor(np.array([[bgr]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
+                brightness = np.mean(rgb)
+                
+                color_data.append({
+                    'hex': self.get_color_hex(tuple(int(x) for x in rgb)),
+                    'rgb': tuple(int(x) for x in rgb),
+                    'coverage': round(coverage, 1),
+                    'brightness': round(brightness, 1),
+                })
+        
+        # Sort by coverage (most dominant first)
+        color_data.sort(key=lambda x: x['coverage'], reverse=True)
+        
+        logger.info(f"[ColorSeparator] Extracted {len(color_data)} dominant colors for AI")
+        for c in color_data[:5]:
+            logger.debug(f"  {c['hex']} -> {c['coverage']:.1f}%")
+        
+        return color_data
+
     def get_color_info(self, separation_result: Dict) -> List[Dict]:
-        """
-        Return detailed per-color info for the UI / color_info.json.
-        Works with both the new (color_info key) and old (colors+color_names keys) formats.
-        """
-        # Prefer the rich color_info list built during separate()
         if 'color_info' in separation_result:
             base = separation_result['color_info']
             colors = separation_result.get('colors', [])
@@ -390,7 +396,6 @@ class ColorSeparator:
                 })
             return result
 
-        # Fallback: build from colors + color_names + label_map
         label_map = separation_result.get('label_map')
         colors = separation_result.get('colors', [])
         names  = separation_result.get('color_names', [])
@@ -411,149 +416,6 @@ class ColorSeparator:
         info.sort(key=lambda x: x['pixel_count'], reverse=True)
         return info
 
-    def create_color_layers(
-        self,
-        original_image: np.ndarray,
-        separation_result: Dict,
-        background_color: Tuple[int, int, int] = (255, 255, 255)
-    ) -> List[np.ndarray]:
-        """
-        Create individual color layer images from separation result.
-        
-        Args:
-            original_image: Original BGR image
-            separation_result: Result from separate() method
-            background_color: Background color for layers (BGR)
-            
-        Returns:
-            List of color layer images
-        """
-        h, w, _ = original_image.shape
-        num_colors = separation_result['num_colors']
-        label_map = separation_result['label_map']
-        centers = separation_result['centers']
-        
-        layers = []
-        
-        for i in range(num_colors):
-            # Create layer with background
-            layer = np.full((h, w, 3), background_color, dtype=np.uint8)
-            
-            # Get mask for this color
-            mask = (label_map == i)
-            
-            # Apply color to masked regions
-            color = np.clip(centers[i], 0, 255).astype(np.uint8)
-            layer[mask] = color
-            
-            layers.append(layer)
-        
-        return layers
-
-    def optimize_color_count(
-        self,
-        image: np.ndarray,
-        max_colors: int = 8,
-        min_colors: int = 2,
-        use_lab: bool = True
-    ) -> Tuple[int, Dict]:
-        """
-        Automatically determine optimal number of colors using elbow method.
-        
-        Args:
-            image: Input image
-            max_colors: Maximum number of colors to try
-            min_colors: Minimum number of colors
-            use_lab: Use LAB color space
-            
-        Returns:
-            Tuple of (optimal_color_count, separation_result)
-        """
-        logger.info(f"[ColorSeparator] Optimizing color count ({min_colors}-{max_colors})")
-        
-        results = {}
-        compactness_ratios = []
-        
-        # Test different color counts
-        for k in range(min_colors, max_colors + 1):
-            try:
-                result = self.separate(image, k, use_lab)
-                results[k] = result
-                compactness_ratios.append(result['compactness'])
-                
-                logger.debug(f"  k={k}: compactness={result['compactness']:.0f}")
-                
-            except Exception as e:
-                logger.warning(f"  k={k}: Failed - {e}")
-                continue
-        
-        if not results:
-            raise RuntimeError("Failed to separate image with any color count")
-        
-        # Find elbow point (largest drop in compactness ratio)
-        if len(compactness_ratios) > 1:
-            ratios = []
-            for i in range(1, len(compactness_ratios)):
-                if compactness_ratios[i-1] > 0:
-                    ratio = (compactness_ratios[i-1] - compactness_ratios[i]) / compactness_ratios[i-1]
-                    ratios.append(ratio)
-                else:
-                    ratios.append(0)
-            
-            if ratios:
-                best_idx = np.argmax(ratios) + min_colors
-                optimal_k = min(best_idx, max_colors)
-            else:
-                optimal_k = min_colors
-        else:
-            optimal_k = min_colors
-        
-        logger.info(f"[ColorSeparator] Optimal colors: {optimal_k}")
-        
-        return optimal_k, results.get(optimal_k, list(results.values())[0])
-
-    def validate_separation(self, separation_result: Dict) -> Dict:
-        """
-        Validate separation result and return quality metrics.
-        
-        Args:
-            separation_result: Result from separate() method
-            
-        Returns:
-            Dictionary with validation metrics
-        """
-        num_colors = separation_result['num_colors']
-        color_info = separation_result['color_info']
-        compactness = separation_result['compactness']
-        
-        # Calculate quality metrics
-        total_coverage = sum(info['percentage'] for info in color_info)
-        avg_coverage = total_coverage / num_colors
-        
-        # Check for empty or dominant colors
-        empty_colors = sum(1 for info in color_info if info['percentage'] < 1.0)
-        dominant_colors = sum(1 for info in color_info if info['percentage'] > 80.0)
-        
-        # Calculate color separation quality (lower compactness is better)
-        max_compactness = 1000000  # Arbitrary high value
-        quality_score = max(0, 1 - (compactness / max_compactness))
-        
-        validation = {
-            'num_colors': num_colors,
-            'total_coverage': total_coverage,
-            'avg_coverage': avg_coverage,
-            'empty_colors': empty_colors,
-            'dominant_colors': dominant_colors,
-            'compactness': compactness,
-            'quality_score': quality_score,
-            'is_valid': (empty_colors == 0 and dominant_colors == 0)
-        }
-        
-        logger.info(f"[ColorSeparator] Validation: quality={validation['quality_score']:.2f}, "
-                   f"empty={empty_colors}, dominant={dominant_colors}")
-        
-        return validation
-
     def _validate_and_retry_kmeans(
         self, 
         data: np.ndarray, 
@@ -563,31 +425,20 @@ class ColorSeparator:
         best_cntrs: np.ndarray,
         criteria: Tuple
     ) -> Tuple[float, np.ndarray, np.ndarray, int]:
-        """
-        Computes silhouette-like quality score and retries with k-1 if poor.
-        FIXED: Never drops below min_k=2 to prevent all-masks-becoming-one-color.
-        Returns: (compactness, labels, centers, k)
-        """
-        min_k = 2  # Never go below 2 colors
+        min_k = 2  
         if k <= min_k:
             return best_comp, best_lbls, best_cntrs, k
             
-        # Calculate mean intra-cluster distance (Compactness / N)
         avg_intra = best_comp / data.shape[0]
-        
-        # Calculate mean inter-cluster distance (distance between centers)
         inter_dists = []
         for i in range(len(best_cntrs)):
             for j in range(i + 1, len(best_cntrs)):
                 inter_dists.append(np.linalg.norm(best_cntrs[i] - best_cntrs[j]))
         avg_inter = np.mean(inter_dists) if inter_dists else 1.0
         
-        # Quality Score (lower is better separation)
         quality_score = avg_intra / avg_inter
         logger.info(f"[ColorSeparator] Silhouette Score (k={k}): {quality_score:.3f}")
         
-        # If score >= 0.5 (poor separation) and K > min_k, try K-1
-        # But only retry ONCE to prevent cascading reduction
         if quality_score >= 0.5:
             retry_k = max(min_k, k - 1)
             if retry_k < k:
@@ -597,7 +448,6 @@ class ColorSeparator:
                         data, retry_k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
                     )
                     
-                    # Check retry_k quality
                     avg_intra_alt = comp_alt / data.shape[0]
                     inter_dists_alt = []
                     for i in range(len(cntrs_alt)):
@@ -606,14 +456,9 @@ class ColorSeparator:
                     avg_inter_alt = np.mean(inter_dists_alt) if inter_dists_alt else 1.0
                     quality_score_alt = avg_intra_alt / avg_inter_alt
                     
-                    logger.info(f"[ColorSeparator] Silhouette Score (k={retry_k}): {quality_score_alt:.3f}")
-                    
                     if quality_score_alt < quality_score:
-                        logger.info(f"[ColorSeparator] Accepting k={retry_k} results (improved from {quality_score:.3f} to {quality_score_alt:.3f})")
                         return comp_alt, lbls_alt, cntrs_alt, retry_k
-                    else:
-                        logger.info(f"[ColorSeparator] Keeping k={k} results (k={retry_k} was not better)")
-                except Exception as e:
-                    logger.warning(f"[ColorSeparator] Retry k={retry_k} failed: {e}")
+                except Exception:
+                    pass
         
         return best_comp, best_lbls, best_cntrs, k

@@ -71,7 +71,7 @@ class PrintJobConfig:
             suggested = min(suggested, int(limit))
             logger.warning(
                 f"[JobConfig] Mesh/LPI ratio out of range (mesh={mesh}, lpi={effective_lpi}, ratio={ratio:.2f}). "
-                f"Target≈4–5. Suggested LPI={suggested} (range {lpi_min}-{lpi_max})."
+                f"Target approx 4-5. Suggested LPI={suggested} (range {lpi_min}-{lpi_max})."
             )
             if auto_fix and suggested > 0 and suggested != effective_lpi:
                 logger.warning(f"[JobConfig] Auto-fix enabled. Adjusting LPI {effective_lpi} -> {suggested}.")

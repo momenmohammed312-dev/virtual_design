@@ -84,7 +84,7 @@ class PipelineController:
                 logger.info(f"  [Polarity] {stage}: 1-color user choice -> polarity correct (ink={ink_ratio:.1%} ≤ bg={bg_ratio:.1%})")
             return mask
             
-        if bg_ratio < 0.02:
+        if bg_ratio < 0.005:
             # Fully flooded mask — don't invert, raise warning
             logger.warning(f"  [Polarity] {stage}: bg_ratio={bg_ratio:.1%} — possible solid fill, skipping inversion")
             return mask

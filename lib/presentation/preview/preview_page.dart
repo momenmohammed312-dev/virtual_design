@@ -1083,6 +1083,32 @@ class PreviewPage extends StatelessWidget {
               style: TextStyle(fontSize: 10, color: Colors.grey),
             ),
           ),
+          const SizedBox(height: 15),
+          // AI Auto-Fix Button
+          SizedBox(
+            width: double.infinity,
+            child: Obx(() => ElevatedButton.icon(
+                  onPressed: controller.isRegenerating.value
+                      ? null
+                      : controller.runAiAutoFix,
+                  icon: const Icon(Icons.auto_fix_high, size: 18),
+                  label: Text(controller.isRegenerating.value
+                      ? 'Analyzing...'
+                      : 'AI Auto-Fix Result'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
+                )),
+          ),
+          const SizedBox(height: 5),
+          const Center(
+            child: Text(
+              'AI analyzes preview and adjusts parameters',
+              style: TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ),
         ],
       ),
     );
@@ -1121,7 +1147,9 @@ class PreviewPage extends StatelessWidget {
           Obx(() {
             final safeValue = value.value.clamp(min, max).toDouble();
             if (safeValue != value.value) {
-              value.value = safeValue;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                value.value = safeValue;
+              });
             }
             return Slider(
               value: safeValue,

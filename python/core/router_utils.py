@@ -103,21 +103,31 @@ def _make_single_color_separation(image: np.ndarray, white_threshold: int = 240)
 
 def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) -> List[np.ndarray]:
     """
-    Decoupled halftone pipeline.
-    If halftone_gen is None, it will create one.
+    Decoupled halftone pipeline using high-DPI RasterHalftoneEngine.
+    halftone_gen parameter is ignored (kept for API compatibility).
     """
-    if halftone_gen is None:
-        try:
-            from core.halftone_generator import HalftoneGenerator
-            halftone_gen = HalftoneGenerator()
-        except ImportError:
-            logger.warning("HalftoneGenerator not available in utils")
-            return masks
+    try:
+        from core.raster_halftone import RasterHalftoneEngine, RasterHalftoneConfig
+    except ImportError:
+        logger.warning("RasterHalftoneEngine not available, falling back to legacy")
+        if halftone_gen is None:
+            try:
+                from core.halftone_generator import HalftoneGenerator
+                halftone_gen = HalftoneGenerator()
+            except ImportError:
+                logger.warning("HalftoneGenerator not available in utils")
+                return masks
+        # Legacy path
+        return _apply_legacy_halftone(masks, args, halftone_gen)
 
+    # Use RasterHalftoneEngine at high DPI for professional output
+    output_dpi = getattr(args, 'dpi', 450)
+    raster_dpi = max(1200, output_dpi * 2)
+    
     # Auto-calc LPI if needed
     effective_lpi = args.lpi
-    if effective_lpi == 65: # default
-        effective_lpi = min(120, max(55, args.dpi // 5))
+    if effective_lpi == 65:  # default
+        effective_lpi = min(120, max(55, output_dpi // 5))
 
     cmyk_angles = [15.0, 45.0, 75.0, 0.0]
     result = []
@@ -125,14 +135,13 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
 
     for i, mask in enumerate(masks):
         total_pixels = mask.size
-        # design=0 (ink), paper=255
         design_pixels = np.sum(mask < 128)
         coverage_percentage = (design_pixels / total_pixels) * 100
         
-        # CRITICAL FIX: Skip halftone on empty/near-empty masks (prevents crashes)
-        if coverage_percentage < 1.0:  # Less than 1% coverage = essentially empty
+        # Skip halftone on empty/near-empty masks
+        if coverage_percentage < 1.0:
             logger.warning(f"[Halftone] Skipping empty mask {i+1} ({coverage_percentage:.1f}% coverage)")
-            result.append(mask)  # Pass through unchanged
+            result.append(mask)
             continue
         
         if coverage_percentage > 95.0:
@@ -140,17 +149,57 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
             continue
             
         enhanced = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
-        # FIXED: Skip CLAHE on binary, apply on grayscale with full tonal range (BUG-06)
         unique_vals = np.unique(enhanced)
         is_binary_mask = len(unique_vals) <= 2
         if not is_binary_mask:
             enhanced = clahe.apply(enhanced)
             
-        angle = cmyk_angles[i] if i < len(cmyk_angles) else getattr(args, 'angle', 45.0)
+        angle = cmyk_angles[i] if i < len(cmyk_angles) else getattr(args, 'halftone_angle', 45.0)
         dot_shape = getattr(args, 'dot_shape', 'round')
         
+        # Create engine per mask with specific angle
+        raster_cfg = RasterHalftoneConfig(
+            lpi=effective_lpi,
+            dpi=raster_dpi,
+            angle=angle,
+            dot_fn=dot_shape,
+            gamma=1.6,
+            oversample=2,
+        )
+        ht_engine = RasterHalftoneEngine(raster_cfg)
+        ht = ht_engine.generate(enhanced)
+        result.append(ht)
+        
+    logger.info(f"[Halftone] Raster halftone @ {raster_dpi} DPI, {effective_lpi} LPI")
+    return result
+
+
+def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[np.ndarray]:
+    """Fallback legacy halftone if RasterHalftoneEngine unavailable."""
+    effective_lpi = args.lpi
+    if effective_lpi == 65:
+        effective_lpi = min(120, max(55, args.dpi // 5))
+    cmyk_angles = [15.0, 45.0, 75.0, 0.0]
+    result = []
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    for i, mask in enumerate(masks):
+        total_pixels = mask.size
+        design_pixels = np.sum(mask < 128)
+        coverage_percentage = (design_pixels / total_pixels) * 100
+        if coverage_percentage < 1.0:
+            result.append(mask)
+            continue
+        if coverage_percentage > 95.0:
+            result.append(mask)
+            continue
+        enhanced = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
+        unique_vals = np.unique(enhanced)
+        is_binary_mask = len(unique_vals) <= 2
+        if not is_binary_mask:
+            enhanced = clahe.apply(enhanced)
+        angle = cmyk_angles[i] if i < len(cmyk_angles) else getattr(args, 'angle', 45.0)
+        dot_shape = getattr(args, 'dot_shape', 'round')
         ht = halftone_gen.generate(enhanced, lpi=effective_lpi, angle=angle, 
                                    dot_shape=dot_shape, dpi=args.dpi, gamma=1.6)
         result.append(ht)
-        
     return result

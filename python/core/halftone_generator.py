@@ -56,110 +56,120 @@ class HalftoneGenerator:
         mask = (px >= 0) & (px < w) & (py >= 0) & (py < h)
         px, py = px[mask], py[mask]
 
-        # CRITICAL FIX: Initialize intensities array before early return (prevents NameError)
-        intensities = np.array([])
-        
         if len(px) == 0:
             return []
 
-        # 4. Map pixel intensities at these points (using nearest neighbor for speed)
+        # 4. Map pixel intensities at these points
         ix = np.round(px).astype(int)
         iy = np.round(py).astype(int)
         ix = np.clip(ix, 0, w - 1)
         iy = np.clip(iy, 0, h - 1)
         
-        # Invert: dark areas (low gray) = big dots, light areas = small dots
         norm = gray[iy, ix] / 255.0
         intensities = 1.0 - norm
         
-        # CRITICAL FIX: Apply dot gain compensation before gamma correction
-        # Import here to avoid circular imports
+        # Apply dot gain compensation
         try:
             from .print_job_config import PrintJobConfig
             job_config = PrintJobConfig()
             intensities = job_config.apply_dot_gain_compensation(intensities)
         except ImportError:
-            pass  # Fallback to no compensation if not available
+            pass 
         
-        # Gamma correction: controls dot growth curve
         if gamma != 1.0:
             intensities = np.power(intensities, 1.0 / gamma)
 
-        # TASK 16: LPI-adaptive shadow gap (BUG-09 fix)
-        # Industry standard: fine screens need more gap, coarse screens can use less
-        shadow_gap = 0.90 - (lpi / 1000.0)  # 55 LPI -> 0.845, 120 LPI -> 0.78
+        # TASK 16: LPI-adaptive shadow gap
+        shadow_gap = 0.90 - (lpi / 1000.0)  
         shadow_gap = max(0.75, min(0.92, shadow_gap))
-        # FIXED: Use dot_spacing * 0.45 (not dot_spacing / 2.0) for proper full-dot coverage
-        radii = intensities * dot_spacing * 0.45 * shadow_gap
+        radii = intensities * dot_spacing * 0.5 * shadow_gap
 
-        # 5. Build dot list with minimum visible dot size
+        # 5. Build dot list
         dots = [
             HalftoneDot(cx=float(px[i]), cy=float(py[i]), radius=float(radii[i]), shape=dot_shape)
             for i in range(len(px))
-            if radii[i] >= 1.0  # Skip invisible dots (minimum 1px final radius)
+            if radii[i] >= 1.0  
         ]
         
         return dots
 
-    # ─── RASTER OUTPUT (backwards compat / PNG preview) ──────────────────────
+    # ─── RASTER OUTPUT ───────────────────────────────────────────────────────
 
     def generate(
         self,
         image: np.ndarray,
         lpi: int = 55,
         angle: float = 45.0,
-        dot_shape: Literal["round", "square", "ellipse"] = "round",
+        dot_shape: Literal["round", "square", "ellipse", "dither"] = "round",
         dpi: Optional[int] = None,
         gamma: float = 1.6,
+        apply_clahe: bool = True
     ) -> np.ndarray:
-        """Generate halftone as binary numpy array. Gamma controls dot growth curve."""
+        """Generate halftone as binary numpy array."""
         gray = self._to_gray(image)
+        
+        # ⚡ 1. PERFORMANCE: Safety downscale for large images (>2400px)
+        # Prevents OOM while maintaining visual print quality (at 300dpi, 8" width = 2400px)
+        max_res = 2400
+        if max(gray.shape) > max_res:
+            scale = max_res / max(gray.shape)
+            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            logger.info(f"[Halftone] Downscaled large image to {gray.shape[1]}x{gray.shape[0]} for speed")
+
+        if apply_clahe:
+            # CLAHE helps photographs but can be noisy for artwork
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray = clahe.apply(gray)
+            
+        if dot_shape == "dither":
+            return self.floyd_steinberg_dithering(gray)
+            
         shape_map = {"round": "circle", "square": "square", "ellipse": "circle"}
         dots = self.generate_vector_dots(gray, lpi=lpi, angle=angle,
                                          dot_shape=shape_map.get(dot_shape, "circle"),
                                          gamma=gamma)
         return self._rasterize(dots, gray.shape)
 
-    def floyd_steinberg_dithering(self, gray: np.ndarray) -> np.ndarray:
-        """Apply Floyd-Steinberg error diffusion dithering."""
-        img = gray.astype(np.float32)
-        h, w = img.shape
-        for y in range(h):
-            for x in range(w):
-                old = img[y, x]
-                new = 255.0 if old > 127.0 else 0.0
-                img[y, x] = new
-                err = old - new
-                if x + 1 < w:
-                    img[y, x + 1] += err * 7 / 16
-                if y + 1 < h:
-                    if x > 0:
-                        img[y + 1, x - 1] += err * 3 / 16
-                    img[y + 1, x] += err * 5 / 16
-                    if x + 1 < w:
-                        img[y + 1, x + 1] += err * 1 / 16
-        return img.astype(np.uint8)
+    @staticmethod
+    def evaluate_quality(img: np.ndarray) -> float:
+        """🚀 Quality Score: Measures contrast and edge sharpness."""
+        if len(img.shape) == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        contrast = img.std()
+        edge_variance = cv2.Laplacian(img, cv2.CV_64F).var()
+        score = (contrast * 0.4) + (edge_variance * 0.6)
+        return score
 
-    # ─── HELPERS ─────────────────────────────────────────────────────────────
+    def floyd_steinberg_dithering(self, gray: np.ndarray) -> np.ndarray:
+        """
+        T05 FIX: Floyd-Steinberg error diffusion — numpy row-by-row.
+        """
+        img = gray.astype(np.float32) / 255.0
+        h, w = img.shape
+        for y in range(h - 1):
+            row = img[y]
+            quantized = (row > 0.5).astype(np.float32)
+            err = row - quantized
+            img[y] = quantized
+
+            img[y,     1:]   += err[:-1] * (7 / 16)   
+            img[y + 1, :-1]  += err[1:]  * (3 / 16)   
+            img[y + 1, :]    += err      * (5 / 16)   
+            img[y + 1, 1:]   += err[:-1] * (1 / 16)   
+
+        img[-1] = (img[-1] > 0.5).astype(np.float32)
+        return (np.clip(img, 0, 1) * 255).astype(np.uint8)
 
     @staticmethod
     def _to_gray(image: np.ndarray) -> np.ndarray:
         if len(image.shape) == 3:
-            if image.shape[2] == 3:
-                return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            elif image.shape[2] == 4:
-                # Handle RGBA images by converting to RGB first
-                rgb = image[:, :, :3]
-                return cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
-        return image.copy() if len(image.shape) == 2 else image.mean(axis=2).astype(np.uint8)
+            return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        return image.copy()
 
     @staticmethod
     def _rasterize(dots: List[HalftoneDot], shape: tuple) -> np.ndarray:
-        """Render dot list with super-sampling then hard 1-bit threshold for screen printing film."""
         h, w = shape
-        scale = 2  # 2x super-sampling for smooth dot edges
-        
-        # Draw on 2x canvas
+        scale = 2  
         big = np.zeros((h * scale, w * scale), dtype=np.uint8)
         for dot in dots:
             cx = int(round(dot.cx * scale))
@@ -172,11 +182,6 @@ class HalftoneGenerator:
             else:
                 cv2.circle(big, (cx, cy), r, 255, -1, cv2.LINE_AA)
         
-        # Downscale with area averaging — produces natural anti-aliasing
         out = cv2.resize(big, (w, h), interpolation=cv2.INTER_AREA)
-        
-        # HARD 1-BIT THRESHOLD: Screen printing film needs pure black/white
-        # No gray values allowed — the screen is either open or blocked
         _, out = cv2.threshold(out, 127, 255, cv2.THRESH_BINARY)
-        
         return out

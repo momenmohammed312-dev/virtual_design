@@ -146,7 +146,8 @@ class PythonProcessor {
         if (line.startsWith('FATAL:DEPENDENCY_MISSING:')) {
           final parts = line.split(':');
           final pkg = parts.length > 2 ? parts[2] : 'unknown';
-          stderrBuffer.writeln('Missing Python requirement: $pkg. Please run the setup script or pip install $pkg.');
+          stderrBuffer.writeln(
+              'Missing Python requirement: $pkg. Please run the setup script or pip install $pkg.');
           debugPrint('[PythonProcessor] FOUND FATAL ERROR: $line');
           return;
         }
@@ -215,9 +216,12 @@ class PythonProcessor {
     debugPrint('[PythonProcessor] Exit code: $exitCode');
     debugPrint('[PythonProcessor] Output dir from IPC: $outputDirectory');
 
-    if (exitCode == 0 && outputDirectory.isNotEmpty) {
+    if (exitCode == 0) {
+      // Fallback: لو OUTPUT_DIR مجاش، استخدم الـ finalOutputDir اللي بنيناه
+      final resolvedDir =
+          outputDirectory.isNotEmpty ? outputDirectory : finalOutputDir;
       if (onProgress != null) onProgress(1.0, 'Processing complete!');
-      return ProcessResult.success(outputDirectory: outputDirectory);
+      return ProcessResult.success(outputDirectory: resolvedDir);
     }
 
     // Process failed - parse and return the actual error
@@ -251,7 +255,8 @@ class PythonProcessor {
     // Color count: if 0 (auto), send --auto-colors flag so Python activates auto-detect.
     if (settings.colorCount == 0) {
       args.add('--auto-colors');
-      args.addAll(['--colors', '0']); // Python reads 0 as "use SmartAnalyzer result"
+      args.addAll(
+          ['--colors', '0']); // Python reads 0 as "use SmartAnalyzer result"
     } else {
       // Allow 1 color if explicitly requested
       final safeColorCount = settings.colorCount < 1 ? 1 : settings.colorCount;
@@ -342,5 +347,67 @@ class PythonProcessor {
       return path.replaceAll('\\', '/');
     }
     return path;
+  }
+
+  /// AI Auto-Fix: Re-analyze preview and adjust parameters
+  /// Returns adjusted settings or null if failed
+  Future<Map<String, dynamic>?> runAutoFix({
+    required String originalImage,
+    required String previewImage,
+  }) async {
+    if (!config.isInitialized || !config.isPythonAvailable) {
+      debugPrint('[PythonProcessor] Auto-Fix failed: Python not available');
+      return null;
+    }
+
+    final scriptsDir = await config.getPythonScriptsDir();
+    final pythonCommand = await config.resolvePythonCommand();
+
+    final args = [
+      'auto_fix.py',
+      '--original',
+      _safePath(originalImage),
+      '--preview',
+      _safePath(previewImage),
+    ];
+
+    try {
+      final process = await Process.start(
+        pythonCommand,
+        args,
+        workingDirectory: scriptsDir,
+      );
+
+      final stdoutBuffer = StringBuffer();
+      final stderrBuffer = StringBuffer();
+      process.stdout.transform(utf8.decoder).listen(stdoutBuffer.write);
+      process.stderr.transform(utf8.decoder).listen(stderrBuffer.write);
+
+      final exitCode = await process.exitCode.timeout(
+        const Duration(seconds: 120),
+        onTimeout: () {
+          process.kill();
+          return -99;
+        },
+      );
+
+      if (exitCode == 0) {
+        final output = stdoutBuffer.toString();
+        // Parse JSON response
+        final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(output);
+        if (jsonMatch != null) {
+          final json = jsonDecode(jsonMatch.group(0)!);
+          debugPrint('[PythonProcessor] Auto-Fix result: $json');
+          return json as Map<String, dynamic>;
+        }
+      }
+
+      debugPrint(
+          '[PythonProcessor] Auto-Fix failed: ${stderrBuffer.toString()}');
+      return null;
+    } catch (e) {
+      debugPrint('[PythonProcessor] Auto-Fix error: $e');
+      return null;
+    }
   }
 }

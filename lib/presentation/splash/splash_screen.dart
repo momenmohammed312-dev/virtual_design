@@ -98,7 +98,16 @@ class _SplashScreenState extends State<SplashScreen>
           barrierDismissible: false,
           builder: (_) => AlertDialog(
             title: const Text('Python Not Available'),
-            content: Text(initResult.error ?? 'Required Python packages are missing or Python is not installed.'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(initResult.error ?? 'Required Python packages are missing or Python is not installed.'),
+                const SizedBox(height: 12),
+                Text('Detected Path: ${initResult.pythonPath ?? "None"}', 
+                     style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              ],
+            ),
             actions: [
               TextButton(
                 onPressed: () {

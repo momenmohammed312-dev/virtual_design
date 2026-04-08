@@ -167,6 +167,57 @@ def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smoot
     return bw
 
 
+def compute_adaptive_smooth(
+    contour: np.ndarray,
+    base_smooth: float,
+    image_class: str = 'auto'
+) -> float:
+    """
+    Compute per-contour smoothing factor.
+    
+    Rules:
+    - Very small contours (area < 200): minimal smoothing (preserve detail)
+    - Medium contours (200-2000): moderate smoothing
+    - Large contours (> 2000): full base_smooth
+    - Complex contours (high perimeter/area ratio): reduce smoothing by 30%
+    - text_logo class: cap at 0.3 to preserve letter shapes
+    - photo class: always use base_smooth unchanged
+    """
+    area = cv2.contourArea(contour)
+    perimeter = cv2.arcLength(contour, True)
+    
+    # Complexity ratio (circle=1, jagged=high)
+    if area > 0:
+        complexity = (perimeter ** 2) / (4 * math.pi * area)
+    else:
+        complexity = 1.0
+    
+    # Size-based scaling
+    if area < 200:
+        size_factor = 0.3
+    elif area < 2000:
+        size_factor = 0.3 + 0.7 * ((area - 200) / 1800)
+    else:
+        size_factor = 1.0
+    
+    # Complexity penalty
+    complexity_factor = 1.0
+    if complexity > 3.0:
+        complexity_factor = 0.7
+    elif complexity > 6.0:
+        complexity_factor = 0.5
+    
+    adaptive = base_smooth * size_factor * complexity_factor
+    
+    # Class-specific caps
+    if image_class == 'text_logo':
+        adaptive = min(adaptive, 0.3)
+    elif image_class == 'photo':
+        adaptive = base_smooth  # no scaling for photos
+    
+    return max(0.05, min(adaptive, 0.5))
+
+
 def export_vector_pdf(
     masks: List[np.ndarray],
     colors: List[tuple],
@@ -179,7 +230,9 @@ def export_vector_pdf(
     page_size: str = 'A4',
     no_vector_blur: bool = False,
     image_class: str = 'auto',
-    epsilon: Optional[float] = None
+    epsilon: Optional[float] = None,
+    job_name: Optional[str] = None,
+    is_halftone: bool = False
 ) -> Path:
     """
     تصدير كل الأفلام في PDF واحد متعدد الصفحات بجودة vector حقيقية.
@@ -218,9 +271,9 @@ def export_vector_pdf(
         calib = get_calibration(dpi)
         logger.info(f"Using calibrated scaling: {calib.pixels_per_mm:.1f} px/mm @ {dpi} DPI")
     except ImportError:
-        # Fallback to manual calculation
         calib = None
-        logger.warning("Print calibration module not available, using fallback scaling")
+    
+    from .vector_marks import draw_vector_registration_mark, add_vector_marks_to_page
     
     page_sizes = {'A4': A4, 'A3': A3, 'LETTER': letter}
     page_w, page_h = page_sizes.get(page_size.upper(), A4)
@@ -240,9 +293,9 @@ def export_vector_pdf(
         
     c = rl_canvas.Canvas(str(output_path), pagesize=(page_w, page_h))
     
-    MARGIN_PT = 40  # هامش في points
-    HEADER_PT = 60  # ارتفاع رأس الصفحة
-    FOOTER_PT = 50  # ارتفاع تذيل الصفحة
+    MARGIN_PT = 65  # Increased margin for professional marks
+    HEADER_PT = 60  
+    FOOTER_PT = 60  
     
     for film_idx, (mask, color_rgb, color_name) in enumerate(
         zip(masks, colors, color_names)
@@ -252,83 +305,87 @@ def export_vector_pdf(
         
         mask_h, mask_w = mask.shape[:2]
         
-        # حساب المساحة المتاحة للرسم
+        # Area calculation for design centering
         available_w = page_w - 2 * MARGIN_PT
-        available_h = page_h - HEADER_PT - FOOTER_PT - 2 * MARGIN_PT
+        available_h = page_h - 2 * MARGIN_PT # Symmetric for better centering
         
-        # حساب scale للتوافق مع الصفحة
+        # Professional 1:1 scaling or adaptive fit
         mask_w_pt = px_to_pt(mask_w)
         mask_h_pt = px_to_pt(mask_h)
         
-        # P1 FIX: Remove 1.0 cap to ensure small images fill page correctly
-        # For film output, the film should ALWAYS fill the available area
+        # Scaling calculation (always fits inside margin with padding)
         scale = min(available_w / mask_w_pt, available_h / mask_h_pt)
-        
+        if scale > 1.0: # Don't upscale past 1:1 unless user specifically overrides in future
+            scale = 1.0
+            
         draw_w = mask_w_pt * scale
         draw_h = mask_h_pt * scale
         
-        # موضع رسم الصورة (مركز أفقياً)
+        # 🎯 AUTO-CENTERING: Perfectly center design on film page
         draw_x = MARGIN_PT + (available_w - draw_w) / 2
-        draw_y = FOOTER_PT + MARGIN_PT
+        draw_y = MARGIN_PT + (available_h - draw_h) / 2
         
-        # ═══ رسم الخلفية البيضاء للفيلم ═══
-        c.setFillColor(white)
+        # ─── Professional Print Specs Table (Top Right) ───
+        c.setFont("Helvetica", 8)
+        c.drawRightString(page_w - MARGIN_PT, page_h - MARGIN_PT + 35, f"MESH: 160 T/I")
+        c.drawRightString(page_w - MARGIN_PT, page_h - MARGIN_PT + 25, f"LPI: 55 | ANGLE: 45°")
+        
+        # ─── Symmetric Registration Marks ───
+        film_info = {'job_name': job_name or output_path.stem}
+        add_vector_marks_to_page(c, page_w, page_h, MARGIN_PT, color_rgb, color_name, film_info)
+        
+        # ─── Background rectangle (white, invisible in print but good for PDF preview) ───
+        c.setFillColorRGB(1, 1, 1)
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
-        # ═══ Advanced Mask Preprocessing (Anti-Jag Fix) ═══
+        # ─── Advanced Vector Path Generation ───
         if image_class == 'text_logo' and smooth_factor < 0.2:
-            # Traditional sharp logos don't get blurred
             bw = preprocess_mask_for_vector(mask, apply_blur=False, smooth_factor=smooth_factor)
         else:
-            # Illustrations or manual high-smoothing get blurred
             bw = preprocess_mask_for_vector(mask, apply_blur=True, smooth_factor=smooth_factor)
         
-        # 2. Contour Extraction: SIMPLE is better to avoid zigzag artifacts
+        # Ensure CV_8UC1 format for findContours
+        if bw.dtype != np.uint8:
+            bw = (bw * 255).astype(np.uint8)
+        if len(bw.shape) == 3:
+            bw = cv2.cvtColor(bw, cv2.COLOR_BGR2GRAY)
+        
+        # Ensure ink=BLACK(0) for contour tracing
+        # preprocess_mask_for_vector uses THRESH_BINARY which preserves input polarity
+        # But findContours traces WHITE(255) regions — so we need design=WHITE, background=BLACK
+        # This is INVERTED from silk screen convention, only for the purpose of contour detection
+        bw_for_contours = cv2.bitwise_not(bw)
+        
         contours, hierarchy = cv2.findContours(
-            bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE
+            bw_for_contours, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE
         )
         
-        # coordinate transform (defined once, outside the loop)
         def px_to_pdf(px_x, px_y):
-            # Scale coordinates down by 2.0 to compensate for anti-alias upscale
+            # Scale down to original pixels before converting to PDF points
+            # 2.0 comes from the pre-processing upscale
             px_x = px_x / 2.0
             px_y = px_y / 2.0
-            # --- Phase 20: Unified Path Rendering for Holes ---
-            # Instead of drawing one-by-one, we use a single path for ALL contours
-            # This allows the Even-Odd fill rule to handle holes perfectly (BMW logo FIX)
-            # We need to calculate scale_w and scale_h for the new coordinate transformation
             scale_w = draw_w / mask_w
             scale_h = draw_h / mask_h
             return draw_x + px_x * scale_w, draw_y + (mask_h - px_y) * scale_h
         
         path = c.beginPath()
-        # Some reportlab versions don't expose setFillMode() on PDFPathObject.
-        # We'll use it when available; otherwise we fall back to hierarchy-based
-        # drawing to preserve holes.
         use_even_odd = False
         if hasattr(path, 'setFillMode'):
-            path.setFillMode(1) # 1 = Even-Odd fill rule (essential for nested holes)
+            path.setFillMode(1)
             use_even_odd = True
         
-        # Use the parameter min_contour_area (don't override it)
-        
-        # We need to sort contours by area descending so outer ones come first?
-        # Actually with RETR_TREE and Even-Odd, order doesn't matter for pure fill.
         def _append_contour_to_path(target_path, contour_arr):
-            MIN_AREA = 8
             area = cv2.contourArea(contour_arr)
-            if area < MIN_AREA:
-                return
-
-            if len(contour_arr) < 3:
+            if area < min_contour_area or len(contour_arr) < 3:
                 return
             
-            # CRITICAL FIX: Remove double simplification - pass raw contour directly
-            # The fit_bezier_to_contour() function already handles intelligent simplification
-            # CRITICAL FIX: Pass custom epsilon if provided by unified slider
+            adaptive_smooth = compute_adaptive_smooth(
+                contour_arr, smooth_factor, image_class
+            )
             bezier_cmds = fit_bezier_to_contour(
                 contour_arr, 
-                smooth_factor, 
+                adaptive_smooth, 
                 corner_threshold, 
                 image_class,
                 epsilon=epsilon
@@ -350,16 +407,15 @@ def export_vector_pdf(
                     target_path.lineTo(px, py)
             target_path.close()
         
+        # 🔗 EVEN-ODD FILL: Handles holes (like inside "O" or "0") correctly
         if use_even_odd:
-            for _, contour in enumerate(contours):
+            for contour in contours:
                 _append_contour_to_path(path, contour)
-            
-            c.setFillColor(black)
+            c.setFillColorRGB(0, 0, 0)
             c.drawPath(path, fill=1, stroke=0)
         else:
-            # Fallback hole handling without even-odd fill:
-            # draw outer contours filled black, then draw children (holes) filled white.
-            c.setFillColor(black)
+            # Fallback for older reportlab without even-odd (loop-based hole subtract)
+            c.setFillColorRGB(0, 0, 0)
             if hierarchy is None:
                 for contour in contours:
                     p = c.beginPath()
@@ -368,77 +424,28 @@ def export_vector_pdf(
             else:
                 h = hierarchy[0]
                 for idx in range(len(contours)):
-                    parent_idx = h[idx][3]
-                    if parent_idx != -1:
-                        continue
-                    
+                    if h[idx][3] != -1: continue # Only process outer shapes
                     p_outer = c.beginPath()
                     _append_contour_to_path(p_outer, contours[idx])
                     c.drawPath(p_outer, fill=1, stroke=0)
                     
                     child = h[idx][2]
                     while child != -1:
-                        c.setFillColor(white)
+                        c.setFillColorRGB(1, 1, 1) # Set to White (Hole)
                         p_hole = c.beginPath()
                         _append_contour_to_path(p_hole, contours[child])
                         c.drawPath(p_hole, fill=1, stroke=0)
-                        c.setFillColor(black)
+                        c.setFillColorRGB(0, 0, 0) # Back to Black
                         child = h[child][0]
         
-        # Reset fill settings
-        c.setStrokeColor(black)
-        c.setLineWidth(0.5)
-        c.rect(draw_x, draw_y, draw_w, draw_h, fill=0, stroke=1)
-        
-        # ═══ رأس الصفحة (Header) ═══
-        r, g, b = [v / 255.0 for v in color_rgb]
-        hex_color = f"#{color_rgb[0]:02X}{color_rgb[1]:02X}{color_rgb[2]:02X}"
-        
-        # عنوان الفيلم
-        c.setFont("Helvetica-Bold", 14)
-        c.setFillColor(black)
-        c.drawString(
-            MARGIN_PT,
-            page_h - MARGIN_PT - 15,
-            f"FILM {film_idx + 1}/{len(masks)}  —  {color_name.upper()}"
-        )
-        
-        # صندوق اللون
-        c.setFillColor(Color(r, g, b))
-        c.rect(
-            page_w - MARGIN_PT - 50,
-            page_h - MARGIN_PT - 30,
-            40, 25, fill=1, stroke=1
-        )
-        c.setFillColor(black)
+        # Title and Page Numbers (Footer Specs)
         c.setFont("Helvetica", 9)
-        c.drawString(
-            page_w - MARGIN_PT - 55,
-            page_h - MARGIN_PT - 40,
-            hex_color
-        )
-        
-        # ═══ تذيل الصفحة (Footer) ═══
-        c.setFont("Helvetica", 8)
-        c.setFillColor(black)
-        footer_y = MARGIN_PT
-        
-        # معلومات الفيلم
-        c.drawString(MARGIN_PT, footer_y + 30, f"Color: {hex_color}  |  RGB: {color_rgb}")
-        c.drawString(MARGIN_PT, footer_y + 18, f"Size: {mask_w}×{mask_h}px  |  DPI: {dpi}")
-        
-        # رقم الصفحة
-        c.setFont("Helvetica", 9)
-        c.drawRightString(
-            page_w - MARGIN_PT,
-            footer_y + 18,
-            f"Page {film_idx + 1} of {len(masks)}"
-        )
-        
-        # خط الفاصل
-        c.setLineWidth(0.3)
-        c.line(MARGIN_PT, footer_y + 10, page_w - MARGIN_PT, footer_y + 10)
-        c.line(MARGIN_PT, page_h - HEADER_PT, page_w - MARGIN_PT, page_h - HEADER_PT)
+        c.setFillColorRGB(0, 0, 0)
+        # Left: Film info
+        c.drawString(MARGIN_PT, MARGIN_PT - 15, f"FILM {film_idx+1}: {color_name}  |  DPI: {dpi}")
+        # Right: Brand name and page
+        brand_text = f"Virtual Design Studio | {job_name or 'Untitled'} | Page {film_idx+1}/{len(masks)}"
+        c.drawRightString(page_w - MARGIN_PT, MARGIN_PT - 15, brand_text)
     
     c.save()
     logger.info(f"[VectorExporter] Saved: {output_path} ({len(masks)} films)")

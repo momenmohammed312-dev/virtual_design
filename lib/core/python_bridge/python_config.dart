@@ -49,24 +49,31 @@ class PythonConfig {
 
     final sep = Platform.pathSeparator;
     
-    // Phase 25: Prioritize local virtual environment if it exists
-    // This ensures reportlab and other deps are used even if system python lacks them
-    final venvPath = Platform.isWindows 
-        ? '${Directory.current.path}${sep}venv${sep}Scripts${sep}python.exe'
-        : '${Directory.current.path}${sep}venv${sep}bin${sep}python';
-        
-    if (await File(venvPath).exists()) {
-      print('[PythonConfig] Found local venv: $venvPath');
-      try {
-        final result = await Process.run(venvPath, ['--version']);
-        if (result.exitCode == 0) {
-          _resolvedCommand = venvPath;
-          _resolvedVersion = (result.stdout as String).trim();
-          return venvPath;
+    // 🔍 Phase 30: Robust Venv Detection (Climbing Up)
+    // Flutter often runs with CWD pointing to the 'windows' or 'build' subfolders
+    var dir = File(Platform.resolvedExecutable).parent;
+    for (int i = 0; i < 7; i++) {
+      final venvDir = Directory('${dir.path}${sep}venv');
+      if (await venvDir.exists()) {
+        final venvPython = Platform.isWindows 
+            ? '${venvDir.path}${sep}Scripts${sep}python.exe'
+            : '${venvDir.path}${sep}bin${sep}python';
+            
+        if (await File(venvPython).exists()) {
+          print('[PythonConfig] Found robust venv: $venvPython');
+          try {
+            final result = await Process.run(venvPython, ['--version']);
+            if (result.exitCode == 0) {
+              _resolvedCommand = venvPython;
+              _resolvedVersion = (result.stdout as String).trim();
+              return venvPython;
+            }
+          } catch (e) {
+            print('[PythonConfig] venv candidate failed: $e');
+          }
         }
-      } catch (e) {
-        print('[PythonConfig] venv found but failed validation: $e');
       }
+      dir = dir.parent;
     }
 
     for (final cmd in _candidates) {
@@ -102,10 +109,18 @@ class PythonConfig {
       final missing = await _checkDependencies();
       _initialized = true;
       _pythonAvailable = missing.isEmpty;
+      
+      String? error;
+      if (missing.isNotEmpty) {
+        error = 'Missing packages: ${missing.join(", ")}';
+      }
+      
       return PythonInitResult(
         success: missing.isEmpty,
         pythonVersion: _resolvedVersion,
         missingPackages: missing,
+        error: error,
+        pythonPath: _resolvedCommand,
       );
     } on PythonNotFoundError catch (e) {
       _pythonAvailable = false;
@@ -135,23 +150,47 @@ packages = {
     "PIL": "Pillow",
     "skimage": "scikit-image",
     "reportlab": "reportlab",
+    "llama_cpp": "llama-cpp-python",
 }
 for module, package in packages.items():
     try:
         __import__(module)
     except ImportError:
         missing.append(package)
-print(",".join(missing))
+
+# FATAL #5 DEBUG: Print python path and missing packages
+print(f"PATH:{sys.executable}")
+print(f"MISSING:{','.join(missing)}")
 ''';
 
     try {
       final python = await resolvePythonCommand();
       final result = await Process.run(python, ['-c', checkScript]);
-      final output = (result.stdout as String).trim();
-      if (output.isEmpty) return [];
-      return output.split(',').where((s) => s.isNotEmpty).toList();
-    } catch (_) {
-      return []; // لو فشل الفحص — مش مشكلة، نكمل
+      final output = (result.stdout as String);
+      
+      final lines = output.split('\n');
+      String? pythonPath;
+      List<String> missing = [];
+      
+      for (final line in lines) {
+        if (line.startsWith('PATH:')) {
+          pythonPath = line.substring(5).trim();
+        } else if (line.startsWith('MISSING:')) {
+          final content = line.substring(8).trim();
+          if (content.isNotEmpty) {
+            missing = content.split(',');
+          }
+        }
+      }
+      
+      if (pythonPath != null) {
+        _resolvedCommand = pythonPath;
+      }
+      
+      return missing;
+    } catch (e) {
+      print('[PythonConfig] Check failed: $e');
+      return []; 
     }
   }
 
@@ -221,12 +260,14 @@ class PythonInitResult {
   final bool success;
   final String? pythonVersion;
   final String? error;
+  final String? pythonPath;
   final List<String> missingPackages;
 
   const PythonInitResult({
     required this.success,
     this.pythonVersion,
     this.error,
+    this.pythonPath,
     required this.missingPackages,
   });
 
