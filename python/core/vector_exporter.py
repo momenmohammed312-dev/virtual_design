@@ -244,7 +244,8 @@ def export_vector_pdf(
     image_class: str = 'auto',
     epsilon: Optional[float] = None,
     job_name: Optional[str] = None,
-    is_halftone: bool = False
+    is_halftone: bool = False,
+    args = None
 ) -> Path:
     """
     تصدير كل الأفلام في PDF واحد متعدد الصفحات بجودة vector حقيقية.
