@@ -143,6 +143,23 @@ class PipelineRouter:
             if stats[i, cv2.CC_STAT_AREA] >= 5: 
                 clean[labels == i] = 0
         binary = clean
+        
+        # 🔥 CRITICAL FIX: Apply alpha mask to ensure transparent pixels are background (255)
+        if self.alpha_mask is not None:
+            if binary.shape != self.alpha_mask.shape:
+                alpha_resized = cv2.resize(
+                    self.alpha_mask.astype(np.uint8),
+                    (binary.shape[1], binary.shape[0]),
+                    interpolation=cv2.INTER_NEAREST
+                ).astype(bool)
+            else:
+                alpha_resized = self.alpha_mask
+            
+            binary = binary.copy()
+            binary[~alpha_resized] = 255
+            transparent_count = np.sum(~alpha_resized)
+            logger.info(f"[PipelineRouter] TextLogo: Set {transparent_count} transparent pixels to background (255)")
+        
         sep_result = _make_single_color_separation(image)
         
         return PipelineResult(
@@ -217,6 +234,26 @@ class PipelineRouter:
         for i, m in enumerate(masks):
             if not args.halftone and len(np.unique(m)) > 2:
                 m = edge_aware_binarize(m)
+            
+            # 🔥 CRITICAL FIX: Apply alpha mask to ensure transparent pixels are background (255)
+            if self.alpha_mask is not None:
+                if m.shape != self.alpha_mask.shape:
+                    # Resize alpha mask to match mask
+                    alpha_resized = cv2.resize(
+                        self.alpha_mask.astype(np.uint8),
+                        (m.shape[1], m.shape[0]),
+                        interpolation=cv2.INTER_NEAREST
+                    ).astype(bool)
+                else:
+                    alpha_resized = self.alpha_mask
+                
+                # Set transparent pixels to 255 (background/white)
+                # alpha_mask=True means visible, False means transparent
+                m = m.copy()
+                m[~alpha_resized] = 255
+                transparent_count = np.sum(~alpha_resized)
+                logger.info(f"[PipelineRouter] Mask {i}: Set {transparent_count} transparent pixels to background (255)")
+            
             try:
                 self.controller.validate_mask_coverage(m, f"artwork_mask_{i}")
                 processed_masks.append(m)

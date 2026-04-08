@@ -130,10 +130,14 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     raster_dpi = max(1200, output_dpi * 2)
     logger.info(f"[HalftonePipeline] Config: output_dpi={output_dpi}, raster_dpi={raster_dpi}")
     
-    # Auto-calc LPI if needed
-    effective_lpi = args.lpi
-    if effective_lpi == 85:  # default
-        effective_lpi = min(150, max(65, output_dpi // 5))
+    # Auto-calc LPI based on DPI (industry standard: LPI = DPI / 4 to DPI / 5)
+    # Higher DPI = smaller dots = higher LPI possible
+    dpi_lpi_ratio = 4.5  # Sweet spot for screen printing
+    auto_lpi = min(150, max(65, int(output_dpi / dpi_lpi_ratio)))
+    
+    # Use auto-calculated LPI if user didn't specify custom value
+    effective_lpi = args.lpi if args.lpi != 85 else auto_lpi
+    logger.info(f"[HalftonePipeline] Auto LPI: {effective_lpi} (DPI={output_dpi}, ratio=1:{dpi_lpi_ratio})")
 
     cmyk_angles = [15.0, 45.0, 75.0, 0.0]
     result = []

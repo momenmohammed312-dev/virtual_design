@@ -193,7 +193,7 @@ class RasterHalftoneEngine:
 
 def generate_raster_halftone(
     grayscale: np.ndarray,
-    lpi: int = 55,
+    lpi: int = 85,
     dpi: int = 1200,
     angle: float = 45.0,
     dot_fn: DotFunction = "round",

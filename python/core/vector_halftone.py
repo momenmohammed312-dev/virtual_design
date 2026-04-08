@@ -251,7 +251,7 @@ class VectorHalftoneEngine:
 
 def generate_vector_halftone(
     grayscale: np.ndarray,
-    lpi: int = 55,
+    lpi: int = 85,
     input_dpi: int = 300,
     angle: float = 45.0,
     dot_shape: DotShape = "circle",

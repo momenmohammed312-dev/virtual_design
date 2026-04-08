@@ -25,7 +25,7 @@ class HalftoneGenerator:
     def generate_vector_dots(
         self,
         image: np.ndarray,
-        lpi: int = 55,
+        lpi: int = 85,
         angle: float = 45.0,
         dot_shape: str = "circle",
         gamma: float = 1.6,
@@ -98,7 +98,7 @@ class HalftoneGenerator:
     def generate(
         self,
         image: np.ndarray,
-        lpi: int = 55,
+        lpi: int = 85,
         angle: float = 45.0,
         dot_shape: Literal["round", "square", "ellipse", "dither"] = "round",
         dpi: Optional[int] = None,

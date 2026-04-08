@@ -484,7 +484,10 @@ def apply_to_args(ai_result: dict, args) -> None:
     if hasattr(args, 'corner_threshold'):
         args.corner_threshold = ai_result.get("corner_threshold", 95.0)
     if hasattr(args, 'lpi'):
-        args.lpi = ai_result.get("lpi", 55)
+        # Auto-calculate LPI based on DPI if not explicitly set
+        dpi = getattr(args, 'dpi', 300)
+        default_lpi = min(150, max(65, dpi // 5))
+        args.lpi = ai_result.get("lpi", default_lpi)
 
     # Extended AI Vision params
     if hasattr(args, 'dot_shape'):
