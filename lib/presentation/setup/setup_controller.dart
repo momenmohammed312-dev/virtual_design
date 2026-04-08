@@ -19,7 +19,7 @@ class SetupController extends GetxController {
   String _originalTempPath = ''; // for cleanup after processing
 
   // ─── Settings State ──────────────────────────────────────────────────────
-  final RxInt selectedColors = 1.obs;
+  final RxInt selectedColors = 0.obs;
   final RxDouble strokeWidth = 0.5.obs; // mm
   final Rx<ps.DetailLevel> selectedDetail = ps.DetailLevel.medium.obs;
   final Rx<ps.PrintFinish> selectedFinish = ps.PrintFinish.solid.obs;
@@ -42,7 +42,7 @@ class SetupController extends GetxController {
   final RxString colorComplexity = 'Auto'.obs; // Auto or 1-8 colors
 
   // Available DPI options
-  final List<int> dpiOptions = [300, 450, 600, 1200, 2400];
+  final List<int> dpiOptions = [150, 300, 450, 600, 750, 900, 1050, 1200];
 
   // Paper size
   final RxDouble paperWidthCm = 21.0.obs;
@@ -113,7 +113,6 @@ class SetupController extends GetxController {
           cornerThreshold.value = 50.0;
           break;
         case ps.ImageType.auto:
-        default:
           smoothingFactor.value = 35.0;
           cornerThreshold.value = 45.0;
           break;

@@ -4,7 +4,9 @@ Virtual Design Silk Screen Studio
 """
 
 import math
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Dict
+import cv2
+import numpy as np
 
 def draw_vector_registration_mark(canvas, x: float, y: float, size: float = 30):
     """Draw a professional vector registration mark (crosshair + circle)."""
@@ -57,3 +59,102 @@ def add_vector_marks_to_page(canvas, page_w: float, page_h: float, margin: float
         if i % 5 == 0:
             canvas.setFont("Helvetica", 6)
             canvas.drawCentredString(tick_x, ruler_y - 8, f"{i}cm")
+
+
+def scan_for_registration_marks(image: np.ndarray, 
+                                min_size: int = 20, 
+                                max_size: int = 100) -> List[Dict]:
+    """
+    Task 4.2 FIX: Scan image for existing registration marks.
+    
+    Detects crosshair/circle patterns commonly used as registration marks
+    in print-ready images. Returns list of detected mark positions.
+    
+    Args:
+        image: Input image (grayscale or BGR)
+        min_size: Minimum mark size in pixels
+        max_size: Maximum mark size in pixels
+        
+    Returns:
+        List of dicts with 'x', 'y', 'size', 'confidence' for each detected mark
+    """
+    # Convert to grayscale if needed
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image.copy()
+    
+    # Binary threshold to isolate dark marks
+    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+    
+    # Find contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    marks = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        
+        # Filter by size range
+        if area < min_size * min_size or area > max_size * max_size:
+            continue
+            
+        # Get bounding box and aspect ratio
+        x, y, w, h = cv2.boundingRect(cnt)
+        aspect = w / max(h, 1)
+        
+        # Registration marks are roughly square (crosshair) or circular
+        if 0.7 < aspect < 1.3:
+            M = cv2.moments(cnt)
+            if M["m00"] > 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                
+                # Calculate circularity (circle = 1.0, crosshair ≈ 0.6-0.8)
+                perimeter = cv2.arcLength(cnt, True)
+                circularity = 4 * math.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
+                
+                marks.append({
+                    'x': cx,
+                    'y': cy,
+                    'size': int(math.sqrt(area)),
+                    'confidence': circularity,
+                    'type': 'circle' if circularity > 0.8 else 'crosshair'
+                })
+    
+    # Sort by confidence (highest first)
+    marks.sort(key=lambda m: m['confidence'], reverse=True)
+    return marks
+
+
+def remove_existing_marks(image: np.ndarray, 
+                         margin_px: int = 50) -> np.ndarray:
+    """
+    Remove existing registration marks from image edges.
+    Useful when re-processing films that already have marks.
+    
+    Args:
+        image: Input image
+        margin_px: Margin around edges to clear
+        
+    Returns:
+        Image with marks removed (whitened in margin areas)
+    """
+    result = image.copy()
+    h, w = result.shape[:2]
+    
+    # White out margins (where marks are typically placed)
+    if len(result.shape) == 3:
+        white = (255, 255, 255)
+    else:
+        white = 255
+        
+    # Top margin
+    result[0:margin_px, :] = white
+    # Bottom margin  
+    result[h-margin_px:h, :] = white
+    # Left margin
+    result[:, 0:margin_px] = white
+    # Right margin
+    result[:, w-margin_px:w] = white
+    
+    return result

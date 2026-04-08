@@ -313,11 +313,48 @@ class PythonProcessor {
     // Image Processing Mode (Simple, Mixed, Complex, Auto)
     args.addAll(['--image-type', settings.imageType.name]);
 
+    // Page size from paper dimensions (Task 3.1 FIX)
+    final pageSize =
+        _determinePageSize(settings.paperWidthCm, settings.paperHeightCm);
+    args.addAll(['--page-size', pageSize]);
+
     if (settings.filmLabel.isNotEmpty) {
       args.addAll(['--film-label', settings.filmLabel]);
     }
 
     return args;
+  }
+
+  /// Determine page size from paper dimensions (Task 3.1 FIX)
+  String _determinePageSize(double widthCm, double heightCm) {
+    // A4: 21.0 x 29.7 cm
+    // A3: 29.7 x 42.0 cm
+    // Letter: 21.6 x 27.9 cm (approx)
+    const a4Width = 21.0;
+    const a4Height = 29.7;
+    const a3Width = 29.7;
+    const a3Height = 42.0;
+    const letterWidth = 21.6;
+    const letterHeight = 27.9;
+
+    // Check with tolerance
+    const tolerance = 1.0;
+
+    if ((widthCm - a4Width).abs() < tolerance &&
+        (heightCm - a4Height).abs() < tolerance) {
+      return 'A4';
+    }
+    if ((widthCm - a3Width).abs() < tolerance &&
+        (heightCm - a3Height).abs() < tolerance) {
+      return 'A3';
+    }
+    if ((widthCm - letterWidth).abs() < tolerance &&
+        (heightCm - letterHeight).abs() < tolerance) {
+      return 'LETTER';
+    }
+
+    // Default to A4 if no match
+    return 'A4';
   }
 
   /// Parse error from exit code and stderr output
@@ -407,6 +444,75 @@ class PythonProcessor {
       return null;
     } catch (e) {
       debugPrint('[PythonProcessor] Auto-Fix error: $e');
+      return null;
+    }
+  }
+
+  /// AI Auto-Fix with user prompt: Re-analyze with custom instructions
+  /// Returns adjusted settings or null if failed
+  Future<Map<String, dynamic>?> runAutoFixWithPrompt({
+    required String originalImage,
+    required String previewImage,
+    required String prompt,
+  }) async {
+    if (!config.isInitialized || !config.isPythonAvailable) {
+      debugPrint(
+          '[PythonProcessor] Auto-Fix with prompt failed: Python not available');
+      return null;
+    }
+
+    final scriptsDir = await config.getPythonScriptsDir();
+    final pythonCommand = await config.resolvePythonCommand();
+
+    final args = [
+      'auto_fix.py',
+      '--original',
+      _safePath(originalImage),
+      '--preview',
+      _safePath(previewImage),
+      '--prompt',
+      prompt,
+    ];
+
+    try {
+      final process = await Process.start(
+        pythonCommand,
+        args,
+        workingDirectory: scriptsDir,
+        environment: {
+          ...Platform.environment,
+          'PYTHONUNBUFFERED': '1',
+        },
+      );
+
+      final stdoutBuffer = StringBuffer();
+      final stderrBuffer = StringBuffer();
+      process.stdout.transform(utf8.decoder).listen(stdoutBuffer.write);
+      process.stderr.transform(utf8.decoder).listen(stderrBuffer.write);
+
+      final exitCode = await process.exitCode.timeout(
+        const Duration(seconds: 120),
+        onTimeout: () {
+          process.kill();
+          return -99;
+        },
+      );
+
+      if (exitCode == 0) {
+        final output = stdoutBuffer.toString();
+        final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(output);
+        if (jsonMatch != null) {
+          final json = jsonDecode(jsonMatch.group(0)!);
+          debugPrint('[PythonProcessor] Auto-Fix with prompt result: $json');
+          return json as Map<String, dynamic>;
+        }
+      }
+
+      debugPrint(
+          '[PythonProcessor] Auto-Fix with prompt failed: ${stderrBuffer.toString()}');
+      return null;
+    } catch (e) {
+      debugPrint('[PythonProcessor] Auto-Fix with prompt error: $e');
       return null;
     }
   }

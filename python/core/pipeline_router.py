@@ -196,10 +196,14 @@ class PipelineRouter:
         # 🎯 PRO PREPRESS: Apply Underbase and Trapping
         processed_masks, sep_result = self._apply_pro_prepress(processed_masks, args, sep_result)
 
+        # Task 3.3 FIX: If halftone was applied, use 'photo' class for raster PDF export
+        # This ensures halftone masks get proper raster embedding instead of vector tracing
+        export_class = 'photo' if should_halftone else 'artwork'
+
         return PipelineResult(
             masks=processed_masks,
             separation_result=sep_result,
-            image_class='artwork',
+            image_class=export_class,
             skip_binarization=False,
             effective_smoothing=args.smoothing_factor
         )

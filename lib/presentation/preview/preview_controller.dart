@@ -419,6 +419,75 @@ class PreviewController extends GetxController {
   // Navigate back to setup instead of dashboard
   void goBackToSetup() => Get.back();
 
+  /// Apply AI Fix with user prompt
+  Future<void> applyAIFix(String userPrompt) async {
+    if (isRegenerating.value) return;
+    if (imagePath.isEmpty || previewPaths.isEmpty) {
+      Get.snackbar('Error', 'No images available for AI fix');
+      return;
+    }
+
+    isRegenerating.value = true;
+    progress.value = 0.0;
+    progressMessage.value = 'AI processing with prompt...';
+
+    try {
+      final pythonProcessor = Get.find<dynamic>();
+
+      if (pythonProcessor.runtimeType.toString().contains('PythonProcessor') ==
+          false) {
+        Get.snackbar('Error', 'PythonProcessor not initialized');
+        return;
+      }
+
+      final result = await pythonProcessor.runAutoFixWithPrompt(
+        originalImage: imagePath.value,
+        previewImage: previewPaths[selectedFilmIndex.value],
+        prompt: userPrompt,
+      );
+
+      if (result != null) {
+        if (result['smoothing_factor'] != null) {
+          smoothingFactor.value =
+              (result['smoothing_factor'] as num).toDouble();
+        }
+        if (result['corner_threshold'] != null) {
+          cornerThreshold.value =
+              (result['corner_threshold'] as num).toDouble();
+        }
+        if (result['global_threshold'] != null) {
+          globalThreshold.value =
+              (result['global_threshold'] as num).toDouble();
+        }
+
+        final reason = result['adjustment_reason'] ?? 'AI adjustments applied';
+        Get.snackbar(
+          'AI Fix Applied',
+          reason,
+          backgroundColor: Colors.green.withValues(alpha: 0.1),
+          colorText: Colors.green,
+          duration: const Duration(seconds: 3),
+        );
+
+        await regenerateFilms();
+      } else {
+        Get.snackbar(
+          'AI Fix',
+          'Could not process prompt. Please try different instructions.',
+          backgroundColor: Colors.orange.withValues(alpha: 0.1),
+          colorText: Colors.orange,
+        );
+      }
+    } catch (e) {
+      Get.log('AI Fix error: $e');
+      Get.snackbar('Error', 'AI Fix failed: $e');
+    } finally {
+      isRegenerating.value = false;
+      progress.value = 0.0;
+      progressMessage.value = '';
+    }
+  }
+
   /// AI Auto-Fix: Analyze preview and adjust parameters
   Future<void> runAiAutoFix() async {
     if (isRegenerating.value) return;

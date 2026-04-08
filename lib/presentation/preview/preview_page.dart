@@ -3,8 +3,67 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../app/routes/app_routes.dart';
 import 'preview_controller.dart';
+
+void _showAIFixDialog(PreviewController controller) {
+  final textController = TextEditingController();
+  Get.dialog(
+    AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.auto_fix_high, color: Colors.deepPurple),
+          SizedBox(width: 10),
+          Text('AI Fix'),
+        ],
+      ),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Describe what you want to adjust in the film:',
+              style: TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText:
+                    'e.g. Make the lines thinner, increase contrast, remove noise from edges...',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.all(12),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Get.back(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton.icon(
+          onPressed: () {
+            final prompt = textController.text.trim();
+            if (prompt.isNotEmpty) {
+              Get.back();
+              controller.applyAIFix(prompt);
+            }
+          },
+          icon: const Icon(Icons.auto_fix_high, size: 16),
+          label: const Text('Apply AI Fix'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.deepPurple,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
 class PreviewPage extends StatelessWidget {
   const PreviewPage({super.key});
@@ -540,12 +599,12 @@ class PreviewPage extends StatelessWidget {
           ),
           const Spacer(),
           OutlinedButton.icon(
-            onPressed: () => Get.toNamed(AppRoutes.selectPrintType),
-            icon: const Icon(Icons.tune, size: 18),
-            label: const Text('Print Type'),
+            onPressed: () => _showAIFixDialog(controller),
+            icon: const Icon(Icons.auto_fix_high, size: 18),
+            label: const Text('AI Fix'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: primaryBlue,
-              side: const BorderSide(color: primaryBlue),
+              foregroundColor: Colors.deepPurple,
+              side: const BorderSide(color: Colors.deepPurple),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             ),
           ),

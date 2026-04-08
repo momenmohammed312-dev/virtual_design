@@ -97,7 +97,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
     _step(2, "AI Image Analysis & Routing")
     
     # --- AI Autopilot: Hybrid OpenCV + Qwen3-VL ---
-    if getattr(args, 'auto_colors', False) and args.image_type == 'auto':
+    # Task 3.4 FIX: Only run auto-colors when user hasn't explicitly set color count
+    # Check if colors is 0 (auto) and auto-colors flag is enabled
+    user_color_count = getattr(args, 'colors', 0)
+    if getattr(args, 'auto_colors', False) and user_color_count == 0 and args.image_type == 'auto':
         try:
             from core.ai_vision_bridge import analyze_image, apply_to_args
             from core.color_separator import ColorSeparator
@@ -118,6 +121,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
             _progress(0.3, "AI Analysis Complete")
         except Exception as e:
             logger.error(f"[Main] AI Bridge failed: {e}")
+    elif user_color_count > 0:
+        logger.info(f"[Main] Using user-specified color count: {user_color_count}")
     # ------------------------------------------
     
     # SmartAnalyzer Fallback for standard metadata
@@ -186,18 +191,17 @@ def run_pipeline(args: argparse.Namespace) -> int:
                     c, page_w, page_h, 65, color_rgb, color_name, film_info
                 )
 
-                # Footer
+                # Task 4.1 FIX: Clean professional footer matching vector exporter format
                 c.setFont("Helvetica", 9)
                 c.setFillColorRGB(0, 0, 0)
+                # Left footer: Film info with LPI
                 c.drawString(
                     65, 50,
-                    f"FILM {i+1}: {color_name}  |  "
-                    f"LPI:{args.lpi}  ANGLE:45  DPI:{args.dpi}"
+                    f"FILM {i+1}: {color_name}  |  DPI:{args.dpi}  |  LPI:{args.lpi}"
                 )
-                c.drawRightString(
-                    page_w - 65, 50,
-                    f"Page {i+1} of {len(masks)}"
-                )
+                # Right footer: Brand and page number
+                brand_text = f"Virtual Design Studio | {film_info.get('job_name', 'Untitled')} | Page {i+1}/{len(masks)}"
+                c.drawRightString(page_w - 65, 50, brand_text)
 
             c.save()
             logger.info(
@@ -234,14 +238,17 @@ def run_pipeline(args: argparse.Namespace) -> int:
             if mask.dtype != np.uint8:
                 mask = mask.astype(np.uint8)
             
-            # Only invert if mask is in silk-screen polarity (ink=0 = dark minority)
-            # so that preview shows dark ink on white background
+            # Task 3.2 FIX: Correct preview inversion for silk-screen polarity
+            # Silk-screen: ink=0 (black), background=255 (white/transparent)
+            # Preview should show: black ink on white background (what you see when printing)
             mask_mean = np.mean(mask)
-            if mask_mean > 127:
-                # ink=0 occupies minority -> invert to show dark ink on white for preview
+            if mask_mean < 127:
+                # Mask is mostly black (ink-heavy), background is dark
+                # Invert so preview shows black ink on white background
                 preview_mask = cv2.bitwise_not(mask)
             else:
-                # mask already has dark ink visible -> use as-is
+                # Mask is already mostly white (background), ink is visible as black
+                # Use as-is for preview
                 preview_mask = mask.copy()
             
             # Save as PNG

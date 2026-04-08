@@ -500,6 +500,92 @@ If preview looks good, return minimal adjustments.
         return None
 
 
+def analyze_with_prompt(original_path: str, preview_path: str, user_prompt: str) -> Optional[dict]:
+    """
+    Task 5.2 FIX: Analyze preview with user-provided prompt for custom adjustments.
+    
+    This function allows users to describe what they want to adjust in the film,
+    and the AI will suggest parameter changes based on that description.
+    
+    Args:
+        original_path: Path to original input image
+        preview_path: Path to current preview image (what user sees)
+        user_prompt: User's description of desired adjustments
+        
+    Returns:
+        Dict with parameter adjustments or None if failed
+    """
+    llm = _get_llm()
+    if llm is None:
+        logger.warning("[AIBridge] LLM not available for prompt-based analysis")
+        return None
+    
+    # Load preview image
+    img = cv2.imread(preview_path)
+    if img is None:
+        logger.error(f"[AIBridge] Cannot load preview: {preview_path}")
+        return None
+    
+    # Encode to base64
+    _, buf = cv2.imencode(".jpg", img)
+    img_b64 = base64.b64encode(buf).decode("utf-8")
+    
+    # Build prompt with user instructions
+    prompt = f"""/no_think
+You are a Prepress Engineer for Silk Screen Printing. 
+The user wants to adjust their film based on this description:
+"{user_prompt}"
+
+Analyze the current preview image and suggest specific parameter adjustments.
+Return STRICT JSON ONLY with these fields:
+- smoothing_factor: float (0.1-0.5) - higher = smoother edges
+- corner_threshold: float (30-140) - lower = sharper corners
+- global_threshold: int (0-255) - adjust line thickness
+- lpi: int (45-85) - lines per inch for halftone
+- adjustment_reason: string - brief explanation of changes
+
+Example: {{"smoothing_factor": 0.35, "corner_threshold": 95, "global_threshold": 180, "lpi": 55, "adjustment_reason": "Increased smoothing to reduce jagged edges"}}
+"""
+    
+    logger.info(f"[AIBridge] Analyzing with user prompt: {user_prompt[:50]}...")
+    t0 = time.time()
+    
+    try:
+        response = llm.create_chat_completion(
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                    {"type": "text", "text": prompt}
+                ]
+            }],
+            temperature=0.2,
+            max_tokens=250,
+        )
+        
+        elapsed = time.time() - t0
+        raw = response["choices"][0]["message"]["content"]
+        logger.info(f"[AIBridge] Prompt response in {elapsed:.1f}s")
+        
+        result = _parse_response(raw)
+        
+        if result:
+            logger.info(f"[AIBridge] Prompt-based adjustments applied: {result.get('adjustment_reason', '')}")
+            return {
+                'smoothing_factor': result.get('smoothing_factor', 0.25),
+                'corner_threshold': result.get('corner_threshold', 95.0),
+                'global_threshold': result.get('global_threshold', 180),
+                'lpi': result.get('lpi', 55),
+                'adjustment_reason': result.get('adjustment_reason', 'Custom adjustments applied'),
+            }
+        return None
+        
+    except Exception as e:
+        logger.error(f"[AIBridge] Prompt analysis failed: {e}")
+        return None
+
+
 # ─── Health Check ─────────────────────────────────────────────────────────────
 
 def is_available() -> bool:
