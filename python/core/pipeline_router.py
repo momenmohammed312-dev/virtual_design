@@ -177,18 +177,23 @@ class PipelineRouter:
             args.colors = analysis.num_colors if analysis else 4
         
         target_colors = args.colors
-        if target_colors == 1:
+        should_halftone = args.halftone or (analysis and (analysis.score_photo > 0.4 or analysis.use_halftone))
+        
+        # 🔥 FIX: When halftone is selected, always do color separation (even with 1 color)
+        # Halftone needs grayscale output from color separation, not binary
+        if target_colors == 1 and not should_halftone:
+            # Non-halftone single color: use fast binary path
             from core.router_utils import _make_single_color_separation
             gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
             m = edge_aware_binarize(gray)
             m = self.controller.enforce_polarity(m, stage="artwork_1color")
             sep_result = _make_single_color_separation(image)
             masks = [m]
-            should_halftone = False
         else:
+            # Halftone mode OR multi-color: do proper color separation
             kmeans_colors = max(target_colors, 2)
+            logger.info(f"[PipelineRouter] Color separation for halftone: {kmeans_colors} colors, grayscale_output={should_halftone}")
             sep_result = self.separator.separate(preprocessed, num_colors=kmeans_colors)
-            should_halftone = args.halftone or (analysis and (analysis.score_photo > 0.4 or analysis.use_halftone))
             masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=should_halftone)
         
         if should_halftone:

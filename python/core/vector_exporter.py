@@ -1,16 +1,28 @@
 """
-vector_exporter.py — High-Quality Vector PDF Export
-Uses Bezier curve fitting for smooth edges (no staircase artifacts)
+Vector PDF Exporter for Silk Screen Masks.
+Generates print-ready PDF with vector paths, registration marks, and professional print specifications.
+FIXED: Consistent 1:1 scaling across all masks with proper centering.
+NEW: Professional fit-to-page scaling with configurable modes.
 """
 
 import cv2
 import numpy as np
 import math
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Literal
 import logging
-import io
-from PIL import Image
+from reportlab.pdfgen import canvas as rl_canvas
+from reportlab.lib.pagesizes import A4, A3, letter
+
+# Scale modes for artwork rendering
+ScaleMode = Literal["fit_to_page", "actual_size", "custom_scale"]
+
+# Default configuration
+DEFAULT_MARGIN_PT = 65  # Professional margin for marks
+DEFAULT_HEADER_PT = 60
+DEFAULT_FOOTER_PT = 60
+MIN_MARGIN_PT = 20  # Minimum safe margin
+MAX_SCALE_PERCENT = 500  # Maximum 5x upscaling
 
 logger = logging.getLogger(__name__)
 
@@ -275,27 +287,99 @@ def export_vector_pdf(
     
     from .vector_marks import draw_vector_registration_mark, add_vector_marks_to_page
     
+    # ─────────────────────────────────────────────────────────────────────────
+    # 🔥 NEW: Professional Fit-to-Page Scaling System
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    # Get configuration from args or use defaults
+    scale_mode: ScaleMode = getattr(args, 'scale_mode', 'fit_to_page')
+    custom_scale_percent = getattr(args, 'custom_scale_percent', 100.0)
+    margin_pt = getattr(args, 'margin_pt', DEFAULT_MARGIN_PT)
+    
+    # Ensure minimum margins
+    margin_pt = max(margin_pt, MIN_MARGIN_PT)
+    
     page_sizes = {'A4': A4, 'A3': A3, 'LETTER': letter}
     page_w, page_h = page_sizes.get(page_size.upper(), A4)
+    
+    # Log page setup
+    logger.info(f"[VectorExporter] Page setup: {page_size} = {page_w:.1f}pt x {page_h:.1f}pt "
+               f"({page_w/72*25.4:.1f}mm x {page_h/72*25.4:.1f}mm)")
+    logger.info(f"[VectorExporter] Scale mode: {scale_mode}, margin: {margin_pt}pt, DPI: {dpi}")
     
     # Professional 1:1 scaling: pixels to points with calibration
     def px_to_pt(px: float) -> float:
         if calib:
-            # Use calibrated conversion for 1:1 accuracy
             mm = calib.pixels_to_mm(px)
             return mm * 72.0 / 25.4  # mm to points
         else:
-            # Fallback calculation
             return px / dpi * 72.0
+    
+    def px_to_mm(px: float) -> float:
+        if calib:
+            return calib.pixels_to_mm(px)
+        else:
+            return px / dpi * 25.4
     
     if (corner_threshold or 0.0) > 150.0:
         logger.info(f"[VectorExporter] Applying Hard-Corner Logic (Threshold: {corner_threshold:.1f})")
-        
+    
     c = rl_canvas.Canvas(str(output_path), pagesize=(page_w, page_h))
     
-    MARGIN_PT = 65  # Increased margin for professional marks
-    HEADER_PT = 60  
-    FOOTER_PT = 60  
+    # Calculate printable area (consistent for all films)
+    printable_w = page_w - 2 * margin_pt
+    printable_h = page_h - 2 * margin_pt
+    
+    logger.info(f"[VectorExporter] Printable area: {printable_w:.1f}pt x {printable_h:.1f}pt "
+               f"({printable_w/72*25.4:.1f}mm x {printable_h/72*25.4:.1f}mm)")
+    
+    # Compute scale factor once (for multi-film consistency)
+    # Use first mask to determine artwork bounds
+    first_mask = masks[0] if masks else None
+    if first_mask is not None:
+        first_h, first_w = first_mask.shape[:2]
+        artwork_w_pt = px_to_pt(first_w)
+        artwork_h_pt = px_to_pt(first_h)
+        artwork_w_mm = px_to_mm(first_w)
+        artwork_h_mm = px_to_mm(first_h)
+        
+        logger.info(f"[VectorExporter] Original artwork: {first_w}x{first_h}px = "
+                   f"{artwork_w_mm:.1f}mm x {artwork_h_mm:.1f}mm")
+        
+        # Calculate scale factor based on mode
+        if scale_mode == 'actual_size':
+            scale_factor = 1.0
+            logger.info(f"[VectorExporter] Scale mode: actual_size (1:1, no scaling)")
+            
+        elif scale_mode == 'custom_scale':
+            scale_factor = custom_scale_percent / 100.0
+            logger.info(f"[VectorExporter] Scale mode: custom_scale ({custom_scale_percent}%)")
+            
+        else:  # fit_to_page (default)
+            # Calculate scale to fit within printable area
+            scale_w = printable_w / artwork_w_pt if artwork_w_pt > 0 else 1.0
+            scale_h = printable_h / artwork_h_pt if artwork_h_pt > 0 else 1.0
+            scale_factor = min(scale_w, scale_h)
+            
+            # Clamp to reasonable limits
+            scale_factor = min(scale_factor, MAX_SCALE_PERCENT / 100.0)
+            scale_factor = max(scale_factor, 0.1)  # Minimum 10%
+            
+            logger.info(f"[VectorExporter] Scale mode: fit_to_page, computed scale: {scale_factor:.2f}x "
+                       f"(w_ratio={scale_w:.2f}, h_ratio={scale_h:.2f})")
+        
+        final_w_pt = artwork_w_pt * scale_factor
+        final_h_pt = artwork_h_pt * scale_factor
+        final_w_mm = artwork_w_mm * scale_factor
+        final_h_mm = artwork_h_mm * scale_factor
+        
+        logger.info(f"[VectorExporter] Final render size: {final_w_pt:.1f}pt x {final_h_pt:.1f}pt "
+                   f"({final_w_mm:.1f}mm x {final_h_mm:.1f}mm)")
+    else:
+        scale_factor = 1.0
+        logger.warning("[VectorExporter] No masks provided, using default scale=1.0")
+    
+    MARGIN_PT = margin_pt  # Use configured margin
     
     for film_idx, (mask, color_rgb, color_name) in enumerate(
         zip(masks, colors, color_names)
@@ -305,25 +389,24 @@ def export_vector_pdf(
         
         mask_h, mask_w = mask.shape[:2]
         
-        # Area calculation for design centering
-        available_w = page_w - 2 * MARGIN_PT
-        available_h = page_h - 2 * MARGIN_PT # Symmetric for better centering
-        
-        # Professional 1:1 scaling or adaptive fit
+        # Convert mask dimensions to points
         mask_w_pt = px_to_pt(mask_w)
         mask_h_pt = px_to_pt(mask_h)
         
-        # Scaling calculation (always fits inside margin with padding)
-        scale = min(available_w / mask_w_pt, available_h / mask_h_pt)
-        if scale > 1.0: # Don't upscale past 1:1 unless user specifically overrides in future
-            scale = 1.0
-            
-        draw_w = mask_w_pt * scale
-        draw_h = mask_h_pt * scale
+        # Apply consistent scale factor
+        draw_w = mask_w_pt * scale_factor
+        draw_h = mask_h_pt * scale_factor
         
         # 🎯 AUTO-CENTERING: Perfectly center design on film page
-        draw_x = MARGIN_PT + (available_w - draw_w) / 2
-        draw_y = MARGIN_PT + (available_h - draw_h) / 2
+        draw_x = margin_pt + (printable_w - draw_w) / 2
+        draw_y = margin_pt + (printable_h - draw_h) / 2
+        
+        # Log per-film positioning (debug only, not to spam)
+        if film_idx == 0:
+            logger.info(f"[VectorExporter] Film {film_idx+1} position: ({draw_x:.1f}, {draw_y:.1f})pt, "
+                       f"size: ({draw_w:.1f}, {draw_h:.1f})pt")
+        else:
+            logger.debug(f"[VectorExporter] Film {film_idx+1} using identical positioning")
         
         # ─── Professional Print Specs Table (Top Right) ───
         c.setFont("Helvetica", 8)

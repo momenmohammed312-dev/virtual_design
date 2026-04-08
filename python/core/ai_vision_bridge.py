@@ -325,23 +325,36 @@ def _adjust_for_resolution(result: dict, h: int, w: int) -> dict:
 
 
 def _sanitize_numeric_ranges(json_str: str) -> str:
-    """Convert numeric ranges like '0.35-0.5' to single values before JSON parsing."""
+    """Convert numeric ranges like 0.35-0.5 or '0.35-0.5' to single values before JSON parsing."""
     import re
-    # Pattern to match numeric ranges: number-number (with optional decimals)
-    # Examples: 0.35-0.5, 10-20, 0.1-0.3
-    range_pattern = r'"(\d+\.?\d*)-(\d+\.?\d*)"'
     
-    def replace_range(match):
-        val1, val2 = float(match.group(1)), float(match.group(2))
-        # Use midpoint of range
+    # 🔥 FIX: Handle both quoted and unquoted numeric ranges
+    # Pattern 1: Unquoted ranges (like 0.35-0.5 in value position)
+    unquoted_pattern = r'(:\s*)(\d+\.?\d*)-(\d+\.?\d*)(\s*[,}\n])'
+    
+    def replace_unquoted(match):
+        prefix, val1, val2, suffix = match.group(1), float(match.group(2)), float(match.group(3)), match.group(4)
         midpoint = (val1 + val2) / 2
-        # Preserve original decimal precision
+        if '.' in match.group(2) or '.' in match.group(3):
+            return f'{prefix}{midpoint:.2f}{suffix}'
+        else:
+            return f'{prefix}{int(midpoint)}{suffix}'
+    
+    json_str = re.sub(unquoted_pattern, replace_unquoted, json_str)
+    
+    # Pattern 2: Quoted ranges (like "0.35-0.5")
+    quoted_pattern = r'"(\d+\.?\d*)-(\d+\.?\d*)"'
+    
+    def replace_quoted(match):
+        val1, val2 = float(match.group(1)), float(match.group(2))
+        midpoint = (val1 + val2) / 2
         if '.' in match.group(1) or '.' in match.group(2):
             return f'"{midpoint:.2f}"'
         else:
             return f'"{int(midpoint)}"'
     
-    sanitized = re.sub(range_pattern, replace_range, json_str)
+    sanitized = re.sub(quoted_pattern, replace_quoted, json_str)
+    logger.info(f"[AIBridge] Sanitized numeric ranges in JSON")
     return sanitized
 
 
@@ -359,12 +372,19 @@ def _parse_response(raw: str) -> Optional[dict]:
         clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
 
     # 🔥 FIX: Sanitize numeric ranges before JSON parsing
+    has_ranges = '-' in clean and any(c.isdigit() for c in clean.split('-')[0][-5:])
+    if has_ranges:
+        logger.info(f"[AIBridge] Detected numeric ranges in response, sanitizing...")
+        logger.debug(f"[AIBridge] Before sanitize: {clean[:200]}")
     clean = _sanitize_numeric_ranges(clean)
+    if has_ranges:
+        logger.debug(f"[AIBridge] After sanitize: {clean[:200]}")
 
     try:
         result = json.loads(clean)
     except json.JSONDecodeError as e:
-        logger.warning(f"[AIBridge] JSON parse failed: {e} | raw: {raw[:200]}")
+        logger.warning(f"[AIBridge] JSON parse failed: {e}")
+        logger.warning(f"[AIBridge] Sanitized content: {clean[:300]}")
         return None
 
     # 🔥 FIX: Apply defaults for missing keys instead of failing
