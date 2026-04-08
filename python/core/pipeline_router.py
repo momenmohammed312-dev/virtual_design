@@ -69,12 +69,14 @@ class PipelineRouter:
     """
     Routes an image to the most appropriate processing pipeline.
     """
-    def __init__(self, job_config: PrintJobConfig):
+    def __init__(self, job_config: PrintJobConfig, alpha_mask: Optional[np.ndarray] = None):
         self.job_config = job_config
         self.controller = PipelineController()
         self.separator = ColorSeparator()
         self.mask_gen = MaskGenerator()
         self.halftone_gen = HalftoneGenerator()
+        # 🔥 Store alpha mask for transparent PNG handling
+        self.alpha_mask = alpha_mask
 
     def route(self, image: np.ndarray, analysis, args: argparse.Namespace) -> PipelineResult:
         img_type = getattr(args, 'image_type', 'auto')
@@ -131,7 +133,8 @@ class PipelineRouter:
         binary = self.controller.enforce_polarity(
             binary, 
             stage="text_logo",
-            force_black_ink=True   # Always black ink on white background for silk screen
+            force_black_ink=True,   # Always black ink on white background for silk screen
+            alpha_mask=self.alpha_mask  # 🔥 Respect transparent pixels
         )
         
         num, labels, stats, _ = cv2.connectedComponentsWithStats(cv2.bitwise_not(binary), 8, cv2.CV_32S)
@@ -186,7 +189,11 @@ class PipelineRouter:
             from core.router_utils import _make_single_color_separation
             gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
             m = edge_aware_binarize(gray)
-            m = self.controller.enforce_polarity(m, stage="artwork_1color")
+            m = self.controller.enforce_polarity(
+                m, 
+                stage="artwork_1color",
+                alpha_mask=self.alpha_mask  # 🔥 Respect transparent pixels
+            )
             sep_result = _make_single_color_separation(image)
             masks = [m]
         else:

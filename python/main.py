@@ -77,7 +77,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
     args.lpi = job_config.validate_lpi(args.lpi, auto_fix=getattr(args, 'auto_fix_lpi', False))
     
     # 2. Loading (Memory-Safe)
-    image = load_image_safely(args.input)
+    # 🔥 FIXED: Now receives alpha_mask from transparent PNGs
+    image, alpha_mask = load_image_safely(args.input)
     if image is None:
         logger.error(f"Failed to load image: {args.input}")
         return 2
@@ -87,8 +88,16 @@ def run_pipeline(args: argparse.Namespace) -> int:
         image = image[:, :, :3]
     
     h, w = image.shape[:2]
+    
+    # 🔥 Log alpha channel info for debugging
+    if alpha_mask is not None:
+        alpha_ratio = np.sum(alpha_mask) / alpha_mask.size
+        logger.info(f"[Pipeline] Alpha mask loaded: {alpha_ratio:.1%} visible artwork, "
+                   f"{1-alpha_ratio:.1%} transparent/background")
+    
     # Score original image quality
-    router = PipelineRouter(job_config)
+    # 🔥 Pass alpha_mask to PipelineRouter for transparent PNG handling
+    router = PipelineRouter(job_config, alpha_mask=alpha_mask)
     qual_score = router.halftone_gen.evaluate_quality(image)
     logger.info(f"Image loaded: {w}x{h} | Quality Score: {qual_score:.1f}")
     _progress(0.1, "Image Loaded")

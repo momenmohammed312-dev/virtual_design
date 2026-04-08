@@ -39,16 +39,22 @@ class PipelineController:
     def __init__(self):
         self._audit_log = []
 
-    def enforce_polarity(self, mask: np.ndarray, stage: str = "unknown", force_black_ink: bool = False) -> np.ndarray:
+    def enforce_polarity(self, mask: np.ndarray, stage: str = "unknown", 
+                         force_black_ink: bool = False,
+                         alpha_mask: Optional[np.ndarray] = None) -> np.ndarray:
         """
         The ONLY function allowed to do inversion.
         Ensures: ink=BLACK(0), background=WHITE(255)
+        
+        🔥 FIXED: Now uses alpha_mask to ignore transparent pixels in polarity calculation.
         
         Decision: if mean(mask) <= 127 -> polarity is wrong -> invert
         
         Args:
             force_black_ink: If True, ensure design is black ink on white background
                            (used for 1-color user choice to avoid white-on-black)
+            alpha_mask: Optional boolean mask where True=visible, False=transparent.
+                       If provided, only visible pixels are counted for polarity.
         """
         if mask is None:
             return None
@@ -59,13 +65,42 @@ class PipelineController:
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
 
-        # Count actual ink pixels (=0) vs background pixels (=255)
-        ink_px   = int(np.sum(mask == 0))
-        bg_px    = int(np.sum(mask == 255))
-        total_px = mask.size
+        # 🔥 NEW: Use alpha_mask to exclude transparent pixels from calculation
+        if alpha_mask is not None:
+            # Ensure alpha_mask matches mask dimensions
+            if alpha_mask.shape != mask.shape[:2]:
+                logger.warning(f"  [Polarity] {stage}: alpha_mask shape {alpha_mask.shape} doesn't match mask {mask.shape}, resizing")
+                alpha_mask = cv2.resize(alpha_mask.astype(np.uint8), 
+                                       (mask.shape[1], mask.shape[0]), 
+                                       interpolation=cv2.INTER_NEAREST).astype(bool)
+            
+            # Only count visible pixels
+            visible_pixels = alpha_mask
+            total_visible = np.sum(visible_pixels)
+            
+            if total_visible > 0:
+                # Count ink/bg only in visible region
+                ink_px = int(np.sum((mask == 0) & visible_pixels))
+                bg_px = int(np.sum((mask == 255) & visible_pixels))
+                total_px = total_visible
+                
+                alpha_ratio = total_visible / mask.size
+                logger.info(f"  [Polarity] {stage}: Using alpha mask, {alpha_ratio:.1%} pixels visible, "
+                           f"{1-alpha_ratio:.1%} transparent ignored")
+            else:
+                # No visible pixels, fall back to full image
+                logger.warning(f"  [Polarity] {stage}: No visible pixels in alpha mask, using full image")
+                ink_px = int(np.sum(mask == 0))
+                bg_px = int(np.sum(mask == 255))
+                total_px = mask.size
+        else:
+            # Original behavior: count all pixels
+            ink_px = int(np.sum(mask == 0))
+            bg_px = int(np.sum(mask == 255))
+            total_px = mask.size
 
         ink_ratio = ink_px / (total_px + 1e-6)
-        bg_ratio  = bg_px  / (total_px + 1e-6)
+        bg_ratio = bg_px / (total_px + 1e-6)
 
         # If background pixels are less than ink pixels -> polarity is flipped
         # Expected: ink=0 (minority), background=255 (majority)
