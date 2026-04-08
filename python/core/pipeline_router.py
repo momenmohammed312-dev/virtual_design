@@ -192,7 +192,9 @@ class PipelineRouter:
             masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=should_halftone)
         
         if should_halftone:
+            logger.info(f"[PipelineRouter] ✓✓✓ ENTERING HALFTONE PIPELINE - {len(masks)} masks")
             masks = apply_halftone_pipeline(masks, args, self.halftone_gen)
+            logger.info(f"[PipelineRouter] ✓✓✓ HALFTONE PIPELINE COMPLETE - {len(masks)} masks processed")
         
         processed_masks = []
         for i, m in enumerate(masks):

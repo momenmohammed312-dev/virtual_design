@@ -118,17 +118,17 @@ class MaskGenerator:
             gray_orig = image.copy()
 
         for i in range(num_colors):
-            # CRITICAL FIX: Create masks directly from labels (no thresholding)
-            # This prevents empty masks caused by improper thresholding
-            mask = (label_map == i).astype(np.uint8) * 255  # White background
+            # 🔥 FIX: Proper film polarity mask generation
+            # Start with WHITE background (255), then set selected label pixels to BLACK (0)
+            mask = np.full(label_map.shape, 255, dtype=np.uint8)
+            mask[label_map == i] = 0  # Design pixels = BLACK (ink)
             
             if grayscale_output:
                 # For halftone: preserve grayscale intensity from original image
-                # Design pixels (white=255) should map to their original grayscale (low = dark/ink)
-                mask[mask == 255] = gray_orig[label_map == i]
-            else:
-                # For solid: invert to film polarity (black=0, white=255)
-                mask[mask == 255] = 0  # Design pixels = BLACK (0)
+                # Only apply grayscale to design pixels (where mask == 0)
+                selected_pixels = (label_map == i)
+                if np.any(selected_pixels):
+                    mask[selected_pixels] = gray_orig[selected_pixels]
 
             if apply_cleanup and not grayscale_output:
                 mask = self._cleanup_mask(mask, morph_kernel_size, min_area)

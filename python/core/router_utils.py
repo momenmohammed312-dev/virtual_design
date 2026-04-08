@@ -106,16 +106,21 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     Decoupled halftone pipeline using high-DPI RasterHalftoneEngine.
     halftone_gen parameter is ignored (kept for API compatibility).
     """
+    logger.info(f"[HalftonePipeline] ===== ENTERING with {len(masks)} masks =====")
+    logger.info(f"[HalftonePipeline] Args: dpi={getattr(args, 'dpi', 'N/A')}, lpi={getattr(args, 'lpi', 'N/A')}, dot_shape={getattr(args, 'dot_shape', 'N/A')}")
+    
     try:
         from core.raster_halftone import RasterHalftoneEngine, RasterHalftoneConfig
-    except ImportError:
-        logger.warning("RasterHalftoneEngine not available, falling back to legacy")
+        logger.info("[HalftonePipeline] ✓ RasterHalftoneEngine imported successfully")
+    except ImportError as e:
+        logger.warning(f"[HalftonePipeline] RasterHalftoneEngine not available: {e}, falling back to legacy")
         if halftone_gen is None:
             try:
                 from core.halftone_generator import HalftoneGenerator
                 halftone_gen = HalftoneGenerator()
-            except ImportError:
-                logger.warning("HalftoneGenerator not available in utils")
+                logger.info("[HalftonePipeline] ✓ Legacy HalftoneGenerator initialized")
+            except ImportError as e2:
+                logger.error(f"[HalftonePipeline] HalftoneGenerator not available: {e2}")
                 return masks
         # Legacy path
         return _apply_legacy_halftone(masks, args, halftone_gen)
@@ -123,6 +128,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     # Use RasterHalftoneEngine at high DPI for professional output
     output_dpi = getattr(args, 'dpi', 450)
     raster_dpi = max(1200, output_dpi * 2)
+    logger.info(f"[HalftonePipeline] Config: output_dpi={output_dpi}, raster_dpi={raster_dpi}")
     
     # Auto-calc LPI if needed
     effective_lpi = args.lpi
@@ -202,4 +208,5 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
         ht = halftone_gen.generate(enhanced, lpi=effective_lpi, angle=angle, 
                                    dot_shape=dot_shape, dpi=args.dpi, gamma=1.6)
         result.append(ht)
+    logger.info(f"[HalftonePipeline] ===== COMPLETE - {len(result)} masks processed =====")
     return result

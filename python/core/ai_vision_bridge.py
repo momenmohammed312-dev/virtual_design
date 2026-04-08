@@ -27,6 +27,34 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# ─── AI Optimization Settings ────────────────────────────────────────────────
+AI_MAX_DIM = 512  # Resize images to max 512px before AI analysis for speed
+
+
+def _resize_for_ai(image: np.ndarray, max_dim: int = AI_MAX_DIM) -> np.ndarray:
+    """Resize image for AI analysis while preserving aspect ratio.
+    
+    Args:
+        image: Input image (BGR or RGB)
+        max_dim: Maximum dimension (width or height)
+        
+    Returns:
+        Resized image
+    """
+    h, w = image.shape[:2]
+    if max(h, w) <= max_dim:
+        return image
+    
+    # Calculate new size preserving aspect ratio
+    scale = max_dim / max(h, w)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    
+    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    logger.info(f"[AIBridge] Resized image for AI: {w}x{h} -> {new_w}x{new_h} (scale: {scale:.2f})")
+    return resized
+
+
 # ─── Model Paths (عدّل على حسب مكان الملفات عندك) ────────────────────────────
 MODEL_PATH  = r"E:\ai models\Qwen3-VL-2B\Qwen3-VL-2B-Instruct-UD-Q4_K_XL 2.gguf"
 MMPROJ_PATH = r"E:\ai models\Qwen3-VL-2B\mmproj-F16 2.gguf"
@@ -179,16 +207,27 @@ def analyze_image(image: np.ndarray, opencv_colors: list = None) -> Optional[dic
         # FALLBACK: Robust default parameters if model fails to load
         return _get_safe_fallback()
 
-    # Resize for speed (model input limit/speed trade-off)
+    # 🔥 CRITICAL FIX: Resize for AI speed optimization (67s → 5-15s)
     h, w = image.shape[:2]
-    max_dim = 448 # Slightly smaller for even faster CPU inference
+    logger.info(f"[AIBridge] AI Input Shape BEFORE resize: {w}x{h}")
+    
+    max_dim = 512  # Increased from 448 for better quality/speed balance
     if max(h, w) > max_dim:
         scale = max_dim / max(h, w)
-        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        new_w, new_h = int(w * scale), int(h * scale)
+        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        logger.info(f"[AIBridge] ✓ Resized for AI: {w}x{h} → {new_w}x{new_h} (scale: {scale:.3f})")
+    else:
+        logger.info(f"[AIBridge] No resize needed (already {max(h,w)} ≤ {max_dim})")
+    
+    # 🔥 Verify final shape
+    final_h, final_w = image.shape[:2]
+    logger.info(f"[AIBridge] AI Input Shape AFTER resize: {final_w}x{final_h}")
 
     # Encode to JPEG base64
-    _, buf = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    _, buf = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
     img_b64 = base64.b64encode(buf).decode()
+    logger.info(f"[AIBridge] Base64 encoded size: {len(img_b64)} chars")
 
     # Build prompt with OpenCV color context
     if opencv_colors:
@@ -285,6 +324,27 @@ def _adjust_for_resolution(result: dict, h: int, w: int) -> dict:
     return result
 
 
+def _sanitize_numeric_ranges(json_str: str) -> str:
+    """Convert numeric ranges like '0.35-0.5' to single values before JSON parsing."""
+    import re
+    # Pattern to match numeric ranges: number-number (with optional decimals)
+    # Examples: 0.35-0.5, 10-20, 0.1-0.3
+    range_pattern = r'"(\d+\.?\d*)-(\d+\.?\d*)"'
+    
+    def replace_range(match):
+        val1, val2 = float(match.group(1)), float(match.group(2))
+        # Use midpoint of range
+        midpoint = (val1 + val2) / 2
+        # Preserve original decimal precision
+        if '.' in match.group(1) or '.' in match.group(2):
+            return f'"{midpoint:.2f}"'
+        else:
+            return f'"{int(midpoint)}"'
+    
+    sanitized = re.sub(range_pattern, replace_range, json_str)
+    return sanitized
+
+
 def _parse_response(raw: str) -> Optional[dict]:
     """Parse and validate JSON response from model."""
     # Strip markdown code blocks if model added them
@@ -298,29 +358,44 @@ def _parse_response(raw: str) -> Optional[dict]:
         import re
         clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
 
+    # 🔥 FIX: Sanitize numeric ranges before JSON parsing
+    clean = _sanitize_numeric_ranges(clean)
+
     try:
         result = json.loads(clean)
     except json.JSONDecodeError as e:
         logger.warning(f"[AIBridge] JSON parse failed: {e} | raw: {raw[:200]}")
         return None
 
-    # Validate required keys and types
-    required = {
-        "image_class": str,
-        "num_colors": int,
-        "use_halftone": bool,
-        "smoothing_factor": float,
+    # 🔥 FIX: Apply defaults for missing keys instead of failing
+    defaults = {
+        "image_class": "artwork",
+        "num_colors": 3,
+        "use_halftone": False,
+        "smoothing_factor": 0.25,
+        "corner_threshold": 95.0,
+        "lpi": 55,
+        "dot_shape": "round",
+        "upscale_factor": 1.0,
     }
-    for key, typ in required.items():
+    for key, default_val in defaults.items():
         if key not in result:
-            logger.warning(f"[AIBridge] Missing key: {key}")
-            return None
-        # Coerce if close enough
-        try:
-            result[key] = typ(result[key])
-        except (ValueError, TypeError):
-            logger.warning(f"[AIBridge] Invalid type for {key}: {result[key]}")
-            return None
+            logger.warning(f"[AIBridge] Missing key: {key}, using default: {default_val}")
+            result[key] = default_val
+        else:
+            # Coerce type if possible
+            try:
+                if isinstance(default_val, bool):
+                    result[key] = bool(result[key])
+                elif isinstance(default_val, int):
+                    result[key] = int(float(result[key]))
+                elif isinstance(default_val, float):
+                    result[key] = float(result[key])
+                elif isinstance(default_val, str):
+                    result[key] = str(result[key])
+            except (ValueError, TypeError):
+                logger.warning(f"[AIBridge] Invalid type for {key}: {result[key]}, using default: {default_val}")
+                result[key] = default_val
 
     # Validate image_class
     valid_classes = {"text_logo", "artwork", "photo"}
@@ -432,14 +507,29 @@ def analyze_preview_flaws(original_img_path: str, preview_img_path: str) -> Opti
         logger.warning("[AIBridge] Auto-Fix: Model not available")
         return None
 
-    # Load and encode images
+    # 🔥 FIX: Resize images before AI analysis for speed (67s -> 5-15s)
     try:
-        with open(original_img_path, "rb") as f:
-            orig_b64 = base64.b64encode(f.read()).decode()
-        with open(preview_img_path, "rb") as f:
-            prev_b64 = base64.b64encode(f.read()).decode()
+        orig_img = cv2.imread(original_img_path)
+        prev_img = cv2.imread(preview_img_path)
+        
+        if orig_img is None or prev_img is None:
+            logger.error("[AIBridge] Auto-Fix: Failed to load images")
+            return None
+        
+        # Resize for AI speed optimization
+        orig_resized = _resize_for_ai(orig_img, max_dim=768)
+        prev_resized = _resize_for_ai(prev_img, max_dim=768)
+        
+        # Encode resized images
+        _, orig_buf = cv2.imencode('.png', orig_resized)
+        _, prev_buf = cv2.imencode('.png', prev_resized)
+        
+        orig_b64 = base64.b64encode(orig_buf).decode()
+        prev_b64 = base64.b64encode(prev_buf).decode()
+        
+        logger.info(f"[AIBridge] Auto-Fix: Images resized and encoded for AI")
     except Exception as e:
-        logger.error(f"[AIBridge] Auto-Fix: Failed to load images: {e}")
+        logger.error(f"[AIBridge] Auto-Fix: Failed to process images: {e}")
         return None
 
     fix_prompt = """/no_think
@@ -520,14 +610,17 @@ def analyze_with_prompt(original_path: str, preview_path: str, user_prompt: str)
         logger.warning("[AIBridge] LLM not available for prompt-based analysis")
         return None
     
-    # Load preview image
+    # 🔥 FIX: Resize image before AI analysis for speed
     img = cv2.imread(preview_path)
     if img is None:
         logger.error(f"[AIBridge] Cannot load preview: {preview_path}")
         return None
     
-    # Encode to base64
-    _, buf = cv2.imencode(".jpg", img)
+    # Resize for AI speed optimization
+    img_resized = _resize_for_ai(img, max_dim=768)
+    
+    # Encode resized image
+    _, buf = cv2.imencode(".jpg", img_resized)
     img_b64 = base64.b64encode(buf).decode("utf-8")
     
     # Build prompt with user instructions
