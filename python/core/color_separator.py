@@ -31,10 +31,12 @@ class ColorSeparator:
         attempts: int = 3,
         background_mode: BackgroundMode = "auto",
         bg_tolerance: int = 30,
+        alpha_mask: Optional[np.ndarray] = None,
     ) -> Dict:
         """
         Separate image into color layers using K-means clustering.
         🔥 NEW: Proper background detection and removal before clustering.
+        🔥 FIXED: Now uses alpha_mask to exclude transparent pixels from clustering.
 
         Args:
             image: Input image (BGR format)
@@ -45,6 +47,8 @@ class ColorSeparator:
             attempts: Number of K-means attempts (best result kept)
             background_mode: Background detection mode ("auto", "remove_white", "remove_black", "keep_all")
             bg_tolerance: Color distance tolerance for background matching
+            alpha_mask: Optional boolean mask where True=visible, False=transparent.
+                       If provided, transparent pixels are excluded from clustering.
 
         Returns:
             Dictionary with separation results:
@@ -107,6 +111,35 @@ class ColorSeparator:
             bg_mask, fg_mask, bg_stats = detect_background(image, mode=bg_mode, tolerance=bg_tolerance)
             logger.info(f"[ColorSeparator] Background detection: {bg_stats['bg_pixels']} bg, {bg_stats['fg_pixels']} fg pixels")
         
+        # 🔥 NEW: Apply alpha mask to exclude transparent pixels from foreground
+        if alpha_mask is not None:
+            if alpha_mask.shape != (h, w):
+                logger.warning(f"[ColorSeparator] Alpha mask shape {alpha_mask.shape} doesn't match image {h}x{w}, resizing")
+                alpha_mask = cv2.resize(alpha_mask.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
+            
+            # Update fg_mask to exclude transparent pixels (alpha=False means transparent)
+            visible_pixels = np.sum(alpha_mask)
+            transparent_pixels = total_pixels - visible_pixels
+            
+            # Combine: foreground = non-background AND visible (non-transparent)
+            fg_mask = fg_mask & alpha_mask
+            bg_mask = bg_mask | (~alpha_mask)  # Background = original bg OR transparent
+            
+            # Update stats
+            fg_pixel_count = int(np.sum(fg_mask))
+            bg_pixel_count = int(np.sum(bg_mask))
+            
+            logger.info(f"[ColorSeparator] Alpha mask applied: {visible_pixels/total_pixels*100:.1f}% visible, "
+                       f"{transparent_pixels/total_pixels*100:.1f}% transparent excluded. "
+                       f"Final fg={fg_pixel_count}, bg={bg_pixel_count}")
+            
+            bg_stats['alpha_applied'] = True
+            bg_stats['transparent_pixels'] = int(transparent_pixels)
+            bg_stats['visible_pixels'] = int(visible_pixels)
+        else:
+            bg_stats['alpha_applied'] = False
+        
+        # Recalculate after alpha mask application
         fg_pixel_count = int(np.sum(fg_mask))
         bg_pixel_count = int(np.sum(bg_mask))
         

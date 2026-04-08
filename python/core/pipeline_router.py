@@ -200,7 +200,12 @@ class PipelineRouter:
             # Halftone mode OR multi-color: do proper color separation
             kmeans_colors = max(target_colors, 2)
             logger.info(f"[PipelineRouter] Color separation for halftone: {kmeans_colors} colors, grayscale_output={should_halftone}")
-            sep_result = self.separator.separate(preprocessed, num_colors=kmeans_colors)
+            # 🔥 Pass alpha_mask to exclude transparent pixels from color clustering
+            sep_result = self.separator.separate(
+                preprocessed, 
+                num_colors=kmeans_colors,
+                alpha_mask=self.alpha_mask
+            )
             masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=should_halftone)
         
         if should_halftone:
