@@ -120,7 +120,7 @@ class PreviewPage extends StatelessWidget {
                               ),
                               const SizedBox(width: 20),
 
-                              // Sidebar with Tabs (Layers / Fine-Tune)
+                              // Sidebar with Layers Panel only (Bug 1: Removed Fine-Tune tab)
                               SizedBox(
                                 width: 320,
                                 child: _buildRightPanel(controller),
@@ -245,30 +245,100 @@ class PreviewPage extends StatelessWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Film display
-                        Container(
-                          constraints: const BoxConstraints(
-                            maxWidth: 500,
-                            maxHeight: 500,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors
-                                .white, // White background for film preview
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFFE5E7EB)),
-                          ),
-                          child: Obx(() {
-                            final idx = controller.selectedFilmIndex.value;
-                            if (controller.previewPaths.isEmpty) {
-                              return const Icon(
-                                Icons.broken_image,
-                                size: 64,
-                                color: Colors.grey,
+                        // Film display with progress overlay (BUG 2 FIX)
+                        Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Container(
+                              constraints: const BoxConstraints(
+                                maxWidth: 500,
+                                maxHeight: 500,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors
+                                    .white, // White background for film preview
+                                borderRadius: BorderRadius.circular(8),
+                                border:
+                                    Border.all(color: const Color(0xFFE5E7EB)),
+                              ),
+                              child: Obx(() {
+                                final idx = controller.selectedFilmIndex.value;
+                                if (controller.previewPaths.isEmpty) {
+                                  return const Icon(
+                                    Icons.broken_image,
+                                    size: 64,
+                                    color: Colors.grey,
+                                  );
+                                }
+                                final path = controller.previewPaths[idx];
+                                return _buildFilmPreview(controller, path, idx);
+                              }),
+                            ),
+                            // BUG 2 FIX: Progress overlay during regeneration
+                            Obx(() {
+                              if (!controller.isRegenerating.value) {
+                                return const SizedBox.shrink();
+                              }
+                              return Container(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 500,
+                                  maxHeight: 500,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white
+                                      .withAlpha((0.9 * 255).round()),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Center(
+                                  child: Container(
+                                    width: 300,
+                                    padding: const EdgeInsets.all(20),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(12),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black
+                                              .withAlpha((0.1 * 255).round()),
+                                          blurRadius: 10,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Obx(() => LinearProgressIndicator(
+                                              value: controller.progress.value >
+                                                      0
+                                                  ? controller.progress.value
+                                                  : null,
+                                              backgroundColor:
+                                                  const Color(0xFFE5E7EB),
+                                              valueColor:
+                                                  const AlwaysStoppedAnimation<
+                                                      Color>(primaryBlue),
+                                            )),
+                                        const SizedBox(height: 12),
+                                        Obx(() => Text(
+                                              controller.progressMessage.value
+                                                      .isNotEmpty
+                                                  ? controller
+                                                      .progressMessage.value
+                                                  : 'Processing...',
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                color: Color(0xFF6B7280),
+                                              ),
+                                              textAlign: TextAlign.center,
+                                            )),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               );
-                            }
-                            final path = controller.previewPaths[idx];
-                            return _buildFilmPreview(controller, path, idx);
-                          }),
+                            }),
+                          ],
                         ),
                         const SizedBox(height: 16),
                         Obx(
@@ -926,7 +996,7 @@ class PreviewPage extends StatelessWidget {
 
   Widget _buildRightPanel(PreviewController controller) {
     return DefaultTabController(
-      length: 2,
+      length: 1,
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -941,14 +1011,14 @@ class PreviewPage extends StatelessWidget {
               indicatorColor: primaryBlue,
               tabs: [
                 Tab(text: 'Layers', icon: Icon(Icons.layers, size: 18)),
-                Tab(text: 'Fine-Tune', icon: Icon(Icons.tune, size: 18)),
+                // BUG 1 FIX: Removed Fine-Tune tab to prevent unwanted re-processing
               ],
             ),
             Expanded(
               child: TabBarView(
                 children: [
                   _buildLayersPanel(controller),
-                  _buildFineTunePanel(controller),
+                  // BUG 1 FIX: Removed _buildFineTunePanel to prevent slider debounce triggers
                 ],
               ),
             ),

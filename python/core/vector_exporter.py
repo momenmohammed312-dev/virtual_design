@@ -495,7 +495,12 @@ def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, pa
 
     img_w_pt = (mask_w / max(1, dpi)) * 72.0
     img_h_pt = (mask_h / max(1, dpi)) * 72.0
-    scale = min(available_w / img_w_pt, available_h / img_h_pt)
+
+    # 🔥 FIX: Use 1:1 scaling to respect paper size (image grows with page size)
+    # If image is larger than available space, scale down to fit. Otherwise use 1:1.
+    scale_x = available_w / img_w_pt
+    scale_y = available_h / img_h_pt
+    scale = min(scale_x, scale_y, 1.0)  # Only scale DOWN, never scale UP (1:1 max)
 
     draw_w = img_w_pt * scale
     draw_h = img_h_pt * scale

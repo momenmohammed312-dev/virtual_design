@@ -1147,13 +1147,25 @@ class _SetupPageState extends State<SetupPage> {
                               // If Custom (cm) selected, show inputs
                               isCustomPaper = newValue == 'Custom (cm)';
                             });
-                            // Sync with controller if needed
+                            // 🔥 FIX: Sync controller with selected paper size
+                            final controller = Get.find<SetupController>();
                             if (newValue == 'Custom (cm)') {
-                              // ensure the controller knows current custom values
-                              Get.find<SetupController>().paperWidthCm.value =
+                              controller.paperWidthCm.value =
                                   customPaperWidthCm;
-                              Get.find<SetupController>().paperHeightCm.value =
+                              controller.paperHeightCm.value =
                                   customPaperHeightCm;
+                            } else if (newValue.contains('A4')) {
+                              controller.paperWidthCm.value = 21.0;
+                              controller.paperHeightCm.value = 29.7;
+                            } else if (newValue.contains('A3')) {
+                              controller.paperWidthCm.value = 29.7;
+                              controller.paperHeightCm.value = 42.0;
+                            } else if (newValue.contains('A5')) {
+                              controller.paperWidthCm.value = 14.8;
+                              controller.paperHeightCm.value = 21.0;
+                            } else if (newValue.contains('Letter')) {
+                              controller.paperWidthCm.value = 21.6;
+                              controller.paperHeightCm.value = 27.9;
                             }
                           }
                         },

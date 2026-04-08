@@ -8,6 +8,7 @@ import 'package:open_file/open_file.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/enums/app_enums.dart';
 import '../../core/utils/sound_manager.dart';
+import '../../core/python_bridge/python_processor.dart';
 import '../../domain/entities/processing_settings.dart' as ps;
 import '../../domain/repositories/processing_repository.dart';
 
@@ -51,6 +52,10 @@ class PreviewController extends GetxController {
   late final TextEditingController filmLabelController;
   final RxDouble currentDpi = 300.0.obs; // Professional Standard = 300
 
+  // BUG 4 FIX: Paper size observables for regeneration
+  final RxDouble paperWidthCm = 21.0.obs; // Default A4 width
+  final RxDouble paperHeightCm = 29.7.obs; // Default A4 height
+
   // Cache busting
   final RxInt lastUpdateTimestamp = 0.obs;
 
@@ -93,6 +98,9 @@ class PreviewController extends GetxController {
           filmLabel.value = settings.filmLabel;
           currentDpi.value = settings.dpi;
           adaptiveThreshold.value = settings.adaptiveThreshold;
+          // BUG 4 FIX: Sync paper dimensions from initial settings
+          paperWidthCm.value = settings.paperWidthCm;
+          paperHeightCm.value = settings.paperHeightCm;
         }
 
         final printType = args['printType'];
@@ -110,27 +118,17 @@ class PreviewController extends GetxController {
       zoomLevel.value = transformationController.value.getMaxScaleOnAxis();
     });
 
-    // Debounce Tuning Sliders to prevent Python flood (Phase 9 & 11)
-    debounce(globalThreshold, (_) => regenerateFilms(),
-        time: const Duration(milliseconds: 300));
-    debounce(smoothingFactor, (_) => regenerateFilms(),
-        time: const Duration(milliseconds: 300));
-    debounce(cornerThreshold, (_) => regenerateFilms(),
-        time: const Duration(milliseconds: 400));
-    debounce(noiseRemoval, (_) => regenerateFilms(),
-        time: const Duration(milliseconds: 400));
-    debounce(forceHalftone, (_) => regenerateFilms(),
-        time: const Duration(milliseconds: 400));
-    debounce(adaptiveThreshold, (_) => regenerateFilms(),
-        time: const Duration(milliseconds: 400));
+    // BUG 1 FIX: Removed all debounce calls for Fine-Tune sliders
+    // The Fine-Tune tab has been removed from the UI to prevent
+    // unwanted Python re-processing on every slider interaction.
+    // State variables are preserved for use by AI Fix and regenerateFilms().
 
     filmLabelController = TextEditingController(text: filmLabel.value);
     filmLabelController.addListener(() {
       filmLabel.value = filmLabelController.text;
     });
 
-    debounce(filmLabel, (_) => regenerateFilms(),
-        time: const Duration(milliseconds: 600));
+    // BUG 1 FIX: Removed debounce(filmLabel) - no auto-trigger regeneration
   }
 
   @override
@@ -179,6 +177,8 @@ class PreviewController extends GetxController {
       final targetDpi = forcedDpi ?? 300.0;
 
       // Build updated settings
+      // BUG 3 FIX: Explicitly preserve printFinish and halftoneSettings
+      // BUG 4 FIX: Include paper dimensions so changes from setup page are respected
       final updatedSettings = initialSettings.value!.copyWith(
         globalThreshold: globalThreshold.value,
         smoothingFactor: smoothingFactor.value,
@@ -188,6 +188,10 @@ class PreviewController extends GetxController {
         adaptiveThreshold: adaptiveThreshold.value,
         filmLabel: filmLabel.value,
         dpi: targetDpi,
+        printFinish: initialSettings.value!.printFinish,
+        halftoneSettings: initialSettings.value!.halftoneSettings,
+        paperWidthCm: paperWidthCm.value,
+        paperHeightCm: paperHeightCm.value,
       );
 
       Get.log(
@@ -393,7 +397,9 @@ class PreviewController extends GetxController {
       Get.snackbar('Printing', 'Opening PDF in default viewer for printing...');
       await openFile(combinedPdfPath.value);
     } else if (pdfPaths.isNotEmpty) {
-      await openFile(pdfPaths[selectedFilmIndex.value]);
+      // BUG 5 FIX: Use clamped index to prevent RangeError when selectedFilmIndex is out of bounds
+      final safeIndex = selectedFilmIndex.value.clamp(0, pdfPaths.length - 1);
+      await openFile(pdfPaths[safeIndex]);
     } else {
       Get.snackbar('Error', 'No PDF available to print.');
     }
@@ -428,17 +434,20 @@ class PreviewController extends GetxController {
     }
 
     isRegenerating.value = true;
-    progress.value = 0.0;
-    progressMessage.value = 'AI processing with prompt...';
+    progress.value = 0.1;
+    progressMessage.value = 'Reading AI prompt...';
 
     try {
-      final pythonProcessor = Get.find<dynamic>();
+      final pythonProcessor = Get.find<PythonProcessor>();
 
-      if (pythonProcessor.runtimeType.toString().contains('PythonProcessor') ==
-          false) {
+      if (!pythonProcessor.config.isInitialized ||
+          !pythonProcessor.config.isPythonAvailable) {
         Get.snackbar('Error', 'PythonProcessor not initialized');
         return;
       }
+
+      progress.value = 0.3;
+      progressMessage.value = 'Sending to AI model...';
 
       final result = await pythonProcessor.runAutoFixWithPrompt(
         originalImage: imagePath.value,
@@ -447,6 +456,9 @@ class PreviewController extends GetxController {
       );
 
       if (result != null) {
+        progress.value = 0.7;
+        progressMessage.value = 'Applying AI adjustments...';
+
         if (result['smoothing_factor'] != null) {
           smoothingFactor.value =
               (result['smoothing_factor'] as num).toDouble();
@@ -469,7 +481,12 @@ class PreviewController extends GetxController {
           duration: const Duration(seconds: 3),
         );
 
+        progress.value = 0.9;
+        progressMessage.value = 'Regenerating films...';
+
         await regenerateFilms();
+
+        progress.value = 1.0;
       } else {
         Get.snackbar(
           'AI Fix',

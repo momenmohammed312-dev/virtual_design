@@ -79,6 +79,16 @@ class PipelineRouter:
     def route(self, image: np.ndarray, analysis, args: argparse.Namespace) -> PipelineResult:
         img_type = getattr(args, 'image_type', 'auto')
 
+        # 🔥 FIX: Check if user explicitly selected halftone from UI
+        user_selected_halftone = getattr(args, 'halftone', False)
+        logger.info(f"[PipelineRouter] ENTRY: user_selected_halftone={user_selected_halftone}, img_type={img_type}, args.halftone={getattr(args, 'halftone', 'NOTSET')}")
+
+        # 🔥🔥🔥 CRITICAL FIX: If user selected halftone, ALWAYS use artwork pipeline for raster halftone
+        # This check is OUTSIDE the 'auto' block to catch all cases including when AI changes img_type
+        if user_selected_halftone:
+            logger.info("[PipelineRouter] ✓✓✓ USER SELECTED HALFTONE -> Forcing ARTWORK pipeline for raster halftone ✓✓✓")
+            return self._run_artwork(image, args, analysis)
+
         if img_type == 'auto':
             try:
                 from core.ai_vision_bridge import analyze_image as ai_analyze, apply_to_args, is_available
@@ -87,6 +97,7 @@ class PipelineRouter:
                     if ai_result is not None:
                         apply_to_args(ai_result, args)
                         image_class = ai_result["image_class"]
+
                         if image_class == 'text_logo':
                             return self._run_text_logo(image, args, analysis)
                         elif image_class == 'photo':
