@@ -423,10 +423,21 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ─── Advanced Vector Path Generation ───
-        if image_class == 'text_logo' and smooth_factor < 0.2:
-            bw = preprocess_mask_for_vector(mask, apply_blur=False, smooth_factor=smooth_factor)
+        # 🔥 Smart Smoothing: Adjust smooth_factor based on scale to prevent artifacts
+        # When upscaling significantly, reduce smoothing to preserve sharp edges
+        adjusted_smooth = smooth_factor
+        if scale_factor > 2.0:
+            # Reduce smoothing proportionally to scale factor
+            # At 5x scale, smoothing should be ~20% of original
+            scale_reduction = min(1.0, 2.0 / scale_factor)  # 2.0/4.94 ≈ 0.4
+            adjusted_smooth = smooth_factor * scale_reduction
+            logger.info(f"[VectorExporter] Scale-aware smoothing: {smooth_factor} → {adjusted_smooth:.3f} "
+                       f"(scale={scale_factor:.2f}x, reduction={scale_reduction:.2f})")
+        
+        if image_class == 'text_logo' and adjusted_smooth < 0.2:
+            bw = preprocess_mask_for_vector(mask, apply_blur=False, smooth_factor=adjusted_smooth)
         else:
-            bw = preprocess_mask_for_vector(mask, apply_blur=True, smooth_factor=smooth_factor)
+            bw = preprocess_mask_for_vector(mask, apply_blur=True, smooth_factor=adjusted_smooth)
         
         # Ensure CV_8UC1 format for findContours
         if bw.dtype != np.uint8:
@@ -464,15 +475,23 @@ def export_vector_pdf(
             if area < min_contour_area or len(contour_arr) < 3:
                 return
             
+            # 🔥 Use adjusted_smooth (scale-aware) instead of original smooth_factor
             adaptive_smooth = compute_adaptive_smooth(
-                contour_arr, smooth_factor, image_class
+                contour_arr, adjusted_smooth, image_class
             )
+            
+            # 🔥 Scale-aware epsilon: reduce epsilon for high upscales to preserve detail
+            adjusted_epsilon = epsilon
+            if scale_factor > 2.0 and epsilon is not None:
+                epsilon_reduction = min(1.0, 2.0 / scale_factor)
+                adjusted_epsilon = epsilon * epsilon_reduction
+            
             bezier_cmds = fit_bezier_to_contour(
                 contour_arr, 
                 adaptive_smooth, 
                 corner_threshold, 
                 image_class,
-                epsilon=epsilon
+                epsilon=adjusted_epsilon
             )
             if not bezier_cmds:
                 return
