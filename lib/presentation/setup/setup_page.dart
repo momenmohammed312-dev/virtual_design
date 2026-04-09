@@ -24,7 +24,7 @@ class _SetupPageState extends State<SetupPage> {
 
   // Halftone settings
   bool showHalftoneSettings = false;
-  int lpi = 55;
+  int lpi = 85; // Default LPI for finer dots
   DotShape selectedDotShape = DotShape.round;
   // Custom paper size (cm) support in the UI
   bool isCustomPaper = false;
@@ -49,14 +49,16 @@ class _SetupPageState extends State<SetupPage> {
   bool adaptiveThreshold = false;
 
   int get meshCount {
-    // Calculate mesh count based on LPI and detail level
-    // Standard mesh counts: 110, 160, 200, 230, 280, 355
-    if (lpi < 30) return 110;
-    if (lpi < 50) return 160;
-    if (lpi < 65) return 200;
-    if (lpi < 80) return 230;
-    if (lpi < 90) return 280;
-    return 355;
+    // Calculate mesh count based on LPI (higher LPI = higher mesh needed)
+    // Standard mesh counts: 110, 160, 200, 230, 280, 305, 355
+    // Formula: Mesh ≈ LPI × 4.5 (for safety margin)
+    if (lpi < 45) return 110; // 110 mesh / 4.5 = ~24 LPI (min)
+    if (lpi < 55) return 160; // 160 mesh / 4.5 = ~35 LPI
+    if (lpi < 70) return 200; // 200 mesh / 4.5 = ~44 LPI
+    if (lpi < 85) return 230; // 230 mesh / 4.5 = ~51 LPI
+    if (lpi < 105) return 280; // 280 mesh / 4.5 = ~62 LPI
+    if (lpi < 130) return 305; // 305 mesh / 4.5 = ~68 LPI
+    return 355; // 355 mesh / 4.5 = ~79 LPI (max ~150 with high DPI)
   }
 
   int get strokeWidthInPixels {
@@ -604,29 +606,79 @@ class _SetupPageState extends State<SetupPage> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      Text(
-                        '$lpi',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: primaryBlue,
-                        ),
+                      Row(
+                        children: [
+                          // Dot size indicator
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: lpi >= 120
+                                  ? Colors.green.withAlpha((0.1 * 255).round())
+                                  : lpi >= 85
+                                      ? Colors.blue
+                                          .withAlpha((0.1 * 255).round())
+                                      : Colors.orange
+                                          .withAlpha((0.1 * 255).round()),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              lpi >= 120
+                                  ? 'Fine'
+                                  : lpi >= 85
+                                      ? 'Standard'
+                                      : 'Coarse',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: lpi >= 120
+                                    ? Colors.green
+                                    : lpi >= 85
+                                        ? primaryBlue
+                                        : Colors.orange,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '$lpi',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: primaryBlue,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 4),
+                  // Dot size description
+                  Text(
+                    lpi >= 120
+                        ? '• Smaller dots, higher detail (requires 305+ mesh)'
+                        : lpi >= 85
+                            ? '• Balanced dot size for most screens'
+                            : '• Larger dots, easier printing (any mesh)',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Row(
                     children: [
                       const Text(
-                        '45',
+                        '65',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                       Expanded(
                         child: Slider(
                           value: lpi.toDouble(),
-                          min: 45,
-                          max: 85,
-                          divisions: 40,
+                          min: 65,
+                          max: 150,
+                          divisions: 85,
                           activeColor: primaryBlue,
                           onChanged: (value) {
                             setState(() => lpi = value.toInt());
@@ -636,7 +688,7 @@ class _SetupPageState extends State<SetupPage> {
                         ),
                       ),
                       const Text(
-                        '85',
+                        '150',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ],
@@ -1518,7 +1570,7 @@ class _SetupPageState extends State<SetupPage> {
                 selectedColorCount = 0;
                 selectedDetailLevel = DetailLevel.medium;
                 showHalftoneSettings = false;
-                lpi = 55;
+                lpi = 85;
                 selectedDotShape = DotShape.round;
                 strokeWidth = 0.5;
                 printQuality = 300;

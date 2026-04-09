@@ -96,12 +96,14 @@ class RasterHalftoneEngine:
         # (dark pixels -> big dots -> more ink)
         ink_float = 1.0 - (gray_g.astype(np.float32) / 255.0)
         screen_f  = screen_matrix.astype(np.float32) / 255.0
+        # CRITICAL FIX: Invert so ink=0 (black), background=255 (white/transparent)
         bitmap    = (ink_float >= screen_f).astype(np.uint8) * 255
+        bitmap    = cv2.bitwise_not(bitmap)  # Invert: 255->0 (ink), 0->255 (bg)
 
         logger.info(
             f"[RasterHalftone] lpi={cfg.lpi} dpi={cfg.dpi} "
             f"angle={cfg.angle}° fn={cfg.dot_fn} "
-            f"coverage={100*np.mean(bitmap>0):.1f}%"
+            f"coverage={100*np.mean(bitmap==0):.1f}%"  # Count ink pixels (0)
         )
         return bitmap
 

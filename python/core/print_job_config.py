@@ -53,29 +53,45 @@ class PrintJobConfig:
         limit = self.MESH_LPI_TABLE.get(nearest_mesh, 45)
 
         effective_lpi = int(requested_lpi)
+        
+        # Warn if LPI exceeds traditional mesh limit, but don't clamp (DPI priority)
         if effective_lpi > limit:
-            logger.warning(f"[JobConfig] LPI {effective_lpi} exceeds safe limit for {self.mesh_count} mesh. Clamping to {limit}.")
-            effective_lpi = int(limit)
-
+            logger.info(f"[JobConfig] LPI {effective_lpi} exceeds traditional mesh limit ({limit}) for {self.mesh_count} mesh. "
+                       f"Allowing due to high DPI capability.")
+        
         mesh = max(1, int(self.mesh_count))
         ratio = float(mesh) / float(max(1, effective_lpi))
-        min_ratio = 4.0
-        max_ratio = 5.0
+
+        # Relaxed ratios: prioritize DPI-based LPI for finer dots
+        # High DPI (1200+) can support LPI up to 150 regardless of mesh ratio
+        min_ratio = 2.0   # Very permissive - only fix when definitely flooding
+        max_ratio = 8.0   # Allow very high ratios for coarse meshes
 
         lpi_min = int(math.ceil(mesh / max_ratio))
         lpi_max = int(math.floor(mesh / min_ratio))
 
-        if ratio < min_ratio or ratio > max_ratio:
+        # Only force adjustment when dangerously out of range
+        if ratio < 2.0:  # Definitely flooding risk
             suggested = int(round(mesh / 4.5))
             suggested = max(lpi_min, min(lpi_max, suggested))
-            suggested = min(suggested, int(limit))
+            # Use absolute max LPI of 150 instead of mesh limit
+            suggested = min(suggested, 150)
             logger.warning(
-                f"[JobConfig] Mesh/LPI ratio out of range (mesh={mesh}, lpi={effective_lpi}, ratio={ratio:.2f}). "
-                f"Target approx 4-5. Suggested LPI={suggested} (range {lpi_min}-{lpi_max})."
+                f"[JobConfig] CRITICAL: Mesh/LPI ratio too low (mesh={mesh}, lpi={effective_lpi}, ratio={ratio:.2f}). "
+                f"Forced adjustment to LPI={suggested} to prevent flooding."
             )
-            if auto_fix and suggested > 0 and suggested != effective_lpi:
-                logger.warning(f"[JobConfig] Auto-fix enabled. Adjusting LPI {effective_lpi} -> {suggested}.")
-                effective_lpi = suggested
+            effective_lpi = suggested
+        elif ratio > max_ratio:  # Very inefficient
+            suggested = int(round(mesh / 4.5))
+            suggested = max(lpi_min, min(lpi_max, suggested))
+            logger.info(
+                f"[JobConfig] Mesh/LPI ratio high (mesh={mesh}, lpi={effective_lpi}, ratio={ratio:.2f}). "
+                f"Consider LPI={suggested} for better screen usage."
+            )
+            # Don't auto-fix high ratios - user may want coarse halftone
+        else:
+            # Acceptable range - prioritize DPI-based LPI for finer dots
+            logger.info(f"[JobConfig] LPI {effective_lpi} accepted (mesh={mesh}, ratio={ratio:.2f}). DPI priority active.")
 
         return effective_lpi
 

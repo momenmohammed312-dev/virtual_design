@@ -53,7 +53,7 @@ class SetupController extends GetxController {
 
   // Halftone settings
   final RxBool isHalftone = false.obs;
-  final RxInt lpiValue = 55.obs;
+  final RxInt lpiValue = 85.obs; // Default 85 for finer dots
   final RxString selectedDotShape = 'round'.obs;
 
   // Edge enhancement & color correction
@@ -72,14 +72,16 @@ class SetupController extends GetxController {
 
   // ─── Computed ────────────────────────────────────────────────────────────
 
-  /// Auto-calculate mesh count based on LPI
+  /// Auto-calculate mesh count based on LPI (higher LPI = higher mesh needed)
   int get meshCount {
     final lpi = lpiValue.value;
-    if (lpi < 30) return 110;
-    if (lpi < 50) return 160;
-    if (lpi < 65) return 200;
-    if (lpi < 80) return 230;
-    if (lpi < 90) return 280;
+    // Formula: Mesh ≈ LPI × 4.5 (for safety margin)
+    if (lpi < 45) return 110;
+    if (lpi < 55) return 160;
+    if (lpi < 70) return 200;
+    if (lpi < 85) return 230;
+    if (lpi < 105) return 280;
+    if (lpi < 130) return 305;
     return 355;
   }
 
@@ -155,7 +157,7 @@ class SetupController extends GetxController {
     paperHeightCm.value = 29.7;
     printQuality.value = 300.0;
     isHalftone.value = false;
-    lpiValue.value = 55;
+    lpiValue.value = 85;
     selectedDotShape.value = 'round';
     edgeEnhancement.value = false;
     colorCorrection.value = false;

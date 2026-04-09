@@ -10,19 +10,19 @@ class AppConstants {
   AppConstants._();
 
   // ─── App Info ─────────────────────────────────────────────────────────────
-  static const String appName        = 'Virtual Design';
-  static const String appSubtitle    = 'Silk Screen Studio';
-  static const String appVersion     = '1.1.0';
+  static const String appName = 'Virtual Design';
+  static const String appSubtitle = 'Silk Screen Studio';
+  static const String appVersion = '1.1.0';
   static const String appBuildNumber = '11';
 
   // ─── Processing Limits ───────────────────────────────────────────────────
-  static const int    minColors       = 1;
-  static const int    maxColors       = 10;
-  static const double minDpi          = 72;
-  static const double maxDpi          = 1200;
-  static const double defaultDpi      = 300;
-  static const double minStrokeMm     = 0.1;
-  static const double maxStrokeMm     = 10.0;
+  static const int minColors = 1;
+  static const int maxColors = 10;
+  static const double minDpi = 72;
+  static const double maxDpi = 1200;
+  static const double defaultDpi = 300;
+  static const double minStrokeMm = 0.1;
+  static const double maxStrokeMm = 10.0;
   static const double defaultStrokeMm = 0.3;
 
   // ─── Mesh Counts ─────────────────────────────────────────────────────────
@@ -30,25 +30,31 @@ class AppConstants {
   static const int defaultMeshCount = 160;
 
   // ─── Halftone ────────────────────────────────────────────────────────────
-  static const int    minLpi     = 25;
-  static const int    maxLpi     = 85;
-  static const int    defaultLpi = 65;
+  static const int minLpi = 65; // Minimum for quality prints
+  static const int maxLpi = 150; // Maximum for high-DPI output
+  static const int defaultLpi = 85; // Balanced default
 
   // ─── Storage Keys (Hive) ─────────────────────────────────────────────────
   // ملاحظة: مُنقَّل لـ storage_keys.dart — موجود هنا للـ backwards compat فقط
-  static const String projectsBox  = 'projects_box';
-  static const String settingsBox  = 'settings_box';
-  static const String licenseBox   = 'license_box';
+  static const String projectsBox = 'projects_box';
+  static const String settingsBox = 'settings_box';
+  static const String licenseBox = 'license_box';
 
   // ─── File Extensions ─────────────────────────────────────────────────────
   static const List<String> supportedImageFormats = [
-    'png', 'jpg', 'jpeg', 'tiff', 'tif', 'bmp', 'webp',
+    'png',
+    'jpg',
+    'jpeg',
+    'tiff',
+    'tif',
+    'bmp',
+    'webp',
   ];
   static const List<String> exportFormats = ['png', 'pdf', 'svg', 'zip'];
 
   // ─── Python Pipeline ─────────────────────────────────────────────────────
-  static const int  totalPipelineSteps = 9;
-  static const int  processingTimeoutSeconds = 300; // 5 دقائق
+  static const int totalPipelineSteps = 9;
+  static const int processingTimeoutSeconds = 300; // 5 دقائق
   static const String outputDirPrefix = 'silk_output_';
 
   // ─── Demo / Fallback ─────────────────────────────────────────────────────
@@ -57,7 +63,7 @@ class AppConstants {
 
   // ─── UI ──────────────────────────────────────────────────────────────────
   static const double maxContentWidth = 1100;
-  static const double sidebarWidth    = 280;
+  static const double sidebarWidth = 280;
 
   // ─── REMOVED (MED #4 FIX) ────────────────────────────────────────────────
   // كانت هنا قيم theme مكررة — حُذفت:

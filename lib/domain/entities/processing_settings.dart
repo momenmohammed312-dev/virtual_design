@@ -34,12 +34,12 @@ enum ImageType { simple, mixed, complex, auto }
 // ─── Halftone Settings ────────────────────────────────────────────────────────
 
 class HalftoneSettings {
-  final int lpi; // Lines Per Inch (25-85)
+  final int lpi; // Lines Per Inch (65-150, higher = smaller dots)
   final String dotShape; // round, square, ellipse
   final double angle; // rotation angle
 
   const HalftoneSettings({
-    this.lpi = 65,
+    this.lpi = 85, // Default for finer dots
     this.dotShape = 'round',
     this.angle = 45.0,
   });
@@ -59,7 +59,7 @@ class HalftoneSettings {
 
   factory HalftoneSettings.fromJson(Map<String, dynamic> json) =>
       HalftoneSettings(
-        lpi: (json['lpi'] as int?) ?? 65,
+        lpi: (json['lpi'] as int?) ?? 85,
         dotShape: (json['dotShape'] as String?) ?? 'round',
         angle: (json['angle'] as num?)?.toDouble() ?? 45.0,
       );
@@ -144,11 +144,11 @@ class ProcessingSettings {
     355, // للطباعة عالية الدقة
   ];
 
-  /// حساب LPI الأمثل بناءً على Mesh Count
-  /// القاعدة الذهبية: LPI = MeshCount / 4
-  /// (أكثر من ذلك → dots تتداخل مع الخيوط → نتيجة سيئة)
+  /// حساب LPI بناءً على Mesh Count (الأمان التقليدي)
+  /// القاعدة: LPI = MeshCount / 4.5 للأمان
+  /// مع DPI عالي (1200+) ممكن LPI أعلى
   static int calculateOptimalLPI(int meshCount) {
-    return (meshCount / 4).round().clamp(25, 85);
+    return (meshCount / 4.5).round().clamp(65, 150);
   }
 
   /// حساب الـ LPI الأمثل للـ settings الحالية

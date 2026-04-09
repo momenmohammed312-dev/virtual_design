@@ -45,7 +45,7 @@ class ProcessingSettingsModel {
     this.strokeWidthMm = 0.3,
     this.meshCount = 160,
     this.edgeEnhancement = 'light',
-    this.halftoneLpi,
+    this.halftoneLpi = 85, // Default LPI for finer dots
     this.halftoneDotShape,
     this.halftoneAngle,
   });
@@ -82,9 +82,9 @@ class ProcessingSettingsModel {
     );
 
     ps.HalftoneSettings? halftone;
-    if (halftoneLpi != null && halftoneDotShape != null) {
+    if (halftoneDotShape != null) {
       halftone = ps.HalftoneSettings(
-        lpi: halftoneLpi!,
+        lpi: halftoneLpi ?? 85, // Default to 85 if null
         dotShape: halftoneDotShape!,
         angle: halftoneAngle ?? 45.0,
       );
