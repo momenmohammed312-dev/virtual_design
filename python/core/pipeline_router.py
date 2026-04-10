@@ -161,9 +161,13 @@ class PipelineRouter:
             logger.info(f"[PipelineRouter] TextLogo: Set {transparent_count} transparent pixels to background (255)")
         
         sep_result = _make_single_color_separation(image)
-        
+
+        # FIX GROUP 9.1: Apply pro prepress (underbase and trapping)
+        masks = [binary]
+        masks, sep_result = self._apply_pro_prepress(masks, args, sep_result)
+
         return PipelineResult(
-            masks=[binary],
+            masks=masks,
             separation_result=sep_result,
             image_class='text_logo',
             skip_binarization=True
@@ -199,6 +203,37 @@ class PipelineRouter:
         target_colors = args.colors
         should_halftone = args.halftone or (analysis and (analysis.score_photo > 0.4 or analysis.use_halftone))
         
+        # 🔥 FIX Issue #9: Detect if image is truly single-color to avoid blank masks
+        # Pre-analyze image to determine actual color count
+        if target_colors == 1 and should_halftone:
+            # Even for halftone, check if image really needs only 1 color
+            # by analyzing color variance in non-transparent regions
+            if self.alpha_mask is not None:
+                visible_pixels = preprocessed[self.alpha_mask]
+            else:
+                visible_pixels = preprocessed.reshape(-1, 3)
+            
+            if len(visible_pixels) > 0:
+                # Convert to LAB for perceptual analysis
+                visible_lab = cv2.cvtColor(
+                    visible_pixels.reshape(1, -1, 3), 
+                    cv2.COLOR_BGR2LAB
+                ).reshape(-1, 3)
+                
+                # Check color variance
+                color_std = np.std(visible_lab, axis=0)
+                is_truly_single_color = np.all(color_std < 15)  # Low variance = single color
+                
+                if is_truly_single_color:
+                    logger.info(f"[PipelineRouter] Image is truly single-color (std={color_std.mean():.1f}). Using 1-color halftone.")
+                    kmeans_colors = 1
+                else:
+                    kmeans_colors = 2  # Need 2 colors for tonal separation
+            else:
+                kmeans_colors = 2
+        else:
+            kmeans_colors = max(target_colors, 2) if should_halftone else target_colors
+        
         # 🔥 FIX: When halftone is selected, always do color separation (even with 1 color)
         # Halftone needs grayscale output from color separation, not binary
         if target_colors == 1 and not should_halftone:
@@ -215,7 +250,6 @@ class PipelineRouter:
             masks = [m]
         else:
             # Halftone mode OR multi-color: do proper color separation
-            kmeans_colors = max(target_colors, 2)
             logger.info(f"[PipelineRouter] Color separation for halftone: {kmeans_colors} colors, grayscale_output={should_halftone}")
             # 🔥 Pass alpha_mask to exclude transparent pixels from color clustering
             sep_result = self.separator.separate(
@@ -263,9 +297,13 @@ class PipelineRouter:
         # 🎯 PRO PREPRESS: Apply Underbase and Trapping
         processed_masks, sep_result = self._apply_pro_prepress(processed_masks, args, sep_result)
 
-        # Task 3.3 FIX: If halftone was applied, use 'photo' class for raster PDF export
-        # This ensures halftone masks get proper raster embedding instead of vector tracing
-        export_class = 'photo' if should_halftone else 'artwork'
+        # FIX Issue #11: Progress/routing label accuracy
+        # Use 'artwork_halftone' to indicate artwork pipeline with halftone export format
+        # This distinguishes from true 'photo' pipeline while ensuring raster PDF export
+        if should_halftone:
+            export_class = 'artwork_halftone'  # Artwork pipeline + halftone rendering
+        else:
+            export_class = 'artwork'
 
         return PipelineResult(
             masks=processed_masks,

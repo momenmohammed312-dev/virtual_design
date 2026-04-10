@@ -3,6 +3,13 @@ import cv2
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
+# Import centralized geometry synchronizer
+try:
+    from core.geometry_sync import sync_initialize, sync_upscale
+    _HAS_SYNC = True
+except ImportError:
+    _HAS_SYNC = False
+
 
 def load_image_safely(path: str) -> tuple:
     """Load image robustly from path, not relying on extension.
@@ -10,6 +17,7 @@ def load_image_safely(path: str) -> tuple:
     Performs sanity checks and normalizes alpha channels if present.
     
     🔥 FIXED: Now preserves alpha channel and returns it as a separate mask.
+    🔥 ARCHITECTURE FIX: Uses centralized GeometrySynchronizer to prevent dimension drift.
     
     Returns:
         tuple: (img, alpha_mask) where:
@@ -48,13 +56,23 @@ def load_image_safely(path: str) -> tuple:
             # Create full-opaque mask for non-alpha images
             alpha_mask = np.ones((img.shape[0], img.shape[1]), dtype=bool)
         
-        # CRITICAL FIX: Add LANCZOS4 upscale guard for small images
-        img = _apply_upscale_if_needed(img)
-        # Also upscale alpha mask if needed
-        if has_alpha and img.shape[:2] != alpha_mask.shape:
-            alpha_mask = cv2.resize(alpha_mask.astype(np.uint8), 
-                                    (img.shape[1], img.shape[0]), 
-                                    interpolation=cv2.INTER_NEAREST).astype(bool)
+        # ARCHITECTURE FIX: Use centralized GeometrySynchronizer
+        # This ensures alpha mask stays synchronized through ALL resize operations
+        if _HAS_SYNC:
+            sync_initialize(img, alpha_mask, source="image_loader_opencv")
+            img = sync_upscale(img, target_min_dim=1000, absolute_max_px=2500, memory_safe_mp=6.0)
+            # Get the synchronized alpha mask (may have been resized)
+            from core.geometry_sync import get_synchronizer
+            sync = get_synchronizer()
+            if sync._state and sync._state.alpha_mask is not None:
+                alpha_mask = sync._state.alpha_mask
+        else:
+            # Fallback to legacy behavior if synchronizer not available
+            img = _apply_upscale_if_needed(img)
+            if has_alpha and img.shape[:2] != alpha_mask.shape:
+                alpha_mask = cv2.resize(alpha_mask.astype(np.uint8), 
+                                        (img.shape[1], img.shape[0]), 
+                                        interpolation=cv2.INTER_NEAREST).astype(bool)
         return img, alpha_mask
 
     # Fall back to PIL (RGB) then convert to BGR for consistency with rest of pipeline
@@ -84,8 +102,16 @@ def load_image_safely(path: str) -> tuple:
             alpha_mask = np.ones((img.shape[0], img.shape[1]), dtype=bool)
             print(f"[ImageLoader] PIL loaded successfully: shape={img.shape}, dtype={img.dtype}", flush=True)
         
-        # CRITICAL FIX: Add LANCZOS4 upscale guard for small images
-        img = _apply_upscale_if_needed(img)
+        # ARCHITECTURE FIX: Use centralized GeometrySynchronizer
+        if _HAS_SYNC:
+            sync_initialize(img, alpha_mask, source="image_loader_pil")
+            img = sync_upscale(img, target_min_dim=1000, absolute_max_px=2500, memory_safe_mp=6.0)
+            from core.geometry_sync import get_synchronizer
+            sync = get_synchronizer()
+            if sync._state and sync._state.alpha_mask is not None:
+                alpha_mask = sync._state.alpha_mask
+        else:
+            img = _apply_upscale_if_needed(img)
         return img, alpha_mask
     except UnidentifiedImageError:
         # Most likely an unsupported image format

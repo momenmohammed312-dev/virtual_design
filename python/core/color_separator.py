@@ -14,6 +14,15 @@ from core.background_detector import detect_background, BackgroundMode
 
 logger = logging.getLogger(__name__)
 
+# FIX GROUP 8.2: Module-level singleton for PantoneLibrary
+try:
+    from core.pantone_library import PantoneLibrary as _PL
+    _PANTONE = _PL()
+    logger.info("[ColorSeparator] PantoneLibrary singleton initialized")
+except Exception as _e:
+    _PANTONE = None
+    logger.debug(f"[ColorSeparator] PantoneLibrary not available: {_e}")
+
 
 class ColorSeparator:
     """
@@ -30,7 +39,7 @@ class ColorSeparator:
         epsilon: float = 1.0,
         attempts: int = 3,
         background_mode: BackgroundMode = "auto",
-        bg_tolerance: int = 30,
+        bg_tolerance: int = 20,  # FIX GROUP 1.3: Reduced from 30 to 20 for better precision
         alpha_mask: Optional[np.ndarray] = None,
     ) -> Dict:
         """
@@ -56,10 +65,10 @@ class ColorSeparator:
             - 'centers': Color centers (in original BGR format)
             - 'num_colors': Actual number of colors
             - 'labels': List of labels for each color (sorted by brightness)
-            - 'color_masks': List of binary masks for each color
             - 'bg_mask': Boolean mask of background pixels
             - 'fg_mask': Boolean mask of foreground pixels
             - 'bg_stats': Background detection statistics
+            Note: Use MaskGenerator.generate_masks() to create binary masks from label_map
         """
         if len(image.shape) != 3 or image.shape[2] != 3:
             raise ValueError("Input image must be BGR format with 3 channels")
@@ -71,6 +80,7 @@ class ColorSeparator:
         total_pixels = h * w
 
         # ── Solid Image Detection ─────────────────────────────────────────────
+        # FIX Issue #8: Improved solid image detection with border analysis
         # Detect solid images (few unique colors) to skip background removal
         # Otherwise a solid-color design gets mistaken for background
         img_small = cv2.resize(image, (50, 50), interpolation=cv2.INTER_AREA)
@@ -83,7 +93,24 @@ class ColorSeparator:
         hist = cv2.calcHist([cv2.cvtColor(img_small, cv2.COLOR_BGR2GRAY)], [0], None, [256], [0, 256]).flatten()
         mode_luma = int(np.argmax(hist))
         mode_concentration = np.sum(hist[max(0, mode_luma-7):min(256, mode_luma+8)]) / (hist.sum() + 1e-6)
-        is_solid = (total_unique_colors < 10) or (mode_concentration > 0.80)
+        
+        # FIX Issue #8: More sophisticated solid detection with border analysis
+        # Sample border pixels to check if image has consistent background
+        border_samples = self._sample_border_colors(image)
+        border_variance = np.var(border_samples, axis=0).mean() if len(border_samples) > 0 else 0
+        border_unique = len(np.unique(border_samples, axis=0)) if len(border_samples) > 0 else 0
+        
+        # An image is "solid" if:
+        # 1. Very few unique colors overall (< 15), OR
+        # 2. Very high mode concentration (> 85%), OR  
+        # 3. Low border variance (consistent border) with moderate unique colors
+        is_solid = ((total_unique_colors < 15) or 
+                    (mode_concentration > 0.85) or 
+                    (border_variance < 200 and total_unique_colors < 30))
+        
+        logger.debug(f"[ColorSeparator] Solid detection: unique={total_unique_colors}, "
+                    f"mode_conc={mode_concentration:.2%}, border_var={border_variance:.0f}, "
+                    f"border_unique={border_unique}, is_solid={is_solid}")
         
         if is_solid:
             # Solid image — skip background detection, cluster everything
@@ -277,9 +304,16 @@ class ColorSeparator:
         # Create mapping from old labels to new sorted labels
         label_mapping = {old_label: new_label for new_label, old_label in enumerate(sorted_indices)}
 
-        # Apply mapping to label map
-        # IMPORTANT: label_mapping only covers 0..K-1. Background pixels have label=-1.
-        sorted_label_map = np.vectorize(lambda x: label_mapping.get(x, -1))(label_map)
+        # FIX GROUP 8.1: Replace np.vectorize with fast NumPy LUT approach
+        # Build lookup table O(K) instead of O(N * dict_lookup)
+        lut = np.full(num_colors, -1, dtype=np.int32)
+        for old_lbl, new_lbl in label_mapping.items():
+            if 0 <= old_lbl < num_colors:
+                lut[old_lbl] = new_lbl
+        # Apply via direct indexing (background=-1 → clamp then re-mask)
+        tmp = np.where(label_map >= 0, label_map, 0)
+        sorted_label_map = np.where(label_map >= 0, lut[tmp], -1).astype(np.int32)
+        logger.info(f"[ColorSeparator] T08: Fast LUT label remapping applied (num_colors={num_colors})")
 
         # Generate color information
         color_info = []
@@ -299,11 +333,9 @@ class ColorSeparator:
                 'percentage': float(percentage)
             })
 
-        # Generate binary masks for each color
-        color_masks = []
-        for i in range(num_colors):
-            mask = (sorted_label_map == i).astype(np.uint8) * 255
-            color_masks.append(mask)
+        # FIX GROUP 2.3: Removed redundant color_masks generation
+        # Masks should ONLY be built by MaskGenerator.generate_masks() to avoid divergence
+        # The label_map is the source of truth for mask generation
 
         logger.info(f"[ColorSeparator] Separated {num_colors} colors in {color_space} space")
         for i, info in enumerate(color_info):
@@ -319,16 +351,16 @@ class ColorSeparator:
             colors_rgb.append(tuple(int(x) for x in rgb_pixel))
             color_names.append(f"color_{i+1:02d}")
 
-        # Optionally enrich color names with Pantone matches
-        try:
-            from core.pantone_library import PantoneLibrary
-            pantone_lib = PantoneLibrary()
-            color_names = []
-            for rgb in colors_rgb:
-                match = pantone_lib.find_nearest_pantone(rgb)
-                color_names.append(match.name)
-        except Exception:
-            pass 
+        # FIX GROUP 8.2: Use singleton PantoneLibrary instead of instantiating
+        if _PANTONE is not None:
+            try:
+                color_names = []
+                for rgb in colors_rgb:
+                    match = _PANTONE.find_nearest_pantone(rgb)
+                    color_names.append(match.name)
+                logger.info(f"[ColorSeparator] Enriched {len(color_names)} colors with Pantone names")
+            except Exception as _e:
+                logger.debug(f"[ColorSeparator] Pantone matching failed: {_e}") 
 
         # 🔥 NEW: Log background/foreground separation stats
         logger.info(f"[ColorSeparator] Final separation: {fg_pixel_count} foreground pixels "
@@ -341,15 +373,15 @@ class ColorSeparator:
             'num_colors': num_colors,
             'labels': list(range(num_colors)),
             'color_info': color_info,
-            'color_masks': color_masks,
+            # FIX GROUP 2.3: Removed 'color_masks' - use MaskGenerator.generate_masks() instead
             'compactness': float(best_compactness),
             'color_space': color_space,
-            'colors': colors_rgb,           
+            'colors': colors_rgb,
             'color_names': color_names,
             'bg_mask': bg_mask,
             'fg_mask': fg_mask,
             'bg_stats': bg_stats,
-            'image': None,                  
+            'image': None,
         }
 
     def _calculate_brightness(self, centers: np.ndarray, use_lab: bool) -> np.ndarray:
@@ -515,3 +547,44 @@ class ColorSeparator:
                     pass
         
         return best_comp, best_lbls, best_cntrs, k
+
+    def _sample_border_colors(self, image: np.ndarray, border_width: int = 5) -> np.ndarray:
+        """
+        Sample colors from image borders for background analysis.
+        
+        Args:
+            image: Input BGR image
+            border_width: Width of border strip to sample
+            
+        Returns:
+            Array of border pixel colors (N x 3)
+        """
+        h, w = image.shape[:2]
+        samples = []
+        
+        # Sample corners (more weight to corners as they often show background)
+        corner_size = min(h, w) // 10  # 10% of smaller dimension
+        
+        corners = [
+            image[:corner_size, :corner_size],  # Top-left
+            image[:corner_size, -corner_size:],  # Top-right
+            image[-corner_size:, :corner_size],  # Bottom-left
+            image[-corner_size:, -corner_size:]  # Bottom-right
+        ]
+        
+        for corner in corners:
+            samples.extend(corner.reshape(-1, 3))
+        
+        # Sample edges
+        edge_strip = border_width
+        top_edge = image[:edge_strip, :].reshape(-1, 3)
+        bottom_edge = image[-edge_strip:, :].reshape(-1, 3)
+        left_edge = image[:, :edge_strip].reshape(-1, 3)
+        right_edge = image[:, -edge_strip:].reshape(-1, 3)
+        
+        samples.extend(top_edge)
+        samples.extend(bottom_edge)
+        samples.extend(left_edge)
+        samples.extend(right_edge)
+        
+        return np.array(samples, dtype=np.uint8)

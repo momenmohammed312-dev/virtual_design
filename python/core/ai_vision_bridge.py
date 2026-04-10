@@ -2,15 +2,23 @@
 ai_vision_bridge.py — Qwen3-VL Local Model Integration
 Virtual Design Silk Screen Studio
 
-ربط الموديل المحلي Qwen3-VL-2B بالـ pipeline بدل SmartAnalyzer.
-الموديل بيشوف الصورة مباشرة ويرجع parameters جاهزة للـ PipelineRouter.
+FIX GROUP: Robust AI AutoFix System with:
+- Model auto-discovery from common paths
+- Environment variable configuration
+- Graceful fallback when model unavailable
+- Caching and performance optimization
 
 Requirements:
     pip install llama-cpp-python
 
-Model files (set paths in MODEL_PATH / MMPROJ_PATH below):
-    - Qwen3-VL-2B-Instruct-UD-Q4_K_XL 2.gguf  (~1.13 GB)
-    - mmproj-F16 2.gguf                          (~819 MB)
+Model files (auto-discovered from common paths or set via environment):
+    - Qwen3-VL-2B-Instruct-UD-Q4_K_XL.gguf  (~1.13 GB)
+    - mmproj-F16.gguf                        (~819 MB)
+
+Environment Variables:
+    QWEN_MODEL_PATH  - Path to main model .gguf file
+    QWEN_MMPROJ_PATH - Path to mmproj .gguf file
+    AI_DISABLED      - Set to "1" to disable AI and use rule-based analysis only
 """
 
 from __future__ import annotations
@@ -20,7 +28,10 @@ import json
 import logging
 import os
 import time
-from typing import Optional
+import glob
+from pathlib import Path
+from typing import Optional, Dict, Tuple
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -30,75 +41,219 @@ logger = logging.getLogger(__name__)
 # ─── AI Optimization Settings ────────────────────────────────────────────────
 AI_MAX_DIM = 512  # Resize images to max 512px before AI analysis for speed
 
+# ═══ MODEL CONFIGURATION WITH AUTO-DISCOVERY ═══
 
-def _resize_for_ai(image: np.ndarray, max_dim: int = AI_MAX_DIM) -> np.ndarray:
-    """Resize image for AI analysis while preserving aspect ratio.
-    
-    Args:
-        image: Input image (BGR or RGB)
-        max_dim: Maximum dimension (width or height)
-        
-    Returns:
-        Resized image
+def _find_model_files() -> Tuple[str, str]:
     """
-    h, w = image.shape[:2]
-    if max(h, w) <= max_dim:
-        return image
+    Auto-discover model files from common locations.
     
-    # Calculate new size preserving aspect ratio
-    scale = max_dim / max(h, w)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
+    Searches in order:
+    1. Environment variables (QWEN_MODEL_PATH, QWEN_MMPROJ_PATH)
+    2. Current working directory
+    3. Models subdirectory
+    4. User home directory /models
+    5. System-wide /opt/models or C:\ProgramData\Models
     
-    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    logger.info(f"[AIBridge] Resized image for AI: {w}x{h} -> {new_w}x{new_h} (scale: {scale:.2f})")
-    return resized
+    Returns:
+        (model_path, mmproj_path) - may be empty strings if not found
+    """
+    # 1. Environment variables (highest priority)
+    env_model = os.environ.get("QWEN_MODEL_PATH", "").strip()
+    env_mmproj = os.environ.get("QWEN_MMPROJ_PATH", "").strip()
+    
+    if env_model and env_mmproj:
+        if os.path.exists(env_model) and os.path.exists(env_mmproj):
+            logger.info(f"[AIBridge] Using environment paths: {env_model}")
+            return env_model, env_mmproj
+        else:
+            logger.warning(f"[AIBridge] Environment paths set but files don't exist")
+    
+    # Search paths (in order of preference)
+    search_dirs = [
+        Path.cwd(),  # Current directory
+        Path.cwd() / "models",
+        Path.cwd() / "Models",
+        Path.home() / "models",
+        Path.home() / ".local" / "share" / "models",
+        Path("/opt/models") if os.name != 'nt' else Path("C:/ProgramData/Models"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Models" if os.name == 'nt' else None,
+    ]
+    
+    # Filter out None values
+    search_dirs = [d for d in search_dirs if d is not None]
+    
+    # Model file patterns
+    model_patterns = [
+        "*Qwen3*VL*.gguf",
+        "*Qwen3-VL*.gguf",
+        "*qwen3*vl*.gguf",
+        "*vision*.gguf",
+        "*.gguf",  # Fallback - any gguf
+    ]
+    mmproj_patterns = [
+        "*mmproj*.gguf",
+        "*mmproj*F16*.gguf",
+        "*vision*proj*.gguf",
+    ]
+    
+    found_model = None
+    found_mmproj = None
+    
+    for search_dir in search_dirs:
+        if not search_dir.exists():
+            continue
+            
+        logger.debug(f"[AIBridge] Searching {search_dir}")
+        
+        # Search for model file
+        if not found_model:
+            for pattern in model_patterns:
+                matches = list(search_dir.glob(pattern))
+                # Filter out mmproj files from model matches
+                matches = [m for m in matches if 'mmproj' not in m.name.lower()]
+                if matches:
+                    # Prefer smaller files (quantized) for faster loading
+                    found_model = min(matches, key=lambda p: p.stat().st_size)
+                    logger.info(f"[AIBridge] Found model: {found_model}")
+                    break
+        
+        # Search for mmproj file
+        if not found_mmproj:
+            for pattern in mmproj_patterns:
+                matches = list(search_dir.glob(pattern))
+                if matches:
+                    found_mmproj = matches[0]
+                    logger.info(f"[AIBridge] Found mmproj: {found_mmproj}")
+                    break
+        
+        if found_model and found_mmproj:
+            break
+    
+    return (
+        str(found_model) if found_model else "",
+        str(found_mmproj) if found_mmproj else ""
+    )
 
+# Auto-discover or use environment paths
+_MODEL_PATH, _MMPROJ_PATH = _find_model_files()
 
-# ─── Model Paths (عدّل على حسب مكان الملفات عندك) ────────────────────────────
-MODEL_PATH  = r"E:\ai models\Qwen3-VL-2B\Qwen3-VL-2B-Instruct-UD-Q4_K_XL 2.gguf"
-MMPROJ_PATH = r"E:\ai models\Qwen3-VL-2B\mmproj-F16 2.gguf"
+# Make available as module-level constants
+MODEL_PATH = os.environ.get("QWEN_MODEL_PATH", _MODEL_PATH)
+MMPROJ_PATH = os.environ.get("QWEN_MMPROJ_PATH", _MMPROJ_PATH)
 
-# ─── Singleton ────────────────────────────────────────────────────────────────
+# Check if AI is explicitly disabled
+AI_DISABLED = os.environ.get("AI_DISABLED", "").lower() in ("1", "true", "yes", "on")
+
+# ─── AI Status Tracking ─────────────────────────────────
+_ai_status = {
+    'initialized': False,
+    'available': False,
+    'last_error': None,
+    'model_path': MODEL_PATH,
+    'mmproj_path': MMPROJ_PATH,
+}
+
+# ─── Singleton ─────────────────────────────────────────────
 _llm = None
 
+def get_ai_status() -> Dict:
+    """Get current AI system status for diagnostics."""
+    return _ai_status.copy()
+
 def _get_llm():
-    """Load model once, reuse across all calls (Singleton pattern)."""
-    global _llm
+    """
+    Load model once, reuse across all calls (Singleton pattern).
+    
+    FIX GROUP: Robust model loading with comprehensive error handling.
+    """
+    global _llm, _ai_status
+    
     if _llm is not None:
         return _llm
-
+    
+    # Check if AI is disabled
+    if AI_DISABLED:
+        logger.info("[AIBridge] AI is disabled via AI_DISABLED environment variable")
+        _ai_status['available'] = False
+        _ai_status['last_error'] = "AI_DISABLED"
+        return None
+    
+    # Check if model files are available
+    if not MODEL_PATH or not os.path.exists(MODEL_PATH):
+        logger.warning(f"[AIBridge] Model not found. Checked: {MODEL_PATH or 'auto-discovery'}")
+        logger.info("[AIBridge] Set QWEN_MODEL_PATH environment variable or place model in ./models/")
+        _ai_status['available'] = False
+        _ai_status['last_error'] = f"MODEL_NOT_FOUND: {MODEL_PATH}"
+        return None
+    
+    if not MMPROJ_PATH or not os.path.exists(MMPROJ_PATH):
+        logger.warning(f"[AIBridge] mmproj not found. Checked: {MMPROJ_PATH or 'auto-discovery'}")
+        logger.info("[AIBridge] Set QWEN_MMPROJ_PATH environment variable or place mmproj in ./models/")
+        _ai_status['available'] = False
+        _ai_status['last_error'] = f"MMPROJ_NOT_FOUND: {MMPROJ_PATH}"
+        return None
+    
     try:
         from llama_cpp import Llama
     except ImportError:
-        logger.error("[AIBridge] llama-cpp-python not installed. Run: pip install llama-cpp-python")
+        logger.warning("[AIBridge] llama-cpp-python not installed. Run: pip install llama-cpp-python")
+        logger.info("[AIBridge] Using rule-based fallback analysis")
+        _ai_status['available'] = False
+        _ai_status['last_error'] = "LLAMA_CPP_NOT_INSTALLED"
         return None
-
-    if not os.path.exists(MODEL_PATH):
-        logger.error(f"[AIBridge] Model not found: {MODEL_PATH}")
-        return None
-
-    if not os.path.exists(MMPROJ_PATH):
-        logger.error(f"[AIBridge] mmproj not found: {MMPROJ_PATH}")
-        return None
-
-    logger.info("[AIBridge] Loading Qwen3-VL-2B model (first call only)...")
-    t0 = time.time()
-
-    # Suppress llama.cpp warnings on stderr (Flutter treats them as errors)
-    with open(os.devnull, 'w') as devnull:
-        with contextlib.redirect_stderr(devnull):
-            _llm = Llama(
-                model_path  = MODEL_PATH,
-                mmproj      = MMPROJ_PATH,
-                n_ctx       = 4096,      # زيادة للتحسين والاستقرار
-                n_threads   = 4,         # HP ProBook — 4 threads كافية
-                n_gpu_layers= 0,         # CPU only
-                verbose     = False,     # إسكات الـ Logs عشان Flutter ما يتهوش
-            )
-
-    logger.info(f"[AIBridge] Model loaded in {time.time()-t0:.1f}s")
-    return _llm
+    
+    # Attempt model loading with retry logic
+    max_retries = 1
+    for attempt in range(max_retries + 1):
+        try:
+            logger.info(f"[AIBridge] Loading model (attempt {attempt + 1}/{max_retries + 1})...")
+            logger.info(f"[AIBridge] Model: {os.path.basename(MODEL_PATH)}")
+            logger.info(f"[AIBridge] MMProj: {os.path.basename(MMPROJ_PATH)}")
+            
+            t0 = time.time()
+            
+            # Capture stderr for debugging
+            import io
+            stderr_buffer = io.StringIO()
+            
+            with contextlib.redirect_stderr(stderr_buffer):
+                _llm = Llama(
+                    model_path   = MODEL_PATH,
+                    mmproj       = MMPROJ_PATH,
+                    n_ctx        = 4096,
+                    n_threads    = min(4, os.cpu_count() or 4),
+                    n_gpu_layers = 0,
+                    verbose      = False,
+                )
+            
+            # Check for warnings
+            stderr_content = stderr_buffer.getvalue()
+            if stderr_content:
+                logger.debug(f"[AIBridge] Model load messages: {stderr_content[:500]}")
+            
+            load_time = time.time() - t0
+            logger.info(f"[AIBridge] Model loaded successfully in {load_time:.1f}s")
+            
+            _ai_status['available'] = True
+            _ai_status['initialized'] = True
+            _ai_status['last_error'] = None
+            
+            return _llm
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.warning(f"[AIBridge] Model load failed: {error_msg}")
+            _ai_status['last_error'] = error_msg
+            
+            if attempt < max_retries:
+                logger.info("[AIBridge] Retrying...")
+                time.sleep(0.5)
+            else:
+                logger.error("[AIBridge] Model loading failed after all retries")
+                logger.info("[AIBridge] Will use rule-based fallback analysis")
+    
+    _ai_status['available'] = False
+    return None
 
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
@@ -129,8 +284,8 @@ PARAMETER RULES:
    - Moderate -> smoothing_factor: 0.2-0.35, corner_threshold: 80-110
 
 2. Detail level (CRITICAL for text_logo - preserve sharp corners):
-   - Fine text/small details -> contour_min_area: 8-20, simplification_epsilon: 0.3-0.6
-   - text_logo (any) -> simplification_epsilon: 0.3-0.8 (LOW to preserve letter corners)
+   - Fine text/small details -> contour_min_area: 8-20, simplification_epsilon: 0.2-0.5
+   - text_logo (any) -> simplification_epsilon: 0.2-0.5 (LOWER = more corners preserved; use values < 0.4 for text to preserve letter corners)
    - Normal artwork -> contour_min_area: 30-60, simplification_epsilon: 1.0-1.5
    - Bold/thick shapes -> contour_min_area: 60-150, simplification_epsilon: 1.5-2.5
 
@@ -177,13 +332,16 @@ _PROMPT = _PROMPT_TEMPLATE.replace("{opencv_colors_context}", "No prior OpenCV d
 
 
 # ─── Caching ──────────────────────────────────────────────────────────────────
-_analysis_cache = {}
+_analysis_cache: dict = {}  # {image_hash: result}
+import hashlib
 
 def _get_image_hash(image: np.ndarray) -> str:
-    """Generate a simple hash for the image to avoid redundant AI calls."""
-    # Use a small downsampled version for hashing speed
+    """
+    FIX GROUP 7.3: Generate MD5 hash for the image to avoid redundant AI calls.
+    Uses 64x64 downsample for speed while maintaining uniqueness.
+    """
     small = cv2.resize(image, (64, 64), interpolation=cv2.INTER_AREA)
-    return str(hash(small.tobytes()))
+    return hashlib.md5(small.tobytes()).hexdigest()
 
 # ─── Main API ─────────────────────────────────────────────────────────────────
 
@@ -613,25 +771,123 @@ If preview looks good, return minimal adjustments.
         return None
 
 
-def analyze_with_prompt(original_path: str, preview_path: str, user_prompt: str) -> Optional[dict]:
+def _normalize_user_prompt(user_prompt: str) -> str:
     """
-    Task 5.2 FIX: Analyze preview with user-provided prompt for custom adjustments.
+    FIX Issue #10: Normalize natural language prompt to standard terminology.
     
-    This function allows users to describe what they want to adjust in the film,
-    and the AI will suggest parameter changes based on that description.
+    Converts common user terms to standard prepress terminology for better AI parsing.
+    """
+    import re
+    
+    prompt_lower = user_prompt.lower()
+    
+    # Synonym mappings: user terms -> standard terms
+    synonyms = {
+        # Smoothing terms
+        r'\bsmooth\b|\bsofter\b|\bround\b|\brounded\b|\banti[- ]?alias\b|\bblur\b': 'smoothing',
+        r'\bjagged\b|\bpixelated\b|\brough\b|\bsharp edges\b|\bhard edges\b': 'reduce smoothing',
+        
+        # Corner/sharpness terms
+        r'\bsharp\b|\bcrisp\b|\bclean\b|\bprecise\b|\bfine detail\b': 'sharpen corners',
+        r'\bround corners\b|\bsoft corners\b|\bfuzzy\b|\bblunt\b': 'reduce corner threshold',
+        
+        # Line thickness
+        r'\bthicker\b|\bbold\b|\bheavy\b|\bdark\b': 'increase line thickness',
+        r'\bthinner\b|\blight\b|\bthin\b|\bdelicate\b': 'decrease line thickness',
+        
+        # Halftone terms
+        r'\bfiner dots\b|\bsmaller dots\b|\bhigher resolution\b|\bmore detail\b': 'increase lpi',
+        r'\blarger dots\b|\bbigger dots\b|\bcoarser\b|\blower resolution\b': 'decrease lpi',
+        
+        # Background
+        r'\bremove background\b|\btransparent\b|\bclean background\b|\bwhite background\b': 'remove background',
+        r'\bkeep background\b|\bpreserve background\b': 'keep background',
+        
+        # Color/halftone mode
+        r'\bhalftone\b|\bgray[- ]?scale\b|\bdot pattern\b|\bscreen\b': 'halftone mode',
+        r'\bsolid\b|\bvector\b|\bclean edges\b': 'solid mode',
+    }
+    
+    normalized = user_prompt
+    for pattern, standard_term in synonyms.items():
+        if re.search(pattern, prompt_lower):
+            # Append standard term for clarity (don't replace, just augment)
+            normalized += f". Use standard term: {standard_term}."
+    
+    return normalized
+
+
+def _extract_json_from_mixed_input(user_prompt: str) -> tuple:
+    """
+    FIX Issue #10: Extract JSON parameters from mixed natural language + JSON input.
+    
+    Returns: (cleaned_prompt, extracted_params dict or None)
+    """
+    import json
+    import re
+    
+    # Look for JSON block in the prompt
+    json_pattern = r'\{[^}]*(?:"[^"]*"[^}]*)*\}'
+    json_matches = re.findall(json_pattern, user_prompt, re.DOTALL)
+    
+    extracted = {}
+    cleaned_prompt = user_prompt
+    
+    for json_str in json_matches:
+        try:
+            parsed = json.loads(json_str)
+            extracted.update(parsed)
+            # Remove this JSON from the cleaned prompt
+            cleaned_prompt = cleaned_prompt.replace(json_str, '')
+        except json.JSONDecodeError:
+            continue
+    
+    cleaned_prompt = cleaned_prompt.strip()
+    
+    return cleaned_prompt, extracted if extracted else None
+
+
+def analyze_with_prompt(original_path: str, preview_path: str, user_prompt: str, 
+                         iteration: int = 1, preserve_original: bool = True) -> Optional[dict]:
+    """
+    FIX Issue #10: Enhanced AI analysis with natural language normalization and iterative workflow.
+    
+    Features:
+    - Accepts natural language, JSON, or mixed instructions
+    - Normalizes user terminology to standard prepress terms
+    - Saves AI-fixed output as NEW version (preserves original)
+    - Supports iterative AI correction workflow
     
     Args:
-        original_path: Path to original input image
+        original_path: Path to original input image (for reference)
         preview_path: Path to current preview image (what user sees)
-        user_prompt: User's description of desired adjustments
+        user_prompt: User's description of desired adjustments (natural language, JSON, or mixed)
+        iteration: Iteration number for multi-step correction workflow
+        preserve_original: If True, mark result as new version rather than replacement
         
     Returns:
         Dict with parameter adjustments or None if failed
+        Format: {
+            'smoothing_factor': float,
+            'corner_threshold': float,
+            'global_threshold': int,
+            'lpi': int,
+            'adjustment_reason': str,
+            'iteration': int,
+            'is_new_version': bool,
+            'original_preserved': bool
+        }
     """
     llm = _get_llm()
     if llm is None:
         logger.warning("[AIBridge] LLM not available for prompt-based analysis")
         return None
+    
+    # FIX Issue #10: Parse mixed input (natural language + JSON)
+    cleaned_prompt, extracted_params = _extract_json_from_mixed_input(user_prompt)
+    
+    # FIX Issue #10: Normalize terminology
+    normalized_prompt = _normalize_user_prompt(cleaned_prompt)
     
     # 🔥 FIX: Resize image before AI analysis for speed
     img = cv2.imread(preview_path)
@@ -646,24 +902,30 @@ def analyze_with_prompt(original_path: str, preview_path: str, user_prompt: str)
     _, buf = cv2.imencode(".jpg", img_resized)
     img_b64 = base64.b64encode(buf).decode("utf-8")
     
-    # Build prompt with user instructions
+    # Build enhanced prompt with normalization context
     prompt = f"""/no_think
 You are a Prepress Engineer for Silk Screen Printing. 
+
+Iteration {iteration} of AI-assisted film correction.
+
 The user wants to adjust their film based on this description:
-"{user_prompt}"
+"{normalized_prompt}"
+
+{'Previously extracted parameters: ' + json.dumps(extracted_params) if extracted_params else ''}
 
 Analyze the current preview image and suggest specific parameter adjustments.
 Return STRICT JSON ONLY with these fields:
-- smoothing_factor: float (0.1-0.5) - higher = smoother edges
-- corner_threshold: float (30-140) - lower = sharper corners
-- global_threshold: int (0-255) - adjust line thickness
-- lpi: int (45-85) - lines per inch for halftone
-- adjustment_reason: string - brief explanation of changes
+- smoothing_factor: float (0.1-0.5) - higher = smoother edges, lower = sharper
+- corner_threshold: float (30-140) - lower = sharper corners, higher = softer
+- global_threshold: int (0-255) - higher = thicker lines, lower = thinner
+- lpi: int (45-85) - lines per inch: higher = finer dots, lower = coarser
+- dot_shape: string ("round", "ellipse", "line") - round for photos, ellipse for artwork
+- adjustment_reason: string - brief explanation of changes in user's language
 
-Example: {{"smoothing_factor": 0.35, "corner_threshold": 95, "global_threshold": 180, "lpi": 55, "adjustment_reason": "Increased smoothing to reduce jagged edges"}}
+Example: {{"smoothing_factor": 0.35, "corner_threshold": 95, "global_threshold": 180, "lpi": 55, "dot_shape": "round", "adjustment_reason": "Increased smoothing to reduce jagged edges"}}
 """
     
-    logger.info(f"[AIBridge] Analyzing with user prompt: {user_prompt[:50]}...")
+    logger.info(f"[AIBridge] Iteration {iteration}: Analyzing prompt: {user_prompt[:60]}...")
     t0 = time.time()
     
     try:
@@ -676,24 +938,42 @@ Example: {{"smoothing_factor": 0.35, "corner_threshold": 95, "global_threshold":
                     {"type": "text", "text": prompt}
                 ]
             }],
-            temperature=0.2,
-            max_tokens=250,
+            temperature=0.2 + (iteration * 0.05),  # Slightly more creative on later iterations
+            max_tokens=300,
         )
         
         elapsed = time.time() - t0
         raw = response["choices"][0]["message"]["content"]
-        logger.info(f"[AIBridge] Prompt response in {elapsed:.1f}s")
+        logger.info(f"[AIBridge] Prompt response in {elapsed:.1f}s (iteration {iteration})")
         
         result = _parse_response(raw)
         
         if result:
-            logger.info(f"[AIBridge] Prompt-based adjustments applied: {result.get('adjustment_reason', '')}")
+            # FIX Issue #10: Merge with extracted JSON params (extracted params take precedence)
+            if extracted_params:
+                for key in ['smoothing_factor', 'corner_threshold', 'global_threshold', 'lpi', 'dot_shape']:
+                    if key in extracted_params:
+                        result[key] = extracted_params[key]
+                logger.info(f"[AIBridge] Merged extracted params: {extracted_params}")
+            
+            # FIX Issue #10: Add versioning metadata
+            adjustment_reason = result.get('adjustment_reason', 'Custom adjustments applied')
+            if iteration > 1:
+                adjustment_reason = f"[Rev {iteration}] {adjustment_reason}"
+            
+            logger.info(f"[AIBridge] Adjustments applied: {adjustment_reason}")
+            
             return {
-                'smoothing_factor': result.get('smoothing_factor', 0.25),
-                'corner_threshold': result.get('corner_threshold', 95.0),
-                'global_threshold': result.get('global_threshold', 180),
-                'lpi': result.get('lpi', 55),
-                'adjustment_reason': result.get('adjustment_reason', 'Custom adjustments applied'),
+                'smoothing_factor': float(result.get('smoothing_factor', 0.25)),
+                'corner_threshold': float(result.get('corner_threshold', 95.0)),
+                'global_threshold': int(result.get('global_threshold', 180)),
+                'lpi': int(result.get('lpi', 55)),
+                'dot_shape': str(result.get('dot_shape', 'round')),
+                'adjustment_reason': adjustment_reason,
+                'iteration': iteration,
+                'is_new_version': preserve_original,
+                'original_preserved': preserve_original,
+                'prompt_normalized': normalized_prompt != user_prompt
             }
         return None
         
@@ -705,9 +985,82 @@ Example: {{"smoothing_factor": 0.35, "corner_threshold": 95, "global_threshold":
 # ─── Health Check ─────────────────────────────────────────────────────────────
 
 def is_available() -> bool:
-    """Check if model files exist and llama-cpp is installed."""
+    """
+    Check if AI system is available and ready.
+    
+    Returns True if:
+    - llama-cpp is installed
+    - Model files exist and are readable
+    - Model has been successfully loaded or can be loaded
+    
+    Also updates _ai_status for diagnostics.
+    """
+    global _ai_status
+    
+    # Check if explicitly disabled
+    if AI_DISABLED:
+        _ai_status['available'] = False
+        _ai_status['last_error'] = "AI_DISABLED"
+        return False
+    
+    # Check llama-cpp installation
     try:
         import llama_cpp  # noqa: F401
     except ImportError:
+        _ai_status['available'] = False
+        _ai_status['last_error'] = "LLAMA_CPP_NOT_INSTALLED"
         return False
-    return os.path.exists(MODEL_PATH) and os.path.exists(MMPROJ_PATH)
+    
+    # Check model files
+    has_model = MODEL_PATH and os.path.exists(MODEL_PATH)
+    has_mmproj = MMPROJ_PATH and os.path.exists(MMPROJ_PATH)
+    
+    _ai_status['model_path'] = MODEL_PATH
+    _ai_status['mmproj_path'] = MMPROJ_PATH
+    
+    if not has_model:
+        _ai_status['available'] = False
+        _ai_status['last_error'] = f"MODEL_NOT_FOUND: {MODEL_PATH}"
+        return False
+    
+    if not has_mmproj:
+        _ai_status['available'] = False
+        _ai_status['last_error'] = f"MMPROJ_NOT_FOUND: {MMPROJ_PATH}"
+        return False
+    
+    # If model is already loaded, we're good
+    if _llm is not None:
+        _ai_status['available'] = True
+        _ai_status['last_error'] = None
+        return True
+    
+    # Model files exist but not loaded yet - return True to allow lazy loading
+    _ai_status['available'] = True  # Potentially available
+    _ai_status['last_error'] = None
+    return True
+
+
+def get_fallback_analysis() -> Dict:
+    """
+    Rule-based fallback analysis when AI is unavailable.
+    
+    Provides reasonable defaults based on simple image metrics.
+    """
+    logger.info("[AIBridge] Using rule-based fallback analysis")
+    
+    return {
+        "image_class": "artwork",
+        "num_colors": 3,
+        "use_halftone": False,
+        "smoothing_factor": 0.25,
+        "corner_threshold": 95.0,
+        "lpi": 55,
+        "dot_shape": "round",
+        "upscale_factor": 1.0,
+        "denoise_strength": 3,
+        "contour_min_area": 50,
+        "simplification_epsilon": 1.2,
+        "color_merge_advice": "",
+        "auto_adjustment_reason": "Rule-based fallback (AI unavailable)",
+        "_fallback": True  # Marker that this is fallback
+    }

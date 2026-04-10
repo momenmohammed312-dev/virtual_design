@@ -101,6 +101,10 @@ def _make_single_color_separation(image: np.ndarray, white_threshold: int = 240)
         'color_info': [{'index': 0, 'pixel_count': ink_pixels, 'percentage': coverage}]
     }
 
+# FIX GROUP 5.3: Standard CMYK angles for multi-color halftone
+CMYK_ANGLES = [45.0, 15.0, 75.0, 0.0]  # C, M, Y, K standard screen angles
+
+
 def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) -> List[np.ndarray]:
     """
     Decoupled halftone pipeline using high-DPI RasterHalftoneEngine.
@@ -129,17 +133,32 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     output_dpi = getattr(args, 'dpi', 450)
     raster_dpi = max(1200, output_dpi * 2)
     logger.info(f"[HalftonePipeline] Config: output_dpi={output_dpi}, raster_dpi={raster_dpi}")
-    
+
     # Auto-calc LPI based on DPI (industry standard: LPI = DPI / 4 to DPI / 5)
     # Higher DPI = smaller dots = higher LPI possible
     dpi_lpi_ratio = 4.5  # Sweet spot for screen printing
     auto_lpi = min(150, max(65, int(output_dpi / dpi_lpi_ratio)))
-    
+
     # Use auto-calculated LPI if user didn't specify custom value
     effective_lpi = args.lpi if args.lpi != 85 else auto_lpi
-    logger.info(f"[HalftonePipeline] Auto LPI: {effective_lpi} (DPI={output_dpi}, ratio=1:{dpi_lpi_ratio})")
 
-    cmyk_angles = [15.0, 45.0, 75.0, 0.0]
+    # FIX: DPI-aware mesh-count validation (Issue #4)
+    # Industry rule: max_LPI = mesh_count / 4 for traditional RIP
+    # BUT high-DPI output (1200+) can support higher LPI without moiré
+    # Formula: effective_max = min(mesh/4, dpi/10) for quality preservation
+    mesh_count = getattr(args, 'mesh_count', 160)
+    traditional_max = mesh_count / 4.0  # Traditional mesh limit
+    dpi_based_max = output_dpi / 10.0   # DPI-based quality limit
+    
+    # Allow higher LPI for high-DPI output, but keep mesh constraint as safety
+    max_safe_lpi = min(int(traditional_max * 1.5), int(dpi_based_max))
+    max_safe_lpi = max(45, min(max_safe_lpi, int(traditional_max * 1.2)))  # Cap at 120% of traditional
+    
+    if effective_lpi > max_safe_lpi:
+        logger.warning(f"[Halftone] LPI {effective_lpi} exceeds safe limit {max_safe_lpi} (mesh={mesh_count}, dpi={output_dpi}). Clamping.")
+        effective_lpi = max_safe_lpi
+
+    logger.info(f"[HalftonePipeline] Final LPI: {effective_lpi} (DPI={output_dpi}, mesh={mesh_count}, max_safe={max_safe_lpi})")
     result = []
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
@@ -164,7 +183,8 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
         if not is_binary_mask:
             enhanced = clahe.apply(enhanced)
             
-        angle = cmyk_angles[i] if i < len(cmyk_angles) else getattr(args, 'halftone_angle', 45.0)
+        # FIX GROUP 5.3: Use CMYK angles consistently based on mask_index % 4
+        angle = CMYK_ANGLES[i % 4]
         dot_shape = getattr(args, 'dot_shape', 'round')
         
         # Create engine per mask with specific angle
@@ -190,8 +210,15 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
     dpi_lpi_ratio = 4.5
     auto_lpi = min(150, max(65, int(args.dpi / dpi_lpi_ratio)))
     effective_lpi = args.lpi if args.lpi != 85 else auto_lpi
-    logger.info(f"[LegacyHalftone] Auto LPI: {effective_lpi} (DPI={args.dpi}, ratio=1:{dpi_lpi_ratio})")
-    cmyk_angles = [15.0, 45.0, 75.0, 0.0]
+
+    # FIX GROUP 5.2: Mesh-count validation for legacy path
+    mesh_count = getattr(args, 'mesh_count', 160)
+    max_safe_lpi = mesh_count // 4
+    if effective_lpi > max_safe_lpi:
+        logger.warning(f"[LegacyHalftone] LPI {effective_lpi} exceeds safe limit {max_safe_lpi} for {mesh_count} mesh. Clamping.")
+        effective_lpi = max_safe_lpi
+
+    logger.info(f"[LegacyHalftone] Auto LPI: {effective_lpi} (DPI={args.dpi}, mesh={mesh_count}, max_safe={max_safe_lpi})")
     result = []
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     for i, mask in enumerate(masks):
@@ -209,9 +236,10 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
         is_binary_mask = len(unique_vals) <= 2
         if not is_binary_mask:
             enhanced = clahe.apply(enhanced)
-        angle = cmyk_angles[i] if i < len(cmyk_angles) else getattr(args, 'angle', 45.0)
+        # FIX GROUP 5.3: Use CMYK angles consistently
+        angle = CMYK_ANGLES[i % 4]
         dot_shape = getattr(args, 'dot_shape', 'round')
-        ht = halftone_gen.generate(enhanced, lpi=effective_lpi, angle=angle, 
+        ht = halftone_gen.generate(enhanced, lpi=effective_lpi, angle=angle,
                                    dot_shape=dot_shape, dpi=args.dpi, gamma=1.6)
         result.append(ht)
     logger.info(f"[HalftonePipeline] ===== COMPLETE - {len(result)} masks processed =====")

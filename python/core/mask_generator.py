@@ -89,6 +89,7 @@ class MaskGenerator:
         min_area: int = 50,
         apply_cleanup: bool = True,
         grayscale_output: bool = False,
+        dpi: int = 300,  # FIX GROUP 2.1: Added DPI parameter for scaling
     ) -> List[np.ndarray]:
         """
         توليد قائمة masks — mask لكل لون.
@@ -115,7 +116,9 @@ class MaskGenerator:
             bg_pixels = np.sum(bg_mask)
             logger.info(f"[MaskGenerator] Background mask found: {bg_pixels} bg pixels will stay white")
 
-        logger.info(f"[MaskGenerator] Generating {num_colors} masks (grayscale_output={grayscale_output})")
+        # FIX GROUP 2.1: Calculate DPI-scaled minimum component size
+        min_component_px = max(5, int(20 * (dpi / 300) ** 2))
+        logger.info(f"[MaskGenerator] Generating {num_colors} masks (grayscale_output={grayscale_output}, dpi={dpi}, min_component_px={min_component_px})")
         masks = []
 
         # Get original image for grayscale output
@@ -150,10 +153,17 @@ class MaskGenerator:
 
             if apply_cleanup and not grayscale_output:
                 mask = self._cleanup_mask(mask, morph_kernel_size, min_area)
+                # FIX GROUP 2.1: Use DPI-scaled min_component_px for smart smoothing
+                mask = self._smart_smooth_mask(mask, min_component_px=min_component_px)
                 # After cleanup, ensure background is still white
                 if bg_mask is not None:
                     mask[bg_mask] = 255
                 mask[label_map == -1] = 255
+            elif grayscale_output:
+                # FIX GROUP 2.2: Polarity enforcement after grayscale_output
+                from core.pipeline_controller import PipelineController
+                ctrl = PipelineController()
+                mask = ctrl.enforce_polarity(mask, stage=f"grayscale_mask_{i}")
 
             # FIXED: Log correct ink coverage (design pixels = 0)
             coverage = self.get_mask_stats(mask)["filled_pixels"]
@@ -265,14 +275,15 @@ class MaskGenerator:
 
         return result
 
-    def _smart_smooth_mask(self, mask: np.ndarray) -> np.ndarray:
+    def _smart_smooth_mask(self, mask: np.ndarray, min_component_px: int = 20) -> np.ndarray:
         """
         Apply morphological closing and selective boundary smoothing to eliminate jagged edges.
         Replaces approxPolyDP which was causing angular artifacts.
-        
+
         Args:
             mask: Binary mask to smooth
-            
+            min_component_px: Minimum component size to keep (FIX GROUP 2.1: now DPI-scaled)
+
         Returns:
             Smoothed mask
         """
@@ -284,7 +295,7 @@ class MaskGenerator:
         num, labels, stats, _ = cv2.connectedComponentsWithStats(inv, 8, cv2.CV_32S)
         clean_inv = np.zeros_like(inv)
         for lbl in range(1, num):
-            if stats[lbl, cv2.CC_STAT_AREA] >= 20: # Keep components >= 20px
+            if stats[lbl, cv2.CC_STAT_AREA] >= min_component_px:  # FIX: Now uses parameter
                 clean_inv[labels == lbl] = 255
 
         # Step 2: morphological closing — fills small holes, smooth edges

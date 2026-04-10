@@ -14,18 +14,87 @@ class HalftoneDot:
 
 
 class HalftoneGenerator:
-    """Generate halftone patterns for screen printing"""
+    """Generate halftone patterns for screen printing
+    FIX GROUP 10.1: Merged dot-gain compensation curves from root-level halftone_generator.py
+    """
 
-    def __init__(self, dpi: int = 300):
-        """Initialize halftone generator"""
+    def __init__(self, dpi: int = 300, radius_gain: float = 1.0, curve_type: str = "linear"):
+        """Initialize halftone generator
+        Args:
+            dpi: Output DPI
+            radius_gain: Dot gain radius multiplier (1.0 = no gain, >1.0 = gain)
+            curve_type: Gain curve type - "linear", "exponential", "logarithmic", "sigmoid"
+        """
         self.dpi = dpi
+        self.radius_gain = radius_gain
+        self.curve_type = curve_type
+
+    def _apply_dot_gain_curve(self, intensity: float) -> float:
+        """
+        FIX GROUP 10.1: RIP-grade dot gain compensation with midtone weighting.
+        Merged from root-level halftone_generator.py.
+
+        Args:
+            intensity: 0.0 (black) to 1.0 (white)
+
+        Returns:
+            calibrated intensity for print production
+        """
+        # Base curve compensation
+        if self.curve_type == "linear":
+            base_compensation = intensity
+        elif self.curve_type == "exponential":
+            # More gain in shadows
+            base_compensation = intensity ** (1.0 / self.radius_gain)
+        elif self.curve_type == "logarithmic":
+            # More gain in highlights
+            if intensity <= 0.01:
+                base_compensation = 0.01
+            else:
+                base_compensation = 1.0 - math.log(intensity) / math.log(0.01) * (self.radius_gain - 1.0)
+        elif self.curve_type == "sigmoid":
+            # S-curve for smooth transitions
+            steepness = 6.0 / self.radius_gain
+            center = 0.5
+            base_compensation = 1.0 / (1.0 + math.exp(-steepness * (intensity - center)))
+        else:
+            base_compensation = intensity
+
+        # RIP-grade midtone weighting (critical insight)
+        # Dot gain is highest in midtones (40-60%), apply stronger correction there
+        midtone_center = 0.5
+        midtone_range = 0.3  # 30% range around center (35%-65%)
+
+        # Calculate distance from midtone center
+        distance_from_midtone = abs(intensity - midtone_center)
+
+        # Midtone weighting: stronger correction closer to 50%
+        if distance_from_midtone <= midtone_range:
+            # Weight increases as we get closer to midtone
+            midtone_weight = 1.0 - (distance_from_midtone / midtone_range)
+            # Apply midtone boost based on radius_gain
+            midtone_boost = 1.0 + midtone_weight * (self.radius_gain - 1.0) * 0.5
+
+            # Blend base compensation with midtone-boosted version
+            if intensity < 0.5:
+                # Shadows: push darker (smaller intensity)
+                final_intensity = base_compensation * (2.0 - midtone_boost) / 2.0
+            else:
+                # Highlights: push lighter (larger intensity)
+                final_intensity = base_compensation * midtone_boost
+        else:
+            # Outside midtone range: use base compensation
+            final_intensity = base_compensation
+
+        # Clamp to valid range
+        return max(0.0, min(1.0, final_intensity))
 
     # ─── VECTOR OUTPUT ───────────────────────────────────────────────────────
 
     def generate_vector_dots(
         self,
         image: np.ndarray,
-        lpi: int = 85,
+        lpi: int = 45,  # FIX GROUP 5.1: Changed default from 85 to 45 (safe for 160-200 mesh)
         angle: float = 45.0,
         dot_shape: str = "circle",
         gamma: float = 1.6,
@@ -67,15 +136,19 @@ class HalftoneGenerator:
         
         norm = gray[iy, ix] / 255.0
         intensities = 1.0 - norm
-        
-        # Apply dot gain compensation
+
+        # FIX GROUP 10.1: Apply RIP-grade dot gain compensation curves
+        # Vectorized application of dot gain curve
+        intensities = np.vectorize(self._apply_dot_gain_curve)(intensities)
+
+        # Also apply print_job_config compensation if available
         try:
             from .print_job_config import PrintJobConfig
             job_config = PrintJobConfig()
             intensities = job_config.apply_dot_gain_compensation(intensities)
         except ImportError:
-            pass 
-        
+            pass
+
         if gamma != 1.0:
             intensities = np.power(intensities, 1.0 / gamma)
 
@@ -98,12 +171,13 @@ class HalftoneGenerator:
     def generate(
         self,
         image: np.ndarray,
-        lpi: int = 85,
+        lpi: int = 45,  # FIX GROUP 5.1: Changed default from 85 to 45
         angle: float = 45.0,
         dot_shape: Literal["round", "square", "ellipse", "dither"] = "round",
         dpi: Optional[int] = None,
         gamma: float = 1.6,
-        apply_clahe: bool = True
+        apply_clahe: bool = True,
+        image_class: str = 'auto'  # FIX GROUP 5.4: Added image_class parameter
     ) -> np.ndarray:
         """Generate halftone as binary numpy array."""
         gray = self._to_gray(image)
@@ -116,8 +190,8 @@ class HalftoneGenerator:
             gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
             logger.info(f"[Halftone] Downscaled large image to {gray.shape[1]}x{gray.shape[0]} for speed")
 
-        if apply_clahe:
-            # CLAHE helps photographs but can be noisy for artwork
+        # FIX GROUP 5.4: Only apply CLAHE for photos, not for text_logo or artwork
+        if apply_clahe and image_class == 'photo':
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             gray = clahe.apply(gray)
             

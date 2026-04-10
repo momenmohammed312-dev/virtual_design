@@ -1,12 +1,19 @@
 """
 pipeline_controller.py — Central Pipeline Control System
 Single source of truth for polarity, validation, and decision-making.
+
+FIX GROUP: Robust polarity detection with contextual analysis
+- Conservative inversion decisions
+- Background-aware polarity analysis
+- Multi-factor confidence scoring
+- Safety checks before any inversion
 """
 
 import cv2
 import numpy as np
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
+from enum import Enum
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,6 +26,15 @@ POLARITY_BG = 255   # background pixels = WHITE
 MIN_INK_COVERAGE = 0.001  # 0.1% — below = blank film
 MAX_INK_COVERAGE = 1.0    # 100% — allow solid designs (was 0.995, causing false rejects)
 
+# ═══ POLARITY DECISION THRESHOLDS ═══
+class PolarityThresholds:
+    """Conservative thresholds for polarity decisions."""
+    INK_DOMINANCE_MIN = 0.65      # Must have >65% ink to consider inversion
+    BG_DOMINANCE_MIN = 0.35       # Background must be <35% to consider inversion
+    DECISION_CONFIDENCE_MIN = 0.75  # 75% confidence required for inversion
+    EDGE_DENSITY_MAX = 0.15       # High edge density suggests intentional high-contrast art
+    BORDER_INK_RATIO_MAX = 0.90  # If >90% border is ink, likely intentional white-on-dark
+
 
 @dataclass
 class BinaryMetrics:
@@ -30,31 +46,220 @@ class BinaryMetrics:
     is_valid: bool          # overall validity
 
 
+class PolarityDecision:
+    """Result of polarity analysis with confidence scoring."""
+    def __init__(self, should_invert: bool, confidence: float, 
+                 reason: str, metrics: Dict, safety_checks_passed: bool):
+        self.should_invert = should_invert
+        self.confidence = confidence
+        self.reason = reason
+        self.metrics = metrics
+        self.safety_checks_passed = safety_checks_passed
+
+
 class PipelineController:
     """
     Central controller for the silk screen pipeline.
     Enforces polarity, validates masks, and audits processing.
+    
+    🔥 ARCHITECTURE FIX: Redesigned polarity detection with:
+    - Contextual image analysis (border, edge, distribution)
+    - Conservative confidence-based decisions
+    - Multi-factor safety checks
+    - Background-aware polarity analysis
     """
 
     def __init__(self):
         self._audit_log = []
 
+    def _analyze_polarity_context(self, mask: np.ndarray, 
+                                   alpha_mask: Optional[np.ndarray] = None) -> Dict:
+        """
+        Comprehensive contextual analysis for polarity decisions.
+        
+        Analyzes multiple factors to determine if inversion is appropriate:
+        - Border analysis (edges of image)
+        - Edge density (high = intentional artwork)
+        - Gray value distribution
+        - Regional analysis (center vs border)
+        
+        Returns dict with analysis metrics.
+        """
+        h, w = mask.shape[:2]
+        
+        # Use only visible pixels if alpha mask provided
+        if alpha_mask is not None:
+            if alpha_mask.shape != (h, w):
+                alpha_mask = cv2.resize(alpha_mask.astype(np.uint8), 
+                                       (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
+            effective_mask = mask.copy()
+            effective_mask[~alpha_mask] = POLARITY_BG  # Set transparent to background
+        else:
+            effective_mask = mask
+            alpha_mask = np.ones((h, w), dtype=bool)
+        
+        # Global ratios
+        ink_px = int(np.sum((effective_mask == POLARITY_INK) & alpha_mask))
+        bg_px = int(np.sum((effective_mask == POLARITY_BG) & alpha_mask))
+        total_visible = np.sum(alpha_mask)
+        
+        ink_ratio = ink_px / (total_visible + 1e-6)
+        bg_ratio = bg_px / (total_visible + 1e-6)
+        
+        # Border analysis (5% border strip)
+        border_h = max(1, int(h * 0.05))
+        border_w = max(1, int(w * 0.05))
+        
+        # Combine all border regions
+        border_top = effective_mask[:border_h, :]
+        border_bottom = effective_mask[-border_h:, :]
+        border_left = effective_mask[:, :border_w]
+        border_right = effective_mask[:, -border_w:]
+        
+        border_ink = (np.sum(border_top == POLARITY_INK) + 
+                     np.sum(border_bottom == POLARITY_INK) +
+                     np.sum(border_left == POLARITY_INK) + 
+                     np.sum(border_right == POLARITY_INK))
+        border_total = border_top.size + border_bottom.size + border_left.size + border_right.size
+        border_ink_ratio = border_ink / (border_total + 1e-6)
+        
+        # Edge density analysis (Canny edges)
+        try:
+            edges = cv2.Canny(effective_mask, 50, 150)
+            edge_density = np.sum(edges > 0) / (total_visible + 1e-6)
+        except Exception:
+            edge_density = 0
+        
+        # Center vs Border contrast
+        center_y, center_x = h // 2, w // 2
+        center_h, center_w = h // 4, w // 4
+        center_region = effective_mask[
+            center_y - center_h:center_y + center_h,
+            center_x - center_w:center_x + center_w
+        ]
+        center_ink_ratio = np.sum(center_region == POLARITY_INK) / center_region.size
+        
+        # Gray value distribution (should be bimodal for good separation)
+        # Count non-pure pixels (not exactly 0 or 255)
+        if mask.dtype == np.uint8:
+            gray_pixels = np.sum((mask > 10) & (mask < 245))
+            gray_ratio = gray_pixels / mask.size
+        else:
+            gray_ratio = 0
+        
+        return {
+            'ink_ratio': ink_ratio,
+            'bg_ratio': bg_ratio,
+            'border_ink_ratio': border_ink_ratio,
+            'edge_density': edge_density,
+            'center_ink_ratio': center_ink_ratio,
+            'gray_ratio': gray_ratio,
+            'total_visible': total_visible,
+            'ink_px': ink_px,
+            'bg_px': bg_px,
+        }
+    
+    def _calculate_inversion_confidence(self, metrics: Dict) -> PolarityDecision:
+        """
+        Calculate confidence score for polarity inversion decision.
+        
+        Uses multiple factors weighted by importance:
+        - Ink dominance (primary factor)
+        - Border consistency (secondary)
+        - Edge density (tertiary - high edges = less likely to need inversion)
+        - Gray ratio (quaternary - high gray = uncertain separation)
+        
+        Returns PolarityDecision with confidence and reasoning.
+        """
+        ink_ratio = metrics['ink_ratio']
+        bg_ratio = metrics['bg_ratio']
+        border_ink_ratio = metrics['border_ink_ratio']
+        edge_density = metrics['edge_density']
+        gray_ratio = metrics['gray_ratio']
+        
+        # Initialize confidence components
+        confidence_score = 0.0
+        reasons = []
+        safety_checks = []
+        
+        # PRIMARY: Ink dominance check
+        # Conservative threshold: ink must be significantly dominant
+        if ink_ratio > PolarityThresholds.INK_DOMINANCE_MIN:
+            confidence_score += 0.50  # 50% weight
+            reasons.append(f"ink_dominance({ink_ratio:.1%})")
+            safety_checks.append(True)
+        else:
+            # Ink not dominant enough - low confidence for inversion
+            safety_checks.append(False)
+        
+        # SECONDARY: Background scarcity check
+        # Background must be significantly minority
+        if bg_ratio < PolarityThresholds.BG_DOMINANCE_MIN:
+            confidence_score += 0.25  # 25% weight
+            reasons.append(f"bg_scarcity({bg_ratio:.1%})")
+            safety_checks.append(True)
+        else:
+            safety_checks.append(False)
+        
+        # TERTIARY: Border analysis
+        # If border is mostly ink, likely a solid design on white background
+        # which is correct and shouldn't be inverted
+        if border_ink_ratio > PolarityThresholds.BORDER_INK_RATIO_MAX:
+            # Border mostly ink - this suggests intentional solid design
+            confidence_score -= 0.30  # Penalty - reduces inversion confidence
+            reasons.append(f"border_mostly_ink({border_ink_ratio:.1%})")
+            safety_checks.append(False)  # This is a red flag
+        elif border_ink_ratio < 0.30:
+            # Border mostly background - good sign for inversion candidate
+            confidence_score += 0.15
+            reasons.append(f"border_mostly_bg({border_ink_ratio:.1%})")
+            safety_checks.append(True)
+        
+        # QUATERNARY: Edge density check
+        # High edge density suggests intentional high-contrast artwork
+        # which may have intentional ink-heavy design
+        if edge_density > PolarityThresholds.EDGE_DENSITY_MAX:
+            confidence_score -= 0.10  # Small penalty
+            reasons.append(f"high_edge_density({edge_density:.2f})")
+        
+        # GRAY RATIO: Quality indicator
+        # High gray ratio means poor separation - be conservative
+        if gray_ratio > 0.10:  # >10% gray pixels
+            confidence_score *= 0.8  # Reduce confidence by 20%
+            reasons.append(f"high_gray_ratio({gray_ratio:.1%})")
+        
+        # Final decision
+        should_invert = (confidence_score >= PolarityThresholds.DECISION_CONFIDENCE_MIN)
+        all_safety_passed = all(safety_checks) if safety_checks else False
+        
+        reason_str = " | ".join(reasons) if reasons else "no_factors"
+        
+        return PolarityDecision(
+            should_invert=should_invert,
+            confidence=confidence_score,
+            reason=reason_str,
+            metrics=metrics,
+            safety_checks_passed=all_safety_passed
+        )
+
     def enforce_polarity(self, mask: np.ndarray, stage: str = "unknown", 
                          force_black_ink: bool = False,
                          alpha_mask: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        The ONLY function allowed to do inversion.
+        🔥 ARCHITECTURE FIX: Redesigned with conservative contextual analysis.
+        
         Ensures: ink=BLACK(0), background=WHITE(255)
         
-        🔥 FIXED: Now uses alpha_mask to ignore transparent pixels in polarity calculation.
-        
-        Decision: if mean(mask) <= 127 -> polarity is wrong -> invert
+        Uses multi-factor confidence scoring for inversion decisions:
+        1. Contextual analysis (border, edges, center distribution)
+        2. Conservative thresholds (75% confidence required)
+        3. Safety checks (must pass multiple criteria)
+        4. Background-aware analysis with alpha mask
         
         Args:
-            force_black_ink: If True, ensure design is black ink on white background
-                           (used for 1-color user choice to avoid white-on-black)
-            alpha_mask: Optional boolean mask where True=visible, False=transparent.
-                       If provided, only visible pixels are counted for polarity.
+            force_black_ink: If True, bypass confidence check for 1-color artwork
+            alpha_mask: Optional boolean mask (True=visible, False=transparent)
+                       Only visible pixels count toward polarity decisions.
         """
         if mask is None:
             return None
@@ -64,72 +269,40 @@ class PipelineController:
 
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
-
-        # 🔥 NEW: Use alpha_mask to exclude transparent pixels from calculation
-        if alpha_mask is not None:
-            # Ensure alpha_mask matches mask dimensions
-            if alpha_mask.shape != mask.shape[:2]:
-                logger.warning(f"  [Polarity] {stage}: alpha_mask shape {alpha_mask.shape} doesn't match mask {mask.shape}, resizing")
-                alpha_mask = cv2.resize(alpha_mask.astype(np.uint8), 
-                                       (mask.shape[1], mask.shape[0]), 
-                                       interpolation=cv2.INTER_NEAREST).astype(bool)
-            
-            # Only count visible pixels
-            visible_pixels = alpha_mask
-            total_visible = np.sum(visible_pixels)
-            
-            if total_visible > 0:
-                # Count ink/bg only in visible region
-                ink_px = int(np.sum((mask == 0) & visible_pixels))
-                bg_px = int(np.sum((mask == 255) & visible_pixels))
-                total_px = total_visible
-                
-                alpha_ratio = total_visible / mask.size
-                logger.info(f"  [Polarity] {stage}: Using alpha mask, {alpha_ratio:.1%} pixels visible, "
-                           f"{1-alpha_ratio:.1%} transparent ignored")
-            else:
-                # No visible pixels, fall back to full image
-                logger.warning(f"  [Polarity] {stage}: No visible pixels in alpha mask, using full image")
-                ink_px = int(np.sum(mask == 0))
-                bg_px = int(np.sum(mask == 255))
-                total_px = mask.size
-        else:
-            # Original behavior: count all pixels
-            ink_px = int(np.sum(mask == 0))
-            bg_px = int(np.sum(mask == 255))
-            total_px = mask.size
-
-        ink_ratio = ink_px / (total_px + 1e-6)
-        bg_ratio = bg_px / (total_px + 1e-6)
-
-        # If background pixels are less than ink pixels -> polarity is flipped
-        # Expected: ink=0 (minority), background=255 (majority)
-        # Exception: allow ink_ratio up to 0.98 before forcing inversion
-        # (solid fills like full-coverage logos should NOT be inverted)
         
-        # 🔥 CRITICAL FIX: For 1-color user choice, ensure BLACK ink on WHITE background
-        if force_black_ink:
-            # For 1-color artwork, we want: design=black(0), background=white(255)
-            # Check if current polarity is wrong (design is white)
-            if ink_ratio > bg_ratio:
-                # Design is currently white - invert to make it black
-                logger.info(f"  [Polarity] {stage}: 1-color user choice -> forcing black ink (ink={ink_ratio:.1%} > bg={bg_ratio:.1%})")
-                mask = cv2.bitwise_not(mask)
-            else:
-                logger.info(f"  [Polarity] {stage}: 1-color user choice -> polarity correct (ink={ink_ratio:.1%} ≤ bg={bg_ratio:.1%})")
-            return mask
-            
-        if bg_ratio < 0.005:
-            # Fully flooded mask — don't invert, raise warning
-            logger.warning(f"  [Polarity] {stage}: bg_ratio={bg_ratio:.1%} — possible solid fill, skipping inversion")
-            return mask
+        # ─── STEP 1: Contextual Analysis ───
+        context = self._analyze_polarity_context(mask, alpha_mask)
         
-        if ink_ratio > bg_ratio:
-            # More ink than background — polarity is wrong, invert
-            logger.info(f"  [Polarity] {stage}: ink={ink_ratio:.1%} > bg={bg_ratio:.1%} -> inverting")
+        # ─── STEP 2: Confidence-Based Decision ───
+        decision = self._calculate_inversion_confidence(context)
+        
+        # ─── STEP 3: Apply Decision with Logging ───
+        if force_black_ink and context['ink_ratio'] > context['bg_ratio']:
+            # Special case: 1-color artwork with explicit black ink preference
+            logger.info(f"  [Polarity] {stage}: force_black_ink -> inverting (ink={context['ink_ratio']:.1%})")
             mask = cv2.bitwise_not(mask)
+        elif decision.should_invert and decision.safety_checks_passed:
+            # Confident inversion with all safety checks passed
+            logger.info(
+                f"  [Polarity] {stage}: CONFIDENT INVERSION (conf={decision.confidence:.1%})\n"
+                f"    -> ink={context['ink_ratio']:.1%}, bg={context['bg_ratio']:.1%}, "
+                f"border_ink={context['border_ink_ratio']:.1%}\n"
+                f"    -> factors: {decision.reason}"
+            )
+            mask = cv2.bitwise_not(mask)
+        elif decision.should_invert and not decision.safety_checks_passed:
+            # Would invert but safety checks failed - CONSERVATIVE: skip
+            logger.warning(
+                f"  [Polarity] {stage}: INVERSION SKIPPED (safety check failed, conf={decision.confidence:.1%})\n"
+                f"    -> ink={context['ink_ratio']:.1%}, bg={context['bg_ratio']:.1%}\n"
+                f"    -> factors: {decision.reason}"
+            )
         else:
-            logger.debug(f"  [Polarity] {stage}: ink={ink_ratio:.1%} ≤ bg={bg_ratio:.1%} -> OK")
+            # No inversion needed
+            logger.debug(
+                f"  [Polarity] {stage}: OK (conf={decision.confidence:.1%}, "
+                f"ink={context['ink_ratio']:.1%})"
+            )
         
         return mask
 

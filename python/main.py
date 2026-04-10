@@ -167,8 +167,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
         output_pdf = output_dir / "final_films.pdf"
         sep_res = result.separation_result
 
-        if result.image_class == 'photo':
+        if result.image_class in ('photo', 'artwork_halftone'):
             # ── RASTER PATH: halftone mask → high-res raster PDF ──
+            # FIX Issue #2: Unified layout system for raster/vector exports
             from reportlab.pdfgen import canvas as rl_canvas
             from reportlab.lib.pagesizes import A4, A3, letter
             from core.vector_exporter import render_raster_halftone
@@ -178,6 +179,11 @@ def run_pipeline(args: argparse.Namespace) -> int:
             page_w, page_h = page_sizes.get(
                 getattr(args, 'page_size', 'A4').upper(), A4
             )
+            
+            # FIX Issue #1: Use configurable margins matching vector exporter
+            margin_pt = getattr(args, 'margin_pt', 65)
+            min_margin_pt = 20
+            margin_pt = max(margin_pt, min_margin_pt)
 
             c = rl_canvas.Canvas(str(output_pdf), pagesize=(page_w, page_h))
 
@@ -191,26 +197,23 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 c.setFillColorRGB(1, 1, 1)
                 c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
 
-                # Raster halftone embed
-                render_raster_halftone(c, mask, args.dpi, page_w, page_h)
+                # FIX Issue #3: Pass margin to render_raster_halftone for consistent scaling
+                render_raster_halftone(c, mask, args.dpi, page_w, page_h, margin_pt=margin_pt)
 
-                # Vector registration marks
-                film_info = {'job_name': output_pdf.stem}
+                # Vector registration marks (unified with vector path)
+                job_name = Path(args.input).stem if hasattr(args, 'input') and args.input else output_pdf.stem
+                film_info = {'job_name': job_name}
                 add_vector_marks_to_page(
-                    c, page_w, page_h, 65, color_rgb, color_name, film_info
+                    c, page_w, page_h, margin_pt, color_rgb, color_name, film_info
                 )
 
-                # Task 4.1 FIX: Clean professional footer matching vector exporter format
+                # FIX Issue #2: Clean professional footer matching vector exporter format exactly
                 c.setFont("Helvetica", 9)
                 c.setFillColorRGB(0, 0, 0)
-                # Left footer: Film info with LPI
-                c.drawString(
-                    65, 50,
-                    f"FILM {i+1}: {color_name}  |  DPI:{args.dpi}  |  LPI:{args.lpi}"
-                )
-                # Right footer: Brand and page number
-                brand_text = f"Virtual Design Studio | {film_info.get('job_name', 'Untitled')} | Page {i+1}/{len(masks)}"
-                c.drawRightString(page_w - 65, 50, brand_text)
+                # Left footer: Color name only (matching vector exporter)
+                c.drawString(margin_pt, margin_pt - 15, color_name.upper())
+                # Right footer: Brand only (matching vector exporter)
+                c.drawRightString(page_w - margin_pt, margin_pt - 15, "Developed by MO2")
 
             c.save()
             logger.info(
@@ -306,6 +309,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--choke-px", type=int, default=2)
     parser.add_argument("--trapping-px", type=int, default=1)
     parser.add_argument("--page-size", choices=["A4", "A3", "LETTER"], default="A4")
+    parser.add_argument("--margin-pt", type=float, default=65.0, help="Page margin in points (pt)")
     parser.add_argument("--json-output", action="store_true")
 
     # Advanced Professional Parameters

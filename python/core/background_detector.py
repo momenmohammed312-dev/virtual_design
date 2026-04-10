@@ -24,7 +24,7 @@ class BackgroundDetector:
     Detects and masks background pixels for clean color separation.
     """
     
-    def __init__(self, mode: BackgroundMode = "auto", tolerance: int = 30):
+    def __init__(self, mode: BackgroundMode = "auto", tolerance: int = 20):
         """
         Args:
             mode: Detection strategy
@@ -90,17 +90,18 @@ class BackgroundDetector:
         black_bgr = np.array([0, 0, 0])
         return self._remove_color(image, black_bgr, "black")
     
-    def _remove_color(self, image: np.ndarray, target_color: np.ndarray, 
+    def _remove_color(self, image: np.ndarray, target_color: np.ndarray,
                       color_name: str) -> Tuple[np.ndarray, np.ndarray, dict]:
         """Remove specific color as background."""
         h, w = image.shape[:2]
-        
-        # Calculate color distance
-        diff = np.abs(image.astype(np.float32) - target_color.astype(np.float32))
-        distance = np.sum(diff, axis=2)  # L1 distance
-        
+
+        # Calculate color distance using TRUE EUCLIDEAN distance (FIX GROUP 1.1)
+        diff = image.astype(np.float32) - target_color.astype(np.float32)
+        distance = np.sqrt(np.sum(diff ** 2, axis=2))  # True Euclidean distance
+
         # Background mask: pixels close to target color
-        bg_mask = distance <= (self.tolerance * 3)  # *3 for 3 channels
+        # FIX: Removed *3 factor - tolerance now directly controls Euclidean radius
+        bg_mask = distance <= self.tolerance
         fg_mask = ~bg_mask
         
         bg_pixels = np.sum(bg_mask)
@@ -160,12 +161,13 @@ class BackgroundDetector:
             logger.warning("[BackgroundDetector] No border samples, defaulting to white")
         
         # Build background mask
-        diff = np.abs(image.astype(np.float32) - dominant_color.astype(np.float32))
-        distance = np.sum(diff, axis=2)
-        
+        # FIX GROUP 1.1: Use true Euclidean distance instead of L1 sum
+        diff = image.astype(np.float32) - dominant_color.astype(np.float32)
+        distance = np.sqrt(np.sum(diff ** 2, axis=2))
+
         # Adaptive tolerance based on image characteristics
         adaptive_tolerance = self._calculate_adaptive_tolerance(image, dominant_color)
-        
+
         bg_mask = distance <= adaptive_tolerance
         fg_mask = ~bg_mask
         
@@ -229,25 +231,28 @@ class BackgroundDetector:
         
         return np.array(samples, dtype=np.uint8)
     
-    def _calculate_adaptive_tolerance(self, image: np.ndarray, 
+    def _calculate_adaptive_tolerance(self, image: np.ndarray,
                                        bg_color: np.ndarray) -> float:
         """Calculate adaptive tolerance based on image characteristics."""
-        # Base tolerance
-        base_tolerance = self.tolerance * 3  # *3 for 3 channels
-        
+        # FIX GROUP 1.2: Use tolerance directly (no *3 factor for Euclidean distance)
+        base_tolerance = self.tolerance
+
         # Adjust based on image variance
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         variance = np.var(gray)
-        
-        # High variance = complex image, need higher tolerance
+
+        # FIX: Reduced multipliers - max is now 1.1 instead of 1.5
+        # High variance = complex image, need slightly higher tolerance
         if variance > 5000:
-            multiplier = 1.5
+            multiplier = 1.1  # Reduced from 1.5
         elif variance > 2000:
-            multiplier = 1.2
+            multiplier = 1.05  # Reduced from 1.2
         else:
             multiplier = 1.0
-        
-        return base_tolerance * multiplier
+
+        result = base_tolerance * multiplier
+        logger.info(f"[BackgroundDetector] Adaptive tolerance: {result:.1f} (base={self.tolerance}, variance={variance:.0f})")
+        return result
     
     def _refine_mask(self, mask: np.ndarray) -> np.ndarray:
         """Refine background mask using morphological operations."""
