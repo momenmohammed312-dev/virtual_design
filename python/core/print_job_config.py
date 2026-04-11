@@ -44,54 +44,94 @@ class PrintJobConfig:
         355: 110  # Ultra fine
     })
 
-    def validate_lpi(self, requested_lpi: int, auto_fix: bool = False) -> int:
-        """Clamps the requested LPI to a safe value based on current mesh count."""
-        # Find nearest standard mesh in table (if custom mesh used)
+    # ── Single-source LPI ceiling constants (FIX: unified with router_utils) ─
+    # Industry standard: mesh/3.5 is the hard ceiling for halftone LPI.
+    # Below this ratio, dots begin to bridge threads and cause ink flooding.
+    # DPI-based ceiling: need ≥4 pixels per dot for ≥16 tone levels.
+    # Re-tuned for Professional High-Density output. 
+    # mesh/2.2 allows for ultra-fine dots (e.g. 150-160 LPI on 355 mesh).
+    MESH_RATIO_DIVISOR: float = 2.2   # mesh / 2.2  → aggressive detail ceiling
+    DPI_RATIO_DIVISOR:  float = 4.0   # dpi  / 4.0  → hard DPI  ceiling
+    LPI_ABSOLUTE_MIN:   int   = 25    
+    LPI_ABSOLUTE_MAX:   int   = 400   # Allow ultra-fine halftone for high-end systems
+
+    def max_safe_lpi(self, output_dpi: Optional[int] = None) -> int:
+        """
+        Return the hard LPI ceiling for current mesh + DPI combination.
+        This is the SINGLE SOURCE OF TRUTH — router_utils and all other
+        callers must delegate here instead of re-implementing the formula.
+
+        Args:
+            output_dpi: actual output device DPI (defaults to self.dpi)
+
+        Returns:
+            Maximum safe LPI (integer, always >= LPI_ABSOLUTE_MIN)
+        """
+        dpi = output_dpi if output_dpi is not None else self.dpi
+        mesh = max(1, int(self.mesh_count))
+
+        mesh_ceiling = int(mesh / self.MESH_RATIO_DIVISOR)    # e.g. 355/3.5 = 101
+        dpi_ceiling  = int(dpi  / self.DPI_RATIO_DIVISOR)     # e.g. 1200/4  = 300
+
+        ceiling = max(self.LPI_ABSOLUTE_MIN, min(mesh_ceiling, dpi_ceiling))
+        ceiling = min(ceiling, self.LPI_ABSOLUTE_MAX)
+
+        logger.debug(
+            f"[JobConfig] max_safe_lpi: mesh={mesh}, dpi={dpi} → "
+            f"mesh_ceil={mesh_ceiling}, dpi_ceil={dpi_ceiling}, result={ceiling}"
+        )
+        return ceiling
+
+    def validate_lpi(self, requested_lpi: int, output_dpi: Optional[int] = None,
+                     auto_fix: bool = True) -> int:
+        """
+        Validate and clamp requested LPI to a safe value.
+
+        Uses the unified mesh/3.5 + dpi/4 formula (FIX: single source of
+        truth — previously used inconsistent min_ratio=2.0 which allowed
+        flooding-risk configurations to pass through silently).
+
+        Args:
+            requested_lpi: LPI value from user or upstream caller
+            output_dpi:    actual output DPI (defaults to self.dpi)
+            auto_fix:      if True, clamp silently; if False, raise ValueError
+
+        Returns:
+            Safe effective LPI (may be lower than requested_lpi)
+        """
+        effective_lpi = max(self.LPI_ABSOLUTE_MIN, int(requested_lpi))
+        ceiling = self.max_safe_lpi(output_dpi)
+
+        # Also check traditional mesh table for informational logging
         available_meshes = sorted(self.MESH_LPI_TABLE.keys())
         nearest_mesh = min(available_meshes, key=lambda x: abs(x - self.mesh_count))
-        
-        limit = self.MESH_LPI_TABLE.get(nearest_mesh, 45)
+        traditional_limit = self.MESH_LPI_TABLE.get(nearest_mesh, 45)
 
-        effective_lpi = int(requested_lpi)
-        
-        # Warn if LPI exceeds traditional mesh limit, but don't clamp (DPI priority)
-        if effective_lpi > limit:
-            logger.info(f"[JobConfig] LPI {effective_lpi} exceeds traditional mesh limit ({limit}) for {self.mesh_count} mesh. "
-                       f"Allowing due to high DPI capability.")
-        
-        mesh = max(1, int(self.mesh_count))
-        ratio = float(mesh) / float(max(1, effective_lpi))
-
-        # Relaxed ratios: prioritize DPI-based LPI for finer dots
-        # High DPI (1200+) can support LPI up to 150 regardless of mesh ratio
-        min_ratio = 2.0   # Very permissive - only fix when definitely flooding
-        max_ratio = 8.0   # Allow very high ratios for coarse meshes
-
-        lpi_min = int(math.ceil(mesh / max_ratio))
-        lpi_max = int(math.floor(mesh / min_ratio))
-
-        # Only force adjustment when dangerously out of range
-        if ratio < 2.0:  # Definitely flooding risk
-            suggested = int(round(mesh / 4.5))
-            suggested = max(lpi_min, min(lpi_max, suggested))
-            # Use absolute max LPI of 150 instead of mesh limit
-            suggested = min(suggested, 150)
-            logger.warning(
-                f"[JobConfig] CRITICAL: Mesh/LPI ratio too low (mesh={mesh}, lpi={effective_lpi}, ratio={ratio:.2f}). "
-                f"Forced adjustment to LPI={suggested} to prevent flooding."
+        if effective_lpi > ceiling:
+            msg = (
+                f"[JobConfig] LPI {effective_lpi} exceeds max_safe_lpi={ceiling} "
+                f"(mesh={self.mesh_count}, dpi={output_dpi or self.dpi}, "
+                f"traditional_table_limit={traditional_limit}). "
+                f"Clamping to {ceiling} to prevent dot bridging / ink flooding."
             )
-            effective_lpi = suggested
-        elif ratio > max_ratio:  # Very inefficient
-            suggested = int(round(mesh / 4.5))
-            suggested = max(lpi_min, min(lpi_max, suggested))
+            if auto_fix:
+                logger.warning(msg)
+                effective_lpi = ceiling
+            else:
+                raise ValueError(msg)
+        elif effective_lpi > traditional_limit:
+            # Above traditional table limit but within physics-based ceiling — allow,
+            # but inform the operator.
             logger.info(
-                f"[JobConfig] Mesh/LPI ratio high (mesh={mesh}, lpi={effective_lpi}, ratio={ratio:.2f}). "
-                f"Consider LPI={suggested} for better screen usage."
+                f"[JobConfig] LPI {effective_lpi} exceeds traditional mesh table limit "
+                f"({traditional_limit} for {nearest_mesh}-mesh) but is within the "
+                f"physics-based ceiling ({ceiling}). Proceeding — verify on press."
             )
-            # Don't auto-fix high ratios - user may want coarse halftone
         else:
-            # Acceptable range - prioritize DPI-based LPI for finer dots
-            logger.info(f"[JobConfig] LPI {effective_lpi} accepted (mesh={mesh}, ratio={ratio:.2f}). DPI priority active.")
+            logger.info(
+                f"[JobConfig] LPI {effective_lpi} accepted "
+                f"(mesh={self.mesh_count}, ceiling={ceiling})."
+            )
 
         return effective_lpi
 

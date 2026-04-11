@@ -68,6 +68,15 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
     _step(1, "Loading and Normalizing Engine")
     
+    # Auto-High Quality Logic
+    if getattr(args, 'detail_level', 'medium') == 'high':
+        # Push resolution for high detail requests
+        if args.dpi < 1200:
+            logger.info(f"[Main] High Detail requested. Boosting DPI: {args.dpi} -> 1200")
+            args.dpi = 1200
+        # Store high-quality flag for router/exporter
+        args._is_high_detail = True
+
     # 1. Configuration
     job_config = PrintJobConfig(
         mesh_count=args.mesh_count,
@@ -198,7 +207,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
 
                 # FIX Issue #3: Pass margin to render_raster_halftone for consistent scaling
-                render_raster_halftone(c, mask, args.dpi, page_w, page_h, margin_pt=margin_pt)
+                render_raster_halftone(
+                    c, mask, getattr(result, 'mask_dpi', args.dpi),
+                    page_w, page_h, margin_pt=margin_pt,
+                    scale_mode=getattr(args, 'scale_mode', 'fit_to_page'),
+                    custom_scale_percent=getattr(args, 'custom_scale_percent', 100.0)
+                )
 
                 # Vector registration marks (unified with vector path)
                 job_name = Path(args.input).stem if hasattr(args, 'input') and args.input else output_pdf.stem
@@ -227,14 +241,26 @@ def run_pipeline(args: argparse.Namespace) -> int:
             job_name = Path(args.input).stem if hasattr(args, 'input') and args.input else None
             # Determine if halftone was applied
             is_halftone = getattr(args, 'halftone', False) or result.image_class == 'photo'
+            # Resolve default (-1.0) arguments for smoothing and corners
+            final_smooth = getattr(args, 'smoothing_factor', -1.0)
+            eff_smooth = getattr(result, 'effective_smoothing', -1.0)
+            
+            if final_smooth < 0:
+                final_smooth = eff_smooth if (eff_smooth is not None and eff_smooth >= 0) else 0.25
+
+            final_corner = getattr(args, 'corner_threshold', -1.0)
+            if final_corner < 0:
+                final_corner = 120.0
+
             export_vector_pdf(
                 masks=masks,
                 colors=sep_res['colors'],
                 color_names=sep_res['color_names'],
                 output_path=output_pdf,
                 dpi=args.dpi,
-                smooth_factor=result.effective_smoothing or args.smoothing_factor,
-                corner_threshold=getattr(args, 'corner_threshold', 120.0),
+                mask_dpi=getattr(result, 'mask_dpi', None),  # FIX A-12/C-10
+                smooth_factor=final_smooth,
+                corner_threshold=final_corner,
                 min_contour_area=getattr(args, 'contour_min_area', 50),
                 image_class=result.image_class,
                 page_size=getattr(args, 'page_size', 'A4'),

@@ -137,25 +137,21 @@ class HalftoneGenerator:
         norm = gray[iy, ix] / 255.0
         intensities = 1.0 - norm
 
-        # FIX GROUP 10.1: Apply RIP-grade dot gain compensation curves
-        # Vectorized application of dot gain curve
-        intensities = np.vectorize(self._apply_dot_gain_curve)(intensities)
-
-        # Also apply print_job_config compensation if available
-        try:
-            from .print_job_config import PrintJobConfig
-            job_config = PrintJobConfig()
-            intensities = job_config.apply_dot_gain_compensation(intensities)
-        except ImportError:
-            pass
-
+        # FIX A-02: Single dot-gain compensation point.
+        # The previous code applied BOTH _apply_dot_gain_curve() AND
+        # PrintJobConfig.apply_dot_gain_compensation() here, PLUS the gamma
+        # power below — three stacked operations that crushed midtones to ~18%.
+        # Now only the gamma exponent remains; the RasterHalftoneEngine which
+        # is the production path applies its own gamma LUT and needs nothing here.
         if gamma != 1.0:
             intensities = np.power(intensities, 1.0 / gamma)
 
-        # TASK 16: LPI-adaptive shadow gap
-        shadow_gap = 0.90 - (lpi / 1000.0)  
+        # LPI-adaptive shadow gap (unchanged)
+        shadow_gap = 0.90 - (lpi / 1000.0)
         shadow_gap = max(0.75, min(0.92, shadow_gap))
-        radii = intensities * dot_spacing * 0.5 * shadow_gap
+        # FIX A-14: Clamp radii to [0, dot_spacing*0.5] to prevent dot coalescence
+        # when any compensation function returns values > 1.0
+        radii = np.clip(intensities, 0.0, 1.0) * dot_spacing * 0.5 * shadow_gap
 
         # 5. Build dot list
         dots = [
@@ -216,22 +212,40 @@ class HalftoneGenerator:
 
     def floyd_steinberg_dithering(self, gray: np.ndarray) -> np.ndarray:
         """
-        T05 FIX: Floyd-Steinberg error diffusion — numpy row-by-row.
+        FIX A-11: Correct pixel-by-pixel Floyd-Steinberg error diffusion.
+
+        The previous vectorized numpy implementation had an off-by-one slice
+        error: `err[:-1]` shifted all horizontal error propagation one column
+        to the right, producing systematic diagonal banding in the output.
+
+        This implementation is the reference pixel-by-pixel loop which is
+        correct by construction.  It is slower but will be the canonical
+        implementation until a vectorized version is externally validated.
         """
         img = gray.astype(np.float32) / 255.0
         h, w = img.shape
+
         for y in range(h - 1):
-            row = img[y]
-            quantized = (row > 0.5).astype(np.float32)
-            err = row - quantized
-            img[y] = quantized
+            for x in range(w):
+                old_val = img[y, x]
+                new_val = 1.0 if old_val >= 0.5 else 0.0
+                img[y, x] = new_val
+                err = old_val - new_val
 
-            img[y,     1:]   += err[:-1] * (7 / 16)   
-            img[y + 1, :-1]  += err[1:]  * (3 / 16)   
-            img[y + 1, :]    += err      * (5 / 16)   
-            img[y + 1, 1:]   += err[:-1] * (1 / 16)   
+                if x + 1 < w:
+                    img[y,     x + 1] += err * 7 / 16
+                if y + 1 < h:
+                    if x - 1 >= 0:
+                        img[y + 1, x - 1] += err * 3 / 16
+                    img[y + 1, x    ] += err * 5 / 16
+                    if x + 1 < w:
+                        img[y + 1, x + 1] += err * 1 / 16
 
-        img[-1] = (img[-1] > 0.5).astype(np.float32)
+        # FIX A-11: Clip accumulated errors before final threshold to avoid
+        # values > 1.0 or < 0.0 causing binary artefacts on the last row.
+        img[-1] = np.clip(img[-1], 0.0, 1.0)
+        img[-1] = (img[-1] >= 0.5).astype(np.float32)
+
         return (np.clip(img, 0, 1) * 255).astype(np.uint8)
 
     @staticmethod

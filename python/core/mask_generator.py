@@ -152,13 +152,21 @@ class MaskGenerator:
                 mask[label_map == -1] = 255
 
             if apply_cleanup and not grayscale_output:
+                # FIX 1 (single smoothing source): _cleanup_mask only.
+                # _smart_smooth_mask REMOVED \u2014 it added a 2nd morphological close
+                # + boundary Gaussian that produced halos and wavy straight lines.
+                # The vector exporter's geometry-aware Catmull-Rom is now the only
+                # smoothing stage for all artwork.
                 mask = self._cleanup_mask(mask, morph_kernel_size, min_area)
-                # FIX GROUP 2.1: Use DPI-scaled min_component_px for smart smoothing
-                mask = self._smart_smooth_mask(mask, min_component_px=min_component_px)
                 # After cleanup, ensure background is still white
                 if bg_mask is not None:
                     mask[bg_mask] = 255
                 mask[label_map == -1] = 255
+                
+                # FINAL FIX: enforce strict binary integrity
+                mask = (mask > 127).astype(np.uint8) * 255
+
+
             elif grayscale_output:
                 # FIX GROUP 2.2: Polarity enforcement after grayscale_output
                 from core.pipeline_controller import PipelineController
@@ -212,14 +220,13 @@ class MaskGenerator:
         """
         Apply morphological cleanup to remove noise and fill holes.
         Uses adaptive epsilon for small contours (Arabic dots, hamza, etc.)
-        
-        Args:
-            mask: Binary mask to clean
-            kernel_size: Size of morphological kernel
-            min_area: Minimum area for connected components
-            
-        Returns:
-            Cleaned binary mask
+
+        FIX A-09: Removed the duplicate _smart_smooth_mask() call that was
+        previously the last line of this method.  generate_masks() calls
+        _smart_smooth_mask() once after _cleanup_mask() returns — having it
+        also at the end here meant every mask received two consecutive 3×3
+        morphological closings (equivalent to a ~5px closing), which erased
+        thin strokes and Arabic diacritics below ~7px width.
         """
         if mask.dtype != np.uint8:
             mask = mask.astype(np.uint8)
@@ -235,10 +242,10 @@ class MaskGenerator:
         if min_area > 0:
             cleaned = self._remove_small_components(cleaned, min_area)
 
-        # Apply smart smoothing for contours (adaptive epsilon)
-        cleaned = self._smart_smooth_mask(cleaned)
-
+        # FIX A-09: do NOT call _smart_smooth_mask here.
+        # Smoothing is the caller's responsibility (generate_masks does it once).
         return cleaned
+
 
     def _remove_small_components(self, mask: np.ndarray, min_area: int) -> np.ndarray:
         """

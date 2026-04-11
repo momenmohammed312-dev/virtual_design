@@ -75,66 +75,72 @@ class ColorSeparator:
         
         h, w = image.shape[:2]
         logger.info(f"[ColorSeparator] Starting separation: {w}x{h}, {num_colors} colors, bg_mode='{background_mode}'")
-
-        h, w, _ = image.shape
         total_pixels = h * w
 
-        # ── Solid Image Detection ─────────────────────────────────────────────
-        # FIX Issue #8: Improved solid image detection with border analysis
-        # Detect solid images (few unique colors) to skip background removal
-        # Otherwise a solid-color design gets mistaken for background
-        img_small = cv2.resize(image, (50, 50), interpolation=cv2.INTER_AREA)
-        total_unique_colors = len(np.unique(img_small.reshape(-1, 3), axis=0))
-        
-        # ── Background Detection & Removal ──────────────────────────────────
-        # 🔥 NEW: Robust background detection using border sampling
-        
-        # Check if image is solid (few unique colors) - skip background removal
-        hist = cv2.calcHist([cv2.cvtColor(img_small, cv2.COLOR_BGR2GRAY)], [0], None, [256], [0, 256]).flatten()
-        mode_luma = int(np.argmax(hist))
-        mode_concentration = np.sum(hist[max(0, mode_luma-7):min(256, mode_luma+8)]) / (hist.sum() + 1e-6)
-        
-        # FIX Issue #8: More sophisticated solid detection with border analysis
-        # Sample border pixels to check if image has consistent background
-        border_samples = self._sample_border_colors(image)
-        border_variance = np.var(border_samples, axis=0).mean() if len(border_samples) > 0 else 0
-        border_unique = len(np.unique(border_samples, axis=0)) if len(border_samples) > 0 else 0
-        
-        # An image is "solid" if:
-        # 1. Very few unique colors overall (< 15), OR
-        # 2. Very high mode concentration (> 85%), OR  
-        # 3. Low border variance (consistent border) with moderate unique colors
-        is_solid = ((total_unique_colors < 15) or 
-                    (mode_concentration > 0.85) or 
-                    (border_variance < 200 and total_unique_colors < 30))
-        
-        logger.debug(f"[ColorSeparator] Solid detection: unique={total_unique_colors}, "
-                    f"mode_conc={mode_concentration:.2%}, border_var={border_variance:.0f}, "
-                    f"border_unique={border_unique}, is_solid={is_solid}")
-        
-        if is_solid:
-            # Solid image — skip background detection, cluster everything
-            logger.info(f"[ColorSeparator] Solid image detected ({total_unique_colors} unique colors). Skipping background removal.")
+        # ── FIX A-05: Replace thumbnail-based solid detection with full-resolution
+        # border analysis.  The 50×50 downscale merged 1600 real pixels into one,
+        # making complex multi-color artwork look solid and skipping background
+        # removal — causing one KMeans cluster to be wasted on the white background.
+        #
+        # New approach: sample only the border pixels at native resolution.
+        # Detect whether the artwork is "bleed" (extends to canvas edges) or has a
+        # conventional bordered background, then choose the correct remove mode.
+        border_samples = self._sample_border_colors(
+            image, border_width=max(5, min(h, w) // 20)
+        )
+        if len(border_samples) > 0:
+            border_mean_bgr = np.mean(border_samples, axis=0)
+            is_white_background = np.all(border_mean_bgr > 230)
+            is_black_background = np.all(border_mean_bgr < 25)
+
+            # Bleed artwork: border has low lightness-variance AND non-neutral hue
+            # (a dark-blue illustration extending to edges would match this)
+            border_lab = cv2.cvtColor(
+                border_samples.reshape(1, -1, 3), cv2.COLOR_BGR2LAB
+            ).reshape(-1, 3).astype(np.float32)
+            border_lightness_var = float(np.var(border_lab[:, 0]))
+            border_ab_magnitude  = float(np.mean(np.abs(border_lab[:, 1:])))
+            # Bleed if: consistent border colour (low variance) that is not
+            # achromatic white/grey (ab channels are non-zero)
+            is_bleed_artwork = border_lightness_var < 50 and border_ab_magnitude > 5
+        else:
+            is_white_background = True
+            is_black_background = False
+            is_bleed_artwork    = False
+
+        logger.debug(
+            f"[ColorSeparator] Border analysis: white={is_white_background}, "
+            f"black={is_black_background}, bleed={is_bleed_artwork}"
+        )
+
+        # ── Background Detection & Removal ───────────────────────────────────
+        if is_bleed_artwork:
+            # Bleed artwork has design colour at the edges — border-based
+            # background detection would misidentify the design as background.
+            logger.info("[ColorSeparator] Bleed artwork detected — skipping background removal")
             bg_mask = np.zeros((h, w), dtype=bool)
             fg_mask = np.ones((h, w), dtype=bool)
             bg_stats = {
-                "mode": "solid_skip",
+                "mode": "bleed_skip",
                 "bg_pixels": 0,
                 "fg_pixels": total_pixels,
                 "bg_coverage": 0.0,
-                "fg_coverage": 100.0
+                "fg_coverage": 100.0,
             }
         else:
-            # Use robust background detector
             if background_mode == "keep_all":
                 bg_mode = "keep_all"
             elif background_mode == "remove_white":
                 bg_mode = "remove_white"
             elif background_mode == "remove_black":
                 bg_mode = "remove_black"
+            elif is_white_background:
+                bg_mode = "remove_white"
+            elif is_black_background:
+                bg_mode = "remove_black"
             else:
                 bg_mode = "auto"
-            
+
             bg_mask, fg_mask, bg_stats = detect_background(image, mode=bg_mode, tolerance=bg_tolerance)
             logger.info(f"[ColorSeparator] Background detection: {bg_stats['bg_pixels']} bg, {bg_stats['fg_pixels']} fg pixels")
         
@@ -280,6 +286,20 @@ class ColorSeparator:
                         label_map_flat[:] = 0
             label_map = label_map_flat.reshape(h, w)
             # No background removal in solid mode — bg_mask is all False anyway
+
+        # Enforce minimum cluster coverage (<0.1% ink -> reassign to nearest cluster)
+        valid_pixels = np.sum(label_map >= 0)
+        for k_idx in range(num_colors):
+            k_mask = (label_map == k_idx)
+            count = np.sum(k_mask)
+            pct = (count / max(1, valid_pixels)) * 100
+            if 0 < pct < 0.1:
+                logger.warning(f"[ColorSeparator] Cluster {k_idx} (<0.1% coverage: {pct:.3f}%) reassigned")
+                other_indices = [i for i in range(num_colors) if i != k_idx and np.sum(label_map == i)/max(1, valid_pixels)*100 >= 0.1]
+                if other_indices:
+                    dists = np.sum((best_centers[other_indices] - best_centers[k_idx])**2, axis=1)
+                    nearest_idx = other_indices[np.argmin(dists)]
+                    label_map[k_mask] = nearest_idx
 
         # FIXED: Convert centers back to BGR for consistent output
         if use_lab:
@@ -502,50 +522,76 @@ class ColorSeparator:
         return info
 
     def _validate_and_retry_kmeans(
-        self, 
-        data: np.ndarray, 
-        k: int, 
-        best_comp: float, 
-        best_lbls: np.ndarray, 
+        self,
+        data: np.ndarray,
+        k: int,
+        best_comp: float,
+        best_lbls: np.ndarray,
         best_cntrs: np.ndarray,
         criteria: Tuple
     ) -> Tuple[float, np.ndarray, np.ndarray, int]:
-        min_k = 2  
+        """
+        FIX A-06: Use proper sklearn silhouette_score instead of the custom
+        intra/inter centroid ratio which was inverting the threshold
+        (retrying good separations, keeping poor ones).
+
+        Silhouette score range: [-1, 1]
+          > 0.5  = good separation  → keep
+          < 0.25 = poor separation  → retry with k-1
+          0.25-0.5 = acceptable     → keep
+
+        Uses a sample of up to 5000 points for O(N²) silhouette efficiency.
+        """
+        min_k = 2
         if k <= min_k:
             return best_comp, best_lbls, best_cntrs, k
-            
-        avg_intra = best_comp / data.shape[0]
-        inter_dists = []
-        for i in range(len(best_cntrs)):
-            for j in range(i + 1, len(best_cntrs)):
-                inter_dists.append(np.linalg.norm(best_cntrs[i] - best_cntrs[j]))
-        avg_inter = np.mean(inter_dists) if inter_dists else 1.0
-        
-        quality_score = avg_intra / avg_inter
-        logger.info(f"[ColorSeparator] Silhouette Score (k={k}): {quality_score:.3f}")
-        
-        if quality_score >= 0.5:
-            retry_k = max(min_k, k - 1)
-            if retry_k < k:
-                logger.warning(f"[ColorSeparator] Poor separation (score={quality_score:.3f}). Retrying with k={retry_k}...")
-                try:
-                    comp_alt, lbls_alt, cntrs_alt = cv2.kmeans(
-                        data, retry_k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
+
+        # Sample for silhouette (O(N²) otherwise)
+        n_sample = min(5000, len(data))
+        idx = np.random.choice(len(data), n_sample, replace=False)
+        sample_data   = data[idx]
+        sample_labels = best_lbls.flatten()[idx]
+
+        # Need at least 2 distinct labels in the sample
+        if len(np.unique(sample_labels)) < 2:
+            return best_comp, best_lbls, best_cntrs, k
+
+        try:
+            from sklearn.metrics import silhouette_score
+            sil_score = silhouette_score(sample_data, sample_labels, metric='euclidean')
+        except Exception as e:
+            logger.debug(f"[ColorSeparator] silhouette_score unavailable: {e}")
+            return best_comp, best_lbls, best_cntrs, k
+
+        logger.info(f"[ColorSeparator] Silhouette score (k={k}): {sil_score:.3f}")
+
+        # FIX A-06: Retry ONLY on genuinely poor separations (score < 0.25).
+        # The old code fired when score >= 0.5, which is the opposite —
+        # it was merging well-separated clusters!
+        if sil_score < 0.25 and k > min_k:
+            retry_k = k - 1
+            logger.warning(
+                f"[ColorSeparator] Poor silhouette ({sil_score:.3f}), "
+                f"retrying with k={retry_k}"
+            )
+            try:
+                comp_alt, lbls_alt, cntrs_alt = cv2.kmeans(
+                    data, retry_k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
+                )
+                sample_labels_alt = lbls_alt.flatten()[idx]
+                if len(np.unique(sample_labels_alt)) >= 2:
+                    sil_alt = silhouette_score(
+                        sample_data, sample_labels_alt, metric='euclidean'
                     )
-                    
-                    avg_intra_alt = comp_alt / data.shape[0]
-                    inter_dists_alt = []
-                    for i in range(len(cntrs_alt)):
-                        for j in range(i + 1, len(cntrs_alt)):
-                            inter_dists_alt.append(np.linalg.norm(cntrs_alt[i] - cntrs_alt[j]))
-                    avg_inter_alt = np.mean(inter_dists_alt) if inter_dists_alt else 1.0
-                    quality_score_alt = avg_intra_alt / avg_inter_alt
-                    
-                    if quality_score_alt < quality_score:
+                    if sil_alt > sil_score:
+                        logger.info(
+                            f"[ColorSeparator] Improved silhouette with k={retry_k}: "
+                            f"{sil_alt:.3f} > {sil_score:.3f}"
+                        )
                         return comp_alt, lbls_alt, cntrs_alt, retry_k
-                except Exception:
-                    pass
-        
+            except Exception:
+                pass
+
         return best_comp, best_lbls, best_cntrs, k
 
     def _sample_border_colors(self, image: np.ndarray, border_width: int = 5) -> np.ndarray:

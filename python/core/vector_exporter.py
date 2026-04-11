@@ -161,33 +161,39 @@ def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smoot
         bw = mask.copy()
         upsample_factor = 1.0
 
-    # Use a higher threshold for applying strong blur
-    # Note: smooth_factor here is expected to be in 0.0-1.0 range
-    if apply_blur or smooth_factor > 0.4:
+    # FIX: Even low smooth_factor (0.25) should trigger a gentle blur pass 
+    # to 'melt' pixel steps when upscaling. Previously this was locked behind > 0.4.
+    if apply_blur or smooth_factor > 0.1:
         # 2) float smoothing (critical for artwork to melt artifacts)
-        bw = bw.astype(np.float32) / 255.0
+        bw_f = bw.astype(np.float32) / 255.0
         
-        # Determine blur strength: higher smoothing_factor -> larger kernel / sigma
+        # Determine blur strength: more continuous and aggressive for low-res inputs
         if smooth_factor > 0.6:
             k_size = (5, 5)
-            sigma = 1.0
+            sigma = 1.2
         elif smooth_factor > 0.4:
             k_size = (3, 3)
-            sigma = 0.8
+            sigma = 0.9
+        elif smooth_factor > 0.2:
+            k_size = (3, 3)
+            sigma = 0.6
         else:
             k_size = (3, 3)
-            sigma = 0.5
+            sigma = 0.4
             
-        bw = cv2.GaussianBlur(bw, k_size, sigma)
+        bw_f = cv2.GaussianBlur(bw_f, k_size, sigma)
         
         # 3) threshold back
-        # Use a slightly lower threshold if smooth_factor is very high to avoid eroding thin lines
         thresh_val = 0.5 if smooth_factor < 0.7 else 0.45
-        _, bw = cv2.threshold(bw, thresh_val, 1.0, cv2.THRESH_BINARY)
+        _, bw = cv2.threshold(bw_f, thresh_val, 1.0, cv2.THRESH_BINARY)
         bw = (bw * 255).astype(np.uint8)
     else:
-        # Zero blur for TEXT_LOGO, keep sharp
+        # Zero blur case (TEXT_LOGO / precise)
         _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
+        
+    # APPLY MORPHOLOGICAL CLOSING BEFORE CONTOUR EXTRACTION (Solid mode fix)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
 
     return bw, upsample_factor
 
@@ -263,6 +269,7 @@ def export_vector_pdf(
     lpi: int = 45,
     angle: float = 45.0,
     mesh_count: int = 160,
+    mask_dpi: Optional[int] = None,
 ) -> Path:
     """
     تصدير كل الأفلام في PDF واحد متعدد الصفحات بجودة vector حقيقية.
@@ -331,13 +338,15 @@ def export_vector_pdf(
             mm = calib.pixels_to_mm(px)
             return mm * 72.0 / 25.4  # mm to points
         else:
-            return px / dpi * 72.0
+            effective_dpi = mask_dpi if mask_dpi is not None else dpi
+            return px / effective_dpi * 72.0
     
     def px_to_mm(px: float) -> float:
         if calib:
             return calib.pixels_to_mm(px)
         else:
-            return px / dpi * 25.4
+            effective_dpi = mask_dpi if mask_dpi is not None else dpi
+            return px / effective_dpi * 25.4
     
     if (corner_threshold or 0.0) > 150.0:
         logger.info(f"[VectorExporter] Applying Hard-Corner Logic (Threshold: {corner_threshold:.1f})")
@@ -466,6 +475,9 @@ def export_vector_pdf(
         if len(bw.shape) == 3:
             bw = cv2.cvtColor(bw, cv2.COLOR_BGR2GRAY)
 
+        # FINAL FIX: enforce strict binary integrity directly before contour trace
+        bw = (bw > 127).astype(np.uint8) * 255
+
         # Ensure ink=BLACK(0) for contour tracing
         # preprocess_mask_for_vector uses THRESH_BINARY which preserves input polarity
         # But findContours traces WHITE(255) regions — so we need design=WHITE, background=BLACK
@@ -485,27 +497,6 @@ def export_vector_pdf(
             scale_h = draw_h / mask_h
             return draw_x + px_x * scale_w, draw_y + (mask_h - px_y) * scale_h
         
-        # FIX GROUP 3.1 & 3.2: Fixed even-odd fill and recursive hierarchy traversal
-        # Define recursive DFS for proper hole handling at any depth
-        def _draw_with_holes(canvas, contours, hierarchy, idx, depth=0):
-            """Recursively draw contours with alternating fill for holes."""
-            # Bounds check: idx must be valid
-            if idx < 0 or idx >= len(contours):
-                logger.warning(f"[_draw_with_holes] Invalid contour index {idx}, max {len(contours)-1}")
-                return
-            is_fill = (depth % 2 == 0)  # even depth = ink (black), odd depth = hole (white)
-            fill_color = (0, 0, 0) if is_fill else (1, 1, 1)
-            canvas.setFillColorRGB(*fill_color)
-            p = canvas.beginPath()
-            _append_contour_to_path(p, contours[idx])
-            canvas.drawPath(p, fill=1, stroke=0)
-            # Process all children (holes within this contour)
-            # hierarchy is shape (N, 4) after extraction: [next, prev, first_child, parent]
-            child = hierarchy[idx][2] if idx < len(hierarchy) else -1
-            while child != -1 and child < len(contours):
-                _draw_with_holes(canvas, contours, hierarchy, child, depth + 1)
-                child = hierarchy[child][0] if child < len(hierarchy) else -1  # next sibling
-
         def _append_contour_to_path(target_path, contour_arr):
             area = cv2.contourArea(contour_arr)
             if area < min_contour_area or len(contour_arr) < 3:
@@ -546,41 +537,21 @@ def export_vector_pdf(
                     target_path.lineTo(px, py)
             target_path.close()
         
-        # FIX GROUP 3.1 & 3.2: Use even-odd fill with recursive hierarchy traversal
+        # FIX GROUP 3.1 & 3.2: Native contour-based path fill (NO DFS fallback)
         c.setFillColorRGB(0, 0, 0)
+        path = c.beginPath()
+        for contour in contours:
+            _append_contour_to_path(path, contour)
+            
         try:
-            # Try ReportLab 4.x+ even-odd fill mode first
-            path = c.beginPath()
-            for contour in contours:
-                _append_contour_to_path(path, contour)
-            # Use fillMode parameter for proper hole handling
+            # Use fillMode parameter for proper hole handling in newer ReportLab
             c.drawPath(path, fill=1, stroke=0, fillMode=c.FILL_EVEN_ODD)
             logger.info(f"[VectorExporter] Used even-odd fill for {len(contours)} contours")
         except (AttributeError, TypeError):
-            # Fallback: Recursive DFS for older ReportLab versions
-            logger.warning("[VectorExporter] FILL_EVEN_ODD not available, using recursive DFS fallback")
-            if hierarchy is None or len(hierarchy) == 0:
-                # No hierarchy - draw all contours as filled shapes
-                for contour in contours:
-                    p = c.beginPath()
-                    _append_contour_to_path(p, contour)
-                    c.drawPath(p, fill=1, stroke=0)
-            else:
-                # Use recursive DFS to handle nested holes at any depth
-                h = hierarchy[0] if isinstance(hierarchy, (list, np.ndarray)) and len(hierarchy.shape) == 3 else hierarchy
-                num_hierarchy = len(h) if hasattr(h, '__len__') else len(contours)
-                num_contours = len(contours)
-                logger.debug(f"[VectorExporter] Processing {num_contours} contours with {num_hierarchy} hierarchy entries")
-                # Ensure we iterate over the minimum of contours and hierarchy
-                max_idx = min(num_contours, num_hierarchy)
-                for idx in range(max_idx):
-                    try:
-                        if h[idx][3] != -1:
-                            continue  # Skip non-outer shapes (they'll be drawn by their parent)
-                        _draw_with_holes(c, contours, h, idx, depth=0)
-                    except IndexError as ie:
-                        logger.warning(f"[VectorExporter] Index error at idx={idx}: {ie}")
-                        continue
+            # Fallback for older ReportLab: Non-zero winding rule works naturally
+            # with OpenCV RETR_TREE as outer contours and holes have alternating order
+            c.drawPath(path, fill=1, stroke=0)
+            logger.info(f"[VectorExporter] Used native contour-based path fill for {len(contours)} contours")
         
         # FIX GROUP 6.1: Clean footer with only color name and brand
         c.setFont("Helvetica", 9)
@@ -641,14 +612,14 @@ def render_vector_halftone(canvas, mask, color_rgb, page_h, lpi: int = 55, angle
     logger.info(f"[VectorHalftone] Rendered {len(dots)} halftone dots as vector circles")
 
 def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, page_h: float, 
-                           margin_pt: float = 65.0, lpi: int = 55, mesh_count: int = 160) -> None:
+                           margin_pt: float = 65.0, lpi: int = 55, mesh_count: int = 160,
+                           scale_mode: str = 'fit_to_page', custom_scale_percent: float = 100.0) -> None:
     """Embed halftone mask as a high-resolution raster image inside the PDF.
 
     This is used as a fallback for dense halftone patterns where vector dots become
     too heavy/slow or cause visual artifacts in PDF renderers.
     
-    FIX Issue #1: Now accepts configurable margin_pt to match vector exporter.
-    FIX Issue #3: Preserves full halftone resolution without unnecessary scaling.
+    FIX: Now supports fit_to_page scaling the same way vector_exporter does.
     """
     if mask.dtype != np.uint8:
         mask_u8 = mask.astype(np.uint8)
@@ -660,7 +631,7 @@ def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, pa
 
     mask_h, mask_w = mask_u8.shape[:2]
 
-    # FIX Issue #3: Use maximum PNG compression quality for full resolution preservation
+    # Use maximum PNG compression quality
     ok, png_bytes = cv2.imencode('.png', mask_u8, [cv2.IMWRITE_PNG_COMPRESSION, 3])
     if not ok:
         raise RuntimeError("Failed to encode halftone mask as PNG")
@@ -668,33 +639,38 @@ def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, pa
     from reportlab.lib.utils import ImageReader
     img_reader = ImageReader(io.BytesIO(png_bytes.tobytes()))
 
-    # FIX Issue #1: Use configurable margins passed from caller
-    # Reserve space for header/footer similar to vector exporter
-    header_pt = 40.0  # Space for film info at top
-    footer_pt = 30.0  # Space for footer at bottom
+    # Reserve space for header/footer
+    header_pt = 40.0
+    footer_pt = 30.0
     available_w = page_w - 2 * margin_pt
     available_h = page_h - header_pt - footer_pt - 2 * margin_pt
 
     # Calculate physical size of the mask at given DPI
-    # FIX: Preserve true physical size - don't scale based on pixel dimensions
-    img_w_mm = (mask_w / max(1, dpi)) * 25.4  # Convert pixels to mm
+    img_w_mm = (mask_w / max(1, dpi)) * 25.4
     img_h_mm = (mask_h / max(1, dpi)) * 25.4
-    img_w_pt = img_w_mm * 72.0 / 25.4  # mm to points
-    img_h_pt = img_h_pt = img_h_mm * 72.0 / 25.4
+    img_w_pt = img_w_mm * 72.0 / 25.4
+    img_h_pt = img_h_mm * 72.0 / 25.4
 
-    # Scale to fit within printable area while preserving aspect ratio
+    # FIX: Implement identical scaling logic to vector path
     scale_x = available_w / img_w_pt if img_w_pt > 0 else 1.0
     scale_y = available_h / img_h_pt if img_h_pt > 0 else 1.0
-    scale = min(scale_x, scale_y, 1.0)  # Never upscale beyond 100% (quality preservation)
 
-    draw_w = img_w_pt * scale
-    draw_h = img_h_pt * scale
+    if scale_mode == 'actual_size':
+        scale_factor = 1.0
+    elif scale_mode == 'custom_scale':
+        scale_factor = custom_scale_percent / 100.0
+    else:  # fit_to_page
+        scale_factor = min(scale_x, scale_y)
+        scale_factor = min(scale_factor, 5.0)  # MAX_SCALE_PERCENT/100
+        scale_factor = max(scale_factor, 0.1)
+
+    draw_w = img_w_pt * scale_factor
+    draw_h = img_h_pt * scale_factor
     draw_x = margin_pt + (available_w - draw_w) / 2
     draw_y = margin_pt + footer_pt + (available_h - draw_h) / 2
 
-    # FIX Issue #3: Use high-quality image embedding with full resolution preservation
     canvas.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, 
                      mask='auto', preserveAspectRatio=True)
     
     logger.debug(f"[RasterHalftone] Embedded {mask_w}x{mask_h} mask at {dpi}DPI "
-                f"({img_w_mm:.1f}mm x {img_h_mm:.1f}mm) with scale={scale:.2f}")
+                f"({img_w_mm:.1f}mm x {img_h_mm:.1f}mm) with scale={scale_factor:.2f} (mode={scale_mode})")

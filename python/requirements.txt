@@ -4,3 +4,4 @@ reportlab
 llama-cpp-python
 Pillow
 scikit-image
+scikit-learn

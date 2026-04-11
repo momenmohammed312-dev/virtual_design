@@ -73,6 +73,7 @@ def _find_model_files() -> Tuple[str, str]:
         Path.cwd(),  # Current directory
         Path.cwd() / "models",
         Path.cwd() / "Models",
+        Path(__file__).parent.parent / "models", # Project models folder relative to core/
         Path.home() / "models",
         Path.home() / ".local" / "share" / "models",
         Path("/opt/models") if os.name != 'nt' else Path("C:/ProgramData/Models"),
@@ -324,8 +325,17 @@ RESPONSE (JSON ONLY, nothing else):
   "contour_min_area": 8-150,
   "simplification_epsilon": 0.5-2.5,
   "color_merge_advice": "optional: which colors to merge",
-  "auto_adjustment_reason": "one line reason"
-}"""
+  "auto_adjustment_reason": "one line reason",
+  "mode": "solid|halftone|color",
+  "confidence": 0.0-1.0,
+  "actions": [
+    {"op": "bilateral_filter", "params": {"d": 9, "sigmaColor": 75, "sigmaSpace": 75}}
+  ]
+}
+
+ALLOWED OPERATIONS FOR 'actions':
+denoise, bilateral_filter, gaussian_blur, sharpen, threshold, adaptive_threshold, otsu_threshold, morph_open, morph_close, erode, dilate, contour_smooth, background_remove, color_reduce, kmeans, lpi_adjust, dot_shape, vector_fix
+"""
 
 # Default prompt without OpenCV data (fallback)
 _PROMPT = _PROMPT_TEMPLATE.replace("{opencv_colors_context}", "No prior OpenCV data. Analyze visually.")
@@ -555,10 +565,55 @@ def _parse_response(raw: str) -> Optional[dict]:
         "lpi": 55,
         "dot_shape": "round",
         "upscale_factor": 1.0,
+        "confidence": 1.0,
+        "actions": [],
+        "mode": "solid"
     }
+    
+    # 1. Enforce Missing Parameters -> Reject completely if missing required
+    required_keys = ["image_class", "num_colors", "use_halftone"]
+    for r_key in required_keys:
+        if r_key not in result:
+            logger.error(f"[AIBridge] Validation Failed: Missing required key '{r_key}'. Rejecting full output.")
+            return _get_safe_fallback()
+
+    # 2. Enforce confidence threshold
+    try:
+        conf = float(result.get("confidence", 1.0))
+        if conf < 0.6:
+            logger.warning(f"[AIBridge] Low confidence ({conf} < 0.6). Triggering fallback safe pipeline.")
+            return _get_safe_fallback()
+    except (ValueError, TypeError):
+        logger.warning("[AIBridge] Invalid confidence format. Assuming 1.0.")
+        result["confidence"] = 1.0
+
+    # 3. Enforce Strict Allowed Operations for Actions
+    allowed_ops = {
+        "denoise", "bilateral_filter", "gaussian_blur", "sharpen", "threshold",
+        "adaptive_threshold", "otsu_threshold", "morph_open", "morph_close",
+        "erode", "dilate", "contour_smooth", "background_remove", "color_reduce",
+        "kmeans", "lpi_adjust", "dot_shape", "vector_fix"
+    }
+    
+    actions = result.get("actions", [])
+    if not isinstance(actions, list):
+        logger.error("[AIBridge] Invalid logic: 'actions' must be an array. Rejecting.")
+        return _get_safe_fallback()
+        
+    safe_actions = []
+    for action in actions:
+        if not isinstance(action, dict) or "op" not in action:
+            logger.error("[AIBridge] Action missing 'op'. Rejecting.")
+            continue
+        if action["op"] not in allowed_ops:
+            logger.error(f"[AIBridge] UNSAFE/UNKNOWN operation detected: '{action['op']}'. Dropping action.")
+            continue
+        safe_actions.append(action)
+    result["actions"] = safe_actions
+
     for key, default_val in defaults.items():
         if key not in result:
-            logger.warning(f"[AIBridge] Missing key: {key}, using default: {default_val}")
+            logger.warning(f"[AIBridge] Missing optional: {key}, using default: {default_val}")
             result[key] = default_val
         else:
             # Coerce type if possible
@@ -1020,12 +1075,16 @@ def is_available() -> bool:
     
     if not has_model:
         _ai_status['available'] = False
-        _ai_status['last_error'] = f"MODEL_NOT_FOUND: {MODEL_PATH}"
+        msg = f"MODEL_NOT_FOUND: '{MODEL_PATH}'. Place Qwen .gguf files in G:\\Designs\\design app\\virtual_design\\models"
+        _ai_status['last_error'] = msg
+        logger.error(f"[AIBridge] {msg}")
         return False
     
     if not has_mmproj:
         _ai_status['available'] = False
-        _ai_status['last_error'] = f"MMPROJ_NOT_FOUND: {MMPROJ_PATH}"
+        msg = f"MMPROJ_NOT_FOUND: '{MMPROJ_PATH}'. Ensure mmproj-f16.gguf is in the models folder."
+        _ai_status['last_error'] = msg
+        logger.error(f"[AIBridge] {msg}")
         return False
     
     # If model is already loaded, we're good

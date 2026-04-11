@@ -33,13 +33,16 @@ DotFunction = Literal["round", "ellipse", "euclidean", "line"]
 
 @dataclass
 class RasterHalftoneConfig:
-    lpi:       int   = 85          # Lines Per Inch (higher = smaller dots)
-    dpi:       int   = 1200        # Output device resolution
-    angle:     float = 45.0        # Screen angle (degrees)
-    dot_fn:    DotFunction = "round"
-    gamma:     float = 1.6         # Dot gain compensation
-    threshold: float = 0.5         # Hard threshold for final 1-bit output
-    oversample: int  = 2           # Super-sampling factor (1=none, 2=2×)
+    lpi:        int   = 85          # Lines Per Inch (higher = smaller dots)
+    dpi:        int   = 1200        # Output device resolution
+    angle:      float = 45.0        # Screen angle (degrees)
+    dot_fn:     DotFunction = "round"
+    gamma:      float = 1.6         # Dot gain compensation
+    threshold:  float = 0.5         # Hard threshold for final 1-bit output
+    oversample: int   = 2           # Super-sampling factor (1=none, 2=2×)
+    # FIX A-04: Explicit source DPI for scaling decisions.
+    # None = unknown (do NOT auto-upsample); set to actual source DPI when known.
+    source_dpi: Optional[int] = None
 
 
 # ─── Engine ──────────────────────────────────────────────────────────────────
@@ -72,14 +75,23 @@ class RasterHalftoneEngine:
         else:
             gray = grayscale.astype(np.uint8)
 
-        # Up-sample to output DPI if input is low-res
-        input_dpi_estimate = max(gray.shape)   # rough estimate
-        if input_dpi_estimate < 300:
-            scale = cfg.dpi / 96.0             # assume 96 dpi input
-            if scale > 1.0:
-                new_w = max(1, int(gray.shape[1] * scale))
-                new_h = max(1, int(gray.shape[0] * scale))
-                gray  = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        # FIX A-04: Only upsample when source DPI is explicitly known AND
+        # is lower than the target DPI.  The previous code used
+        # `max(gray.shape)` as a DPI proxy — a pixel COUNT, not resolution —
+        # which incorrectly triggered 12.5× upsampling for small artwork
+        # (e.g. a 250×300 px image at 300 DPI) and destroyed dot density.
+        # When source_dpi is unknown we do NOT upsample; the caller is
+        # responsible for passing the correct resolution.
+        if cfg.source_dpi is not None and cfg.source_dpi < cfg.dpi:
+            scale = cfg.dpi / cfg.source_dpi
+            new_w = max(1, int(gray.shape[1] * scale))
+            new_h = max(1, int(gray.shape[0] * scale))
+            gray  = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+            logger.info(
+                f"[RasterHalftone] Upsampled {gray.shape[1] // int(scale)}x"
+                f"{gray.shape[0] // int(scale)} "
+                f"@ {cfg.source_dpi} DPI → {new_w}x{new_h} @ {cfg.dpi} DPI"
+            )
 
         # Build threshold matrix
         screen_matrix = self._build_screen_matrix(gray.shape, cfg.dpi, cfg.lpi,
@@ -96,14 +108,14 @@ class RasterHalftoneEngine:
         # (dark pixels -> big dots -> more ink)
         ink_float = 1.0 - (gray_g.astype(np.float32) / 255.0)
         screen_f  = screen_matrix.astype(np.float32) / 255.0
-        # CRITICAL FIX: Invert so ink=0 (black), background=255 (white/transparent)
+        # Invert so ink=0 (black), background=255 (white/transparent)
         bitmap    = (ink_float >= screen_f).astype(np.uint8) * 255
-        bitmap    = cv2.bitwise_not(bitmap)  # Invert: 255->0 (ink), 0->255 (bg)
+        bitmap    = cv2.bitwise_not(bitmap)  # 255->0 (ink), 0->255 (bg)
 
         logger.info(
             f"[RasterHalftone] lpi={cfg.lpi} dpi={cfg.dpi} "
             f"angle={cfg.angle}° fn={cfg.dot_fn} "
-            f"coverage={100*np.mean(bitmap==0):.1f}%"  # Count ink pixels (0)
+            f"coverage={100*np.mean(bitmap==0):.1f}%"
         )
         return bitmap
 

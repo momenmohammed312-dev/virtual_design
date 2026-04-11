@@ -112,7 +112,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     """
     logger.info(f"[HalftonePipeline] ===== ENTERING with {len(masks)} masks =====")
     logger.info(f"[HalftonePipeline] Args: dpi={getattr(args, 'dpi', 'N/A')}, lpi={getattr(args, 'lpi', 'N/A')}, dot_shape={getattr(args, 'dot_shape', 'N/A')}")
-    
+
     try:
         from core.raster_halftone import RasterHalftoneEngine, RasterHalftoneConfig
         logger.info("[HalftonePipeline] ✓ RasterHalftoneEngine imported successfully")
@@ -126,37 +126,42 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
             except ImportError as e2:
                 logger.error(f"[HalftonePipeline] HalftoneGenerator not available: {e2}")
                 return masks
-        # Legacy path
         return _apply_legacy_halftone(masks, args, halftone_gen)
 
-    # Use RasterHalftoneEngine at high DPI for professional output
     output_dpi = getattr(args, 'dpi', 450)
-    raster_dpi = max(1200, output_dpi * 2)
+
+    # FIX 2: Unified raster_dpi formula — max(1200, output_dpi*2) everywhere.
+    # For high detail mode, we push to 3600 DPI internally.
+    if getattr(args, '_is_high_detail', False):
+        raster_dpi = max(3600, output_dpi * 3)
+    else:
+        raster_dpi = max(1200, output_dpi * 2)
+        
     logger.info(f"[HalftonePipeline] Config: output_dpi={output_dpi}, raster_dpi={raster_dpi}")
 
-    # Auto-calc LPI based on DPI (industry standard: LPI = DPI / 4 to DPI / 5)
-    # Higher DPI = smaller dots = higher LPI possible
-    dpi_lpi_ratio = 4.5  # Sweet spot for screen printing
-    auto_lpi = min(150, max(65, int(output_dpi / dpi_lpi_ratio)))
+    # FIX A-12/C-10: Store the raster DPI on args so _run_artwork() can propagate
+    # it to PipelineResult.mask_dpi and the exporter can use it for px_to_pt().
+    args._halftone_raster_dpi = raster_dpi
 
-    # Use auto-calculated LPI if user didn't specify custom value
-    effective_lpi = args.lpi if args.lpi != 85 else auto_lpi
-
-    # FIX: DPI-aware mesh-count validation (Issue #4)
-    # Industry rule: max_LPI = mesh_count / 4 for traditional RIP
-    # BUT high-DPI output (1200+) can support higher LPI without moiré
-    # Formula: effective_max = min(mesh/4, dpi/10) for quality preservation
+    # FIX: Delegate LPI validation to PrintJobConfig — single source of truth.
+    # Previously this block re-implemented mesh/3.5 + dpi/4 inline, drifting from
+    # print_job_config.validate_lpi() whenever one side was updated independently.
     mesh_count = getattr(args, 'mesh_count', 160)
-    traditional_max = mesh_count / 4.0  # Traditional mesh limit
-    dpi_based_max = output_dpi / 10.0   # DPI-based quality limit
-    
-    # Allow higher LPI for high-DPI output, but keep mesh constraint as safety
-    max_safe_lpi = min(int(traditional_max * 1.5), int(dpi_based_max))
-    max_safe_lpi = max(45, min(max_safe_lpi, int(traditional_max * 1.2)))  # Cap at 120% of traditional
-    
-    if effective_lpi > max_safe_lpi:
-        logger.warning(f"[Halftone] LPI {effective_lpi} exceeds safe limit {max_safe_lpi} (mesh={mesh_count}, dpi={output_dpi}). Clamping.")
-        effective_lpi = max_safe_lpi
+    dpi_lpi_ratio = 4.5
+    auto_lpi = min(150, max(65, int(output_dpi / dpi_lpi_ratio)))
+    requested_lpi = args.lpi if args.lpi != 85 else auto_lpi
+    try:
+        from core.print_job_config import PrintJobConfig
+        _job_cfg = PrintJobConfig(mesh_count=mesh_count, dpi=output_dpi)
+        effective_lpi = _job_cfg.validate_lpi(requested_lpi, output_dpi=output_dpi, auto_fix=True)
+        max_safe_lpi = _job_cfg.max_safe_lpi(output_dpi)
+    except Exception as _e:
+        # Fallback: inline formula so the pipeline never crashes on import error.
+        logger.warning(f"[HalftonePipeline] PrintJobConfig unavailable ({_e}), using inline LPI fallback")
+        mesh_ceiling = int(mesh_count / 3.5)
+        dpi_ceiling  = output_dpi // 4
+        max_safe_lpi = max(25, min(mesh_ceiling, dpi_ceiling))
+        effective_lpi = min(requested_lpi, max_safe_lpi)
 
     logger.info(f"[HalftonePipeline] Final LPI: {effective_lpi} (DPI={output_dpi}, mesh={mesh_count}, max_safe={max_safe_lpi})")
     result = []
@@ -166,28 +171,36 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
         total_pixels = mask.size
         design_pixels = np.sum(mask < 128)
         coverage_percentage = (design_pixels / total_pixels) * 100
-        
-        # Skip halftone on empty/near-empty masks
+
         if coverage_percentage < 1.0:
             logger.warning(f"[Halftone] Skipping empty mask {i+1} ({coverage_percentage:.1f}% coverage)")
             result.append(mask)
             continue
-        
+
         if coverage_percentage > 95.0:
+            # FIX 4: Near-solid mask passed as-is to avoid halftone on flood-fill areas.
+            # RISK: If this is a legitimate dark design (not a background fill), the lack
+            # of halftone may cause ink flooding on press.  Operator must verify.
+            logger.warning(
+                f"[Halftone] Mask {i+1} has {coverage_percentage:.1f}% ink coverage — "
+                f"exceeds 95%% threshold. Skipping halftone to avoid dot merging. "
+                f"VERIFY on press: if this is a dark tone area (not solid black), "
+                f"consider reducing LPI or using solid-ink mode instead."
+            )
             result.append(mask)
             continue
-            
+
         enhanced = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
         unique_vals = np.unique(enhanced)
         is_binary_mask = len(unique_vals) <= 2
         if not is_binary_mask:
+            # required: grayscale must be cleaned (bilateral filter required before halftone dot generation)
+            enhanced = cv2.bilateralFilter(enhanced, 5, 50, 50)
             enhanced = clahe.apply(enhanced)
-            
-        # FIX GROUP 5.3: Use CMYK angles consistently based on mask_index % 4
+
         angle = CMYK_ANGLES[i % 4]
         dot_shape = getattr(args, 'dot_shape', 'round')
-        
-        # Create engine per mask with specific angle
+
         raster_cfg = RasterHalftoneConfig(
             lpi=effective_lpi,
             dpi=raster_dpi,
@@ -198,24 +211,28 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
         )
         ht_engine = RasterHalftoneEngine(raster_cfg)
         ht = ht_engine.generate(enhanced)
-        result.append(ht)
         
+        # FINAL FIX: enforce strict binary integrity on halftone dots
+        ht = (ht > 127).astype(np.uint8) * 255
+        result.append(ht)
+
     logger.info(f"[Halftone] Raster halftone @ {raster_dpi} DPI, {effective_lpi} LPI")
     return result
 
 
 def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[np.ndarray]:
     """Fallback legacy halftone if RasterHalftoneEngine unavailable."""
-    # Auto-calc LPI based on DPI (same logic as main pipeline)
     dpi_lpi_ratio = 4.5
     auto_lpi = min(150, max(65, int(args.dpi / dpi_lpi_ratio)))
     effective_lpi = args.lpi if args.lpi != 85 else auto_lpi
 
-    # FIX GROUP 5.2: Mesh-count validation for legacy path
+    # FIX A-03: Apply the same corrected formula as the primary path
     mesh_count = getattr(args, 'mesh_count', 160)
-    max_safe_lpi = mesh_count // 4
+    mesh_ceiling = mesh_count // 4
+    dpi_ceiling  = args.dpi // 4
+    max_safe_lpi = max(25, min(mesh_ceiling, dpi_ceiling))
     if effective_lpi > max_safe_lpi:
-        logger.warning(f"[LegacyHalftone] LPI {effective_lpi} exceeds safe limit {max_safe_lpi} for {mesh_count} mesh. Clamping.")
+        logger.warning(f"[LegacyHalftone] LPI {effective_lpi} clamped to {max_safe_lpi} (mesh={mesh_count}, dpi={args.dpi})")
         effective_lpi = max_safe_lpi
 
     logger.info(f"[LegacyHalftone] Auto LPI: {effective_lpi} (DPI={args.dpi}, mesh={mesh_count}, max_safe={max_safe_lpi})")
@@ -229,6 +246,11 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
             result.append(mask)
             continue
         if coverage_percentage > 95.0:
+            # FIX 4: Same flood-risk warning as primary halftone path.
+            logger.warning(
+                f"[LegacyHalftone] Mask {i+1} has {coverage_percentage:.1f}% ink coverage — "
+                f"exceeds 95%% threshold. Skipping halftone. VERIFY on press for flood risk."
+            )
             result.append(mask)
             continue
         enhanced = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
@@ -236,11 +258,13 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
         is_binary_mask = len(unique_vals) <= 2
         if not is_binary_mask:
             enhanced = clahe.apply(enhanced)
-        # FIX GROUP 5.3: Use CMYK angles consistently
         angle = CMYK_ANGLES[i % 4]
         dot_shape = getattr(args, 'dot_shape', 'round')
         ht = halftone_gen.generate(enhanced, lpi=effective_lpi, angle=angle,
                                    dot_shape=dot_shape, dpi=args.dpi, gamma=1.6)
+        
+        # FINAL FIX: enforce strict binary integrity on legacy halftone
+        ht = (ht > 127).astype(np.uint8) * 255
         result.append(ht)
     logger.info(f"[HalftonePipeline] ===== COMPLETE - {len(result)} masks processed =====")
     return result
