@@ -60,6 +60,7 @@ class SetupController extends GetxController {
   final RxBool edgeEnhancement = false.obs;
   final RxBool colorCorrection = false.obs;
   final RxBool adaptiveThreshold = false.obs;
+  final RxBool responsiveMode = false.obs;
   final Rx<ps.ImageType> selectedImageType = ps.ImageType.auto.obs;
 
   // Output directory selection
@@ -135,6 +136,7 @@ class SetupController extends GetxController {
       strokeWidth.value = settings.strokeWidthMm;
       printQuality.value = settings.dpi;
       adaptiveThreshold.value = settings.adaptiveThreshold;
+      responsiveMode.value = settings.responsiveMode;
       selectedImageType.value = settings.imageType;
       smoothingSlider.value = settings.smoothingSlider;
       if (settings.halftoneSettings != null) {
@@ -162,6 +164,7 @@ class SetupController extends GetxController {
     edgeEnhancement.value = false;
     colorCorrection.value = false;
     adaptiveThreshold.value = false;
+    responsiveMode.value = false;
     selectedImageType.value = ps.ImageType.auto;
     globalThreshold.value = 127.0;
     smoothingFactor.value = 35.0;
@@ -240,6 +243,7 @@ class SetupController extends GetxController {
         paperWidthCm: paperWidthCm.value,
         paperHeightCm: paperHeightCm.value,
         adaptiveThreshold: adaptiveThreshold.value,
+        responsiveMode: responsiveMode.value,
         imageType: selectedImageType.value,
         globalThreshold: thresholdAdjustmentMade ? globalThreshold.value : 0.0,
         smoothingFactor: smoothingAdjustmentMade ? smoothingFactor.value : -1.0,

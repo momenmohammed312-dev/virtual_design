@@ -90,6 +90,7 @@ class ProcessingSettings {
   final String filmLabel;
   final ImageType imageType;
   final int smoothingSlider;
+  final bool responsiveMode;
 
   // Professional Features (all enabled by default)
   final PantoneMatching pantoneMatching;
@@ -130,6 +131,7 @@ class ProcessingSettings {
     this.typographyMode = TypographyMode.automatic,
     this.meshPreviewMode = MeshPreviewMode.automatic,
     this.smoothingSlider = 35,
+    this.responsiveMode = false,
   });
 
   // ─── Mesh Count Calculations (MED #6 FIX) ──────────────────────────────
@@ -212,8 +214,8 @@ class ProcessingSettings {
     if (colorCount != 0 && (colorCount < 1 || colorCount > 10)) {
       errors.add('Color count must be between 1 and 10.');
     }
-    if (dpi < 72 || dpi > 1200) {
-      errors.add('DPI must be between 72 and 1200.');
+    if (dpi < 72 || dpi > 4800) {
+      errors.add('DPI must be between 72 and 4800.');
     }
     if (strokeWidthMm < 0.1 || strokeWidthMm > 10) {
       errors.add('Stroke width must be between 0.1 and 10 mm.');
@@ -256,6 +258,7 @@ class ProcessingSettings {
     String? filmLabel,
     ImageType? imageType,
     int? smoothingSlider,
+    bool? responsiveMode,
   }) =>
       ProcessingSettings(
         colorCount: colorCount ?? this.colorCount,
@@ -285,6 +288,7 @@ class ProcessingSettings {
         filmLabel: filmLabel ?? this.filmLabel,
         imageType: imageType ?? this.imageType,
         smoothingSlider: smoothingSlider ?? this.smoothingSlider,
+        responsiveMode: responsiveMode ?? this.responsiveMode,
       );
 
   Map<String, dynamic> toJson() => {
@@ -315,6 +319,7 @@ class ProcessingSettings {
         'filmLabel': filmLabel,
         'imageType': imageType.name,
         'smoothingSlider': smoothingSlider,
+        'responsiveMode': responsiveMode,
       };
 
   factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
@@ -383,5 +388,6 @@ class ProcessingSettings {
           orElse: () => ImageType.auto,
         ),
         smoothingSlider: (json['smoothingSlider'] as int?) ?? 35,
+        responsiveMode: (json['responsiveMode'] as bool?) ?? false,
       );
 }

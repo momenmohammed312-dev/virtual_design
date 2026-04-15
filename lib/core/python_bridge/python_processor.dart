@@ -391,6 +391,8 @@ class PythonProcessor {
   Future<Map<String, dynamic>?> runAutoFix({
     required String originalImage,
     required String previewImage,
+    int iteration = 1,
+    Map<String, dynamic>? prevParams,
   }) async {
     if (!config.isInitialized || !config.isPythonAvailable) {
       debugPrint('[PythonProcessor] Auto-Fix failed: Python not available');
@@ -406,6 +408,9 @@ class PythonProcessor {
       _safePath(originalImage),
       '--preview',
       _safePath(previewImage),
+      '--iteration',
+      iteration.toString(),
+      if (prevParams != null) ...['--prev-params', jsonEncode(prevParams)],
     ];
 
     try {
@@ -467,6 +472,8 @@ class PythonProcessor {
     required String originalImage,
     required String previewImage,
     required String prompt,
+    int iteration = 1,
+    Map<String, dynamic>? prevParams,
   }) async {
     if (!config.isInitialized || !config.isPythonAvailable) {
       debugPrint(
@@ -485,6 +492,9 @@ class PythonProcessor {
       _safePath(previewImage),
       '--prompt',
       prompt,
+      '--iteration',
+      iteration.toString(),
+      if (prevParams != null) ...['--prev-params', jsonEncode(prevParams)],
     ];
 
     try {

@@ -357,16 +357,40 @@ _PROMPT = _PROMPT_TEMPLATE.replace("{opencv_colors_context}", "No prior OpenCV d
 
 
 # ─── Caching ──────────────────────────────────────────────────────────────────
-_analysis_cache: dict = {}  # {image_hash: result}
+_ai_cache: dict = {}  # {image_hash: analysis_result}
 import hashlib
 
 def _get_image_hash(image: np.ndarray) -> str:
     """
-    FIX GROUP 7.3: Generate MD5 hash for the image to avoid redundant AI calls.
+    FIX: [Task 4a] Generate MD5 hash for the image to avoid redundant AI calls.
     Uses 64x64 downsample for speed while maintaining uniqueness.
     """
     small = cv2.resize(image, (64, 64), interpolation=cv2.INTER_AREA)
     return hashlib.md5(small.tobytes()).hexdigest()
+
+def _classify_without_ai(image: np.ndarray) -> Optional[str]:
+    """
+    FIX: [Task 4b] Fast heuristic classifier — returns image class or None to use AI.
+    Handles obvious cases to avoid long AI inference (252s).
+    """
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+    
+    # Check if image is essentially binary (text/logo on white background)
+    hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+    total = gray.size
+    # Focus on extreme ends: pure black and pure white
+    dark_ratio = hist[:30].sum() / total    # very dark pixels
+    light_ratio = hist[225:].sum() / total  # very light pixels
+    
+    if dark_ratio + light_ratio > 0.92:
+        # 92%+ pixels are either very dark or very light → likely binary text/logo
+        logger.info(f"[AIBridge] Fast classifier: text_logo (binary={dark_ratio+light_ratio:.1%})")
+        return 'text_logo'
+    
+    return None  # Use AI for complex images
 
 # ─── Main API ─────────────────────────────────────────────────────────────────
 
@@ -380,10 +404,11 @@ def analyze_image(image: np.ndarray, opencv_colors: list = None) -> Optional[dic
                       Each dict has: hex, rgb, coverage, brightness
     """
     img_hash = _get_image_hash(image)
-    cache_key = (img_hash, tuple(c['hex'] for c in opencv_colors) if opencv_colors else "no_colors")
-    if cache_key in _analysis_cache:
-        logger.info("[AIBridge] Using cached analysis result")
-        return _analysis_cache[cache_key]
+    
+    # FIX: [Task 4a] Check cache first
+    if img_hash in _ai_cache:
+        logger.info(f"[AIBridge] Cache hit for image {img_hash[:8]}")
+        return _ai_cache[img_hash]
 
     llm = _get_llm()
     if llm is None:
@@ -456,7 +481,7 @@ def analyze_image(image: np.ndarray, opencv_colors: list = None) -> Optional[dic
     if result:
         result = _adjust_for_resolution(result, h, w)
     
-    _analysis_cache[cache_key] = result
+    _ai_cache[img_hash] = result
     return result
 
 def _get_safe_fallback() -> dict:
@@ -676,32 +701,69 @@ def _parse_response(raw: str) -> Optional[dict]:
         logger.warning(f"[AIBridge] Unknown image_class: {result['image_class']}, defaulting to artwork")
         result["image_class"] = "artwork"
 
-    # Clamp numeric values to safe ranges
-    result["num_colors"]      = max(1, min(8, result["num_colors"]))
-    result["smoothing_factor"]= max(0.1, min(0.5, result["smoothing_factor"]))
-    result["corner_threshold"]= float(max(30, min(140, result.get("corner_threshold", 95.0))))
-    result["lpi"]             = int(max(65, min(150, result.get("lpi", 85))))
-
-    # Enforce constraints
-    if result["image_class"] == "photo":
-        result["use_halftone"] = True
-        result["num_colors"]   = 1
-    elif result["image_class"] == "text_logo":
-        # Suggest non-halftone for text logos, but don't force it
-        # (user's UI selection takes precedence - enforced in apply_to_args)
-        result["num_colors"] = min(result["num_colors"], 4)
-        # Only set use_halftone=False if AI didn't already analyze it
-        if "use_halftone" not in result:
-            result["use_halftone"] = False
-        # CRITICAL: Lower epsilon for text logos to preserve sharp letter corners
-        result["simplification_epsilon"] = min(
-            result.get("simplification_epsilon", 0.8), 0.8
-        )
-        result["smoothing_factor"] = min(
-            result.get("smoothing_factor", 0.2), 0.25
-        )
+    # Validate and clamp parameters
+    result = _validate_ai_params(result)
 
     logger.info(f"[AIBridge] Parsed: {result}")
+    return result
+
+def _validate_ai_params(result: dict) -> dict:
+    """
+    STRICT VALIDATION LAYER: Force safe ranges for production print quality.
+    Clamps values based on image class to prevent common artifacts.
+    """
+    img_class = result.get("image_class", "artwork")
+    
+    # 1. Image Class Safety
+    valid_classes = {"text_logo", "artwork", "photo"}
+    if img_class not in valid_classes:
+        img_class = "artwork"
+        result["image_class"] = img_class
+
+    # 2. Text/Logo Integrity Clamp
+    if img_class == "text_logo":
+        # Text MUST have low simplification to preserve letter corners
+        # Epsilon > 0.8 starts rounding letters like A, M, K
+        if "simplification_epsilon" in result:
+            result["simplification_epsilon"] = min(0.6, float(result["simplification_epsilon"]))
+        else:
+            result["simplification_epsilon"] = 0.4
+            
+        # Text MUST have moderate smoothing to avoid spikes but keep sharpness
+        # Factor > 0.35 starts melting small fonts
+        if "smoothing_factor" in result:
+            result["smoothing_factor"] = min(0.25, float(result["smoothing_factor"]))
+        else:
+            result["smoothing_factor"] = 0.15
+            
+        # Corner threshold affects Bezier fitting. Too low = waviness.
+        if "corner_threshold" in result:
+            result["corner_threshold"] = min(80.0, float(result["corner_threshold"]))
+        else:
+            result["corner_threshold"] = 60.0
+
+    # 3. Photo Safety
+    elif img_class == "photo":
+        result["use_halftone"] = True
+        result["num_colors"] = 1
+        # Photo path doesn't use vector simplification/smoothing usually
+        
+    # 4. Global Clamps (Safety Rails)
+    if "smoothing_factor" in result:
+        result["smoothing_factor"] = max(0.05, min(0.6, float(result["smoothing_factor"])))
+    
+    if "corner_threshold" in result:
+        result["corner_threshold"] = max(30.0, min(180.0, float(result["corner_threshold"])))
+        
+    if "simplification_epsilon" in result:
+        result["simplification_epsilon"] = max(0.01, min(3.0, float(result["simplification_epsilon"])))
+    
+    if "num_colors" in result:
+        result["num_colors"] = max(1, min(8, int(result["num_colors"])))
+        
+    if "lpi" in result:
+        result["lpi"] = max(35, min(150, int(result["lpi"])))
+
     return result
 
 
@@ -720,6 +782,10 @@ def apply_to_args(ai_result: dict, args) -> None:
         return
 
     # Core parameters
+    # FIX: [Task 1e] Clamp corner_threshold for text_logo
+    if ai_result.get('image_class') == 'text_logo':
+        ai_result['corner_threshold'] = min(ai_result.get('corner_threshold', 100), 60)
+
     # Only override color count in auto mode (user selected 0 = auto-detect)
     if getattr(args, 'colors', 0) == 0:
         args.colors = ai_result["num_colors"]
@@ -767,49 +833,53 @@ def apply_to_args(ai_result: dict, args) -> None:
     )
 
 
-def analyze_preview_flaws(original_img_path: str, preview_img_path: str) -> Optional[dict]:
+def analyze_preview_flaws(
+    original_img_path: str, 
+    preview_img_path: str,
+    prev_params: Optional[dict] = None,
+    iteration: int = 1
+) -> Optional[dict]:
     """
     Analyze preview flaws and suggest parameter adjustments.
     
-    Compares original image with generated preview to identify:
-    - Jagged edges (need more smoothing)
-    - Lost details (need lower epsilon)
-    - Poor halftone density (need LPI adjustment)
-    
-    Returns adjusted parameters or None if analysis fails.
+    Args:
+        prev_params: Dictionary of parameters used in the PREVIEW being analyzed.
+        iteration: Current iteration number (1-based).
     """
     llm = _get_llm()
     if llm is None:
         logger.warning("[AIBridge] Auto-Fix: Model not available")
         return None
 
-    # 🔥 FIX: Resize images before AI analysis for speed (67s -> 5-15s)
+    # Load and resize images
     try:
         orig_img = cv2.imread(original_img_path)
         prev_img = cv2.imread(preview_img_path)
-        
         if orig_img is None or prev_img is None:
-            logger.error("[AIBridge] Auto-Fix: Failed to load images")
             return None
         
-        # Resize for AI speed optimization
         orig_resized = _resize_for_ai(orig_img, max_dim=768)
         prev_resized = _resize_for_ai(prev_img, max_dim=768)
         
-        # Encode resized images
         _, orig_buf = cv2.imencode('.png', orig_resized)
         _, prev_buf = cv2.imencode('.png', prev_resized)
         
         orig_b64 = base64.b64encode(orig_buf).decode()
         prev_b64 = base64.b64encode(prev_buf).decode()
-        
-        logger.info(f"[AIBridge] Auto-Fix: Images resized and encoded for AI")
     except Exception as e:
-        logger.error(f"[AIBridge] Auto-Fix: Failed to process images: {e}")
+        logger.error(f"[AIBridge] Auto-Fix: Image process error: {e}")
         return None
 
-    fix_prompt = """/no_think
+    # Construct context about previous attempts
+    history_context = ""
+    if prev_params:
+        history_context = f"\nPREVIOUS PARAMS (Iteration {iteration}):\n{json.dumps(prev_params, indent=2)}\n"
+        history_context += "\nTASK: These parameters produced the current preview. ADJUST them to fix flaws. DO NOT REPEAT them if the flaw persists."
+
+    fix_prompt = f"""/no_think
 Compare the ORIGINAL image with the generated PRINT PREVIEW.
+{history_context}
+
 Identify flaws in the preview:
 - Jagged/staircase edges (need higher smoothing_factor)
 - Lost fine details (need lower simplification_epsilon)
@@ -817,18 +887,18 @@ Identify flaws in the preview:
 - Poor halftone dot quality (need different LPI)
 
 Return STRICT JSON with corrected values:
-{
+{{
   "smoothing_factor": 0.1-0.5,
   "corner_threshold": 30-140,
-  "simplification_epsilon": 0.3-2.5,
+  "simplification_epsilon": 0.05-1.5,
   "lpi": 35-85,
   "adjustment_reason": "Brief description of what was fixed"
-}
+}}
 
 If preview looks good, return minimal adjustments.
 """
 
-    logger.info("[AIBridge] Auto-Fix: Analyzing preview vs original...")
+    logger.info(f"[AIBridge] Auto-Fix: Analyzing preview (Iteration {iteration})...")
 
     try:
         response = llm.create_chat_completion(
@@ -843,22 +913,17 @@ If preview looks good, return minimal adjustments.
                 ]
             }],
             temperature=0.1,
-            max_tokens=200,
+            max_tokens=250,
         )
 
         raw = response["choices"][0]["message"]["content"]
         result = _parse_response(raw)
 
         if result:
-            logger.info(f"[AIBridge] Auto-Fix: {result.get('adjustment_reason', 'No reason')}")
-            # Remove non-parameter keys
-            return {
-                'smoothing_factor': result.get('smoothing_factor', 0.25),
-                'corner_threshold': result.get('corner_threshold', 95.0),
-                'simplification_epsilon': result.get('simplification_epsilon', 1.2),
-                'lpi': result.get('lpi', 55),
-                'adjustment_reason': result.get('adjustment_reason', ''),
-            }
+            # Re-validate AI result against strict clamps
+            result = _validate_ai_params(result)
+            logger.info(f"[AIBridge] Auto-Fix Decision: {result.get('adjustment_reason', 'Adjusted params')}")
+            return result
         return None
 
     except Exception as e:
@@ -950,7 +1015,8 @@ def _extract_json_from_mixed_input(user_prompt: str) -> tuple:
 
 
 def analyze_with_prompt(original_path: str, preview_path: str, user_prompt: str, 
-                         iteration: int = 1, preserve_original: bool = True) -> Optional[dict]:
+                         iteration: int = 1, preserve_original: bool = True,
+                         previous_params: Optional[dict] = None) -> Optional[dict]:
     """
     FIX Issue #10: Enhanced AI analysis with natural language normalization and iterative workflow.
     
@@ -1049,6 +1115,10 @@ Example: {{"smoothing_factor": 0.35, "corner_threshold": 95, "global_threshold":
         logger.info(f"[AIBridge] Prompt response in {elapsed:.1f}s (iteration {iteration})")
         
         result = _parse_response(raw)
+
+        # FIX: [Task 3b] diversity check
+        if result and previous_params:
+            result = _ensure_parameter_diversity(result, previous_params, iteration)
         
         if result:
             # FIX Issue #10: Merge with extracted JSON params (extracted params take precedence)
@@ -1082,6 +1152,35 @@ Example: {{"smoothing_factor": 0.35, "corner_threshold": 95, "global_threshold":
     except Exception as e:
         logger.error(f"[AIBridge] Prompt analysis failed: {e}")
         return None
+
+def _ensure_parameter_diversity(new: dict, old: dict, iteration: int) -> dict:
+    """
+    FIX: [3b] Force parameter exploration if model returns near-identical values.
+    """
+    PARAMS = ['smoothing_factor', 'corner_threshold', 'global_threshold']
+    any_changed = False
+    for key in PARAMS:
+        if key in new and key in old:
+            try:
+                diff = abs(float(new[key]) - float(old[key]))
+                if diff < 0.02:
+                    # Force directional change based on iteration parity
+                    direction = 1 if iteration % 2 == 0 else -1
+                    step = 0.05 * min(iteration, 4)
+                    if key == 'global_threshold':
+                        step *= 10
+                    # For corner_threshold, sometimes we want to go opposite
+                    if key == 'corner_threshold':
+                        step *= 2.0
+                    
+                    new[key] = max(0.05, float(old[key]) + direction * step)
+                    any_changed = True
+            except (ValueError, TypeError):
+                continue
+
+    if any_changed:
+        new['adjustment_reason'] = f"[Forced diversity iter={iteration}] " + new.get('adjustment_reason', '')
+    return new
 
 
 # ─── Health Check ─────────────────────────────────────────────────────────────

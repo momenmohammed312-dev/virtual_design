@@ -5,6 +5,40 @@ from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
+def edge_aware_binarize(gray: np.ndarray, use_adaptive: bool = False) -> np.ndarray:
+    """
+    Production-grade binarization for vector extraction.
+    Ensures: Bilateral (noise) -> Slight Blur (anti-spike) -> Otsu (integrity).
+    """
+    # 1. Bilateral filter treats surfaces vs edges differently
+    bilateral = cv2.bilateralFilter(gray, 9, 75, 75)
+    
+    # 2. Slight Gaussian blur to prevent findContours spikes/artifacts
+    # High-quality vectorization needs slightly anti-aliased transitions
+    smooth = cv2.GaussianBlur(bilateral, (3, 3), 0.5)
+
+    # 3. Primary Otsu Thresholding
+    _, th_otsu = cv2.threshold(smooth, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    h, w = smooth.shape[:2]
+    # Adaptive thresholding for smaller complex logos
+    if use_adaptive and min(h, w) < 800:
+        block_size = max(31, min(101, int(min(h, w) * 0.1) | 1))
+        th_adaptive = cv2.adaptiveThreshold(
+            smooth, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, block_size, 5
+        )
+        # Intersection preserves only strong features
+        base = cv2.bitwise_and(th_otsu, th_adaptive)
+    else:
+        base = th_otsu
+
+    # 4. Morphological hardening
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    base = cv2.morphologyEx(base, cv2.MORPH_CLOSE, kernel, iterations=1)
+    
+    return (base > 127).astype(np.uint8) * 255
+
 # ── Lazy import of anti_alias_preserve (avoids circular deps) ─────────────────
 def _get_preserver(image_type: str):
     """Return an AntiAliasPreserver preset for the given image type."""
@@ -190,12 +224,27 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
             result.append(mask)
             continue
 
-        enhanced = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
-        unique_vals = np.unique(enhanced)
+        # FIX 2b: [Halftone Coverage] Binary mask -> edge-softened gradient
+        enhanced_raw = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
+        unique_vals = np.unique(enhanced_raw)
         is_binary_mask = len(unique_vals) <= 2
-        if not is_binary_mask:
+
+        if is_binary_mask:
+            # Apply distance transform to create gradient near edges
+            # This gives the halftone engine tonal information for edge dots
+            ink_region = (enhanced_raw < 128).astype(np.uint8)
+            dist = cv2.distanceTransform(ink_region, cv2.DIST_L2, 5)
+            # Normalize: center of ink = 0 (dark), edge = gradient, background = 255 (white)
+            max_dist = max(dist.max(), 1.0)
+            dist_norm = np.clip(dist / min(max_dist, 20.0), 0, 1)  # cap at 20px feather
+            # Convert to grayscale: ink center = 10, ink edge = 100, background = 255
+            enhanced = np.where(ink_region == 1,
+                               (10 + (1 - dist_norm) * 90).astype(np.uint8),
+                               255).astype(np.uint8)
+            logger.info(f"[Halftone] Binary mask -> edge-softened gradient for halftone")
+        else:
             # required: grayscale must be cleaned (bilateral filter required before halftone dot generation)
-            enhanced = cv2.bilateralFilter(enhanced, 5, 50, 50)
+            enhanced = cv2.bilateralFilter(enhanced_raw, 5, 50, 50)
             enhanced = clahe.apply(enhanced)
 
         angle = CMYK_ANGLES[i % 4]
@@ -213,8 +262,44 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
         ht_engine = RasterHalftoneEngine(raster_cfg)
         ht = ht_engine.generate(enhanced)
         
-        # FINAL FIX: enforce strict binary integrity on halftone dots
-        ht = (ht > 127).astype(np.uint8) * 255
+        # FINAL FIX: [Fix 2a] Mask constraint + micro noise removal
+        # Prevent halftone dots from appearing outside artwork boundary
+        # mask convention: 0=ink(artwork), 255=background
+        if mask.ndim == 2:
+            # Create strict artwork boundary (ink areas)
+            artwork_binary = (mask < 128).astype(np.uint8) * 255
+            
+            # Slight erosion to prevent edge bleeding
+            erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            artwork_eroded = cv2.erode(artwork_binary, erode_kernel, iterations=1)
+            
+            # Apply: keep halftone dots only inside artwork
+            # ht convention: 0=ink dot, 255=background
+            # We want to keep 0s (dots) only where artwork_eroded=255
+            
+            # FIX: Resize mask to match upsampled halftone result resolution
+            if artwork_eroded.shape != ht.shape:
+                artwork_eroded = cv2.resize(artwork_eroded, (ht.shape[1], ht.shape[0]), 
+                                           interpolation=cv2.INTER_NEAREST)
+            
+            ht_constrained = np.where(artwork_eroded == 255, ht, 255)
+            
+            # Remove micro noise (connected components < 4px²)
+            dots_only = (ht_constrained < 128).astype(np.uint8)
+            n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(dots_only, connectivity=8)
+            cleaned = ht_constrained.copy()
+            for lbl in range(1, n_labels):
+                if stats[lbl, cv2.CC_STAT_AREA] < 4:
+                    cleaned[labels == lbl] = 255
+            ht = cleaned
+            
+            # Log actual coverage after constraint
+            final_coverage = 100 * np.mean(ht < 128)
+            logger.info(f"[Halftone] Post-constraint coverage: {final_coverage:.2f}%")
+        else:
+            # ensure strict binary integrity on halftone dots
+            ht = (ht > 127).astype(np.uint8) * 255
+
         result.append(ht)
 
     logger.info(f"[Halftone] Raster halftone @ {raster_dpi} DPI, {effective_lpi} LPI")

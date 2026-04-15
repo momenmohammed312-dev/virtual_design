@@ -124,11 +124,24 @@ class RasterHalftoneEngine:
         bitmap    = (ink_float >= screen_f).astype(np.uint8) * 255
         bitmap    = cv2.bitwise_not(bitmap)  # 255->0 (ink), 0->255 (bg)
 
+        coverage = 100 * np.mean(bitmap == 0)
         logger.info(
             f"[RasterHalftone] lpi={cfg.lpi} dpi={cfg.dpi} "
             f"angle={cfg.angle}° fn={cfg.dot_fn} "
-            f"coverage={100*np.mean(bitmap==0):.1f}%"
+            f"coverage={coverage:.1f}%"
         )
+
+        # FIX: [Task 2c] Auto-boost if coverage too low (indicates input was too light)
+        if coverage < 3.0 and cfg.gamma > 0.8:
+            logger.warning(f"[RasterHalftone] Coverage {coverage:.1f}% critically low — auto-retry with gamma={cfg.gamma - 0.4:.1f}")
+            cfg_retry = RasterHalftoneConfig(
+                lpi=cfg.lpi, dpi=cfg.dpi, angle=cfg.angle, dot_fn=cfg.dot_fn,
+                gamma=max(0.8, cfg.gamma - 0.4), oversample=cfg.oversample,
+                threshold=cfg.threshold,
+                source_dpi=cfg.source_dpi
+            )
+            return RasterHalftoneEngine(cfg_retry).generate(grayscale)
+
         return bitmap
 
     # ─── Screen Matrix ────────────────────────────────────────────────────────

@@ -130,21 +130,25 @@ def fit_bezier_to_contour(
         # Check if this segment is part of a corner
         is_corner = (i in corners) or ((i+1)%n in corners)
         
-        # FIX: Even segments between corners can be too short for curves
-        # If segment is very short, keep it as a line to prevent "waviness"
+        # FIX: [1d] Scale-aware minimum segment length
         # Increased threshold from 2.0 to 4.5 for more stability at high scales
         seg_len = np.linalg.norm(p2 - p1)
-        if seg_len < (4.5 / smooth_factor if smooth_factor > 0 else 100):
+        min_seg_for_curve = max(2.0, 3.0 / max(smooth_factor, 0.01))
+        if seg_len < min_seg_for_curve:
             sf = 0.0 # Force line for short segments
         else:
             sf = 0.0 if is_corner else smooth_factor
             
-            # Additional check: if the segment is very "inflected" (turning sharply), 
-            # reduce sf to prevent overshooting
+            # Additional check: if the segment is turning sharply, 
+            # reduce sf to prevent overshooting (spikes)
             angle_p1p2 = _get_angle(p0, p1, p2)
             angle_p2p3 = _get_angle(p1, p2, p3)
+            # If turning more than 30 deg at either knot, dampen tension
             if angle_p1p2 < 150 or angle_p2p3 < 150:
-                sf *= 0.5 # Dampen curves on sharp turns
+                sf *= 0.4 # More aggressive dampening
+            # Extreme case: very sharp turns get even less tension
+            if angle_p1p2 < 120 or angle_p2p3 < 120:
+                sf *= 0.25
             
         if sf <= 0.01:
             commands.append(('L', p2[0], p2[1]))
@@ -158,7 +162,7 @@ def fit_bezier_to_contour(
     return commands
 
 
-def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smooth_factor: float = 0.0) -> Tuple[np.ndarray, float]:
+def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smooth_factor: float = 0.0, image_class: str = 'auto') -> Tuple[np.ndarray, float]:
     """
     Prepares a binary mask for vector tracing.
     1. Conditionally upscales by 2x for subpixel precision (only if mask < 800px).
@@ -184,19 +188,17 @@ def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smoot
         bw = mask.copy()
         upsample_factor = 1.0
 
-    # FIX: Even low smooth_factor (0.25) should trigger a gentle blur pass 
-    if apply_blur or smooth_factor > 0.05:
+    # FIX: [1b] For text_logo: bilateral only, no Gaussian (preserves edges)
+    if image_class == 'text_logo' and smooth_factor > 0.05:
+        # USE BILATERAL FILTER TO PRESERVE EDGES WHILE SMOOTHING NOISE
+        bw_u8 = bw.astype(np.uint8) if bw.dtype != np.uint8 else bw
+        sigma_color = 50 + int(smooth_factor * 150)  # 50-125
+        bw_u8 = cv2.bilateralFilter(bw_u8, 9, sigma_color, sigma_color)
+        _, bw = cv2.threshold(bw_u8, 127, 255, cv2.THRESH_BINARY)
+    elif apply_blur or smooth_factor > 0.05:
         # 2) float smoothing (critical for artwork to melt artifacts)
         bw_f = bw.astype(np.float32) / 255.0
         
-        # USE BILATERAL FILTER TO PRESERVE EDGES WHILE SMOOTHING NOISE
-        # This prevents the "waviness" that Gaussian Blur can introduce on jagged steps
-        if smooth_factor > 0.1:
-            bw_u8 = (bw_f * 255).astype(np.uint8)
-            d = 5 if smooth_factor < 0.25 else 9
-            bw_u8 = cv2.bilateralFilter(bw_u8, d, 75, 75)
-            bw_f = bw_u8.astype(np.float32) / 255.0
-
         # Determine blur strength based on smooth_factor
         if smooth_factor > 0.6:
             k_size = (7, 7)
@@ -500,24 +502,26 @@ def export_vector_pdf(
         c.rect(draw_x, draw_y, draw_w, draw_h, fill=1, stroke=0)
         
         # ─── Advanced Vector Path Generation ───
-        # FIX GROUP 4.1: Inverted scale-aware smoothing - INCREASE smoothing at high scale
+        # FIX: [1a] Scale-aware smoothing - INCREASE smoothing at high scale
         # A 1px staircase becomes a 5px staircase at 5x scale, requiring MORE smoothing
         adjusted_smooth = smooth_factor
         if scale_factor > 2.0:
             # Increase smoothing up to a cap
             scale_boost = min(2.5, scale_factor / 2.0)
             adjusted_smooth = min(0.45, smooth_factor * scale_boost)
-            # Cap at 0.25 for text_logo class
+            # FIX: [1a] Raise cap for text_logo when high scale
             if image_class == 'text_logo':
-                adjusted_smooth = min(adjusted_smooth, 0.25)
+                # رفع الـ cap من 0.25 لـ 0.35 عند scale > 4
+                max_smooth = 0.35 if scale_factor > 4.0 else 0.25
+                adjusted_smooth = min(adjusted_smooth, max_smooth)
             logger.info(f"[VectorExporter] Scale-aware smoothing: {smooth_factor} → {adjusted_smooth:.3f} "
                        f"(scale={scale_factor:.2f}x, boost={scale_boost:.2f})")
         
-        # FIX GROUP 4.2: preprocess_mask_for_vector now returns (mask, upsample_factor)
+        # FIX: [1c] Updated call with image_class
         if image_class == 'text_logo' and adjusted_smooth < 0.2:
-            bw, upsample_factor = preprocess_mask_for_vector(mask, apply_blur=False, smooth_factor=adjusted_smooth)
+            bw, upsample_factor = preprocess_mask_for_vector(mask, apply_blur=False, smooth_factor=adjusted_smooth, image_class=image_class)
         else:
-            bw, upsample_factor = preprocess_mask_for_vector(mask, apply_blur=True, smooth_factor=adjusted_smooth)
+            bw, upsample_factor = preprocess_mask_for_vector(mask, apply_blur=True, smooth_factor=adjusted_smooth, image_class=image_class)
 
         # Ensure CV_8UC1 format for findContours
         if bw.dtype != np.uint8:
@@ -548,16 +552,54 @@ def export_vector_pdf(
             return draw_x + px_x * scale_w, draw_y + (mask_h - px_y) * scale_h
         
         def _append_contour_to_path(target_path, contour_arr):
+            """Appends a single OpenCV contour to the PDF path with cleaning."""
+            # 1. PRIMARY AREA GATE
             area = cv2.contourArea(contour_arr)
             if area < min_contour_area or len(contour_arr) < 3:
                 return
             
-            # 🔥 Use adjusted_smooth (scale-aware) instead of original smooth_factor
+            # 2. CONTOUR HYGIENE PHASE (Remove spikes and micro-protrusions)
+            # Spikes often appear due to binarization noise or anti-aliasing artifacts
+            # We filter points that create extremely sharp interior angles (< 15 degrees)
+            cleaned_cnt = []
+            n_pts = len(contour_arr)
+            for i in range(n_pts):
+                p0 = contour_arr[(i-1)%n_pts][0]
+                p1 = contour_arr[i][0]
+                p2 = contour_arr[(i+1)%n_pts][0]
+                
+                # Calculate angle
+                v_prev = p1 - p0
+                v_next = p2 - p1
+                norm_prev = max(1e-6, np.linalg.norm(v_prev))
+                norm_next = max(1e-6, np.linalg.norm(v_next))
+                
+                # Dot product for angle
+                cos_theta = np.dot(v_prev, v_next) / (norm_prev * norm_next)
+                angle = np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0)))
+                
+                # SPIKE DETECTION: If angle is extremely sharp (turning > 165 deg)
+                # Protrusions often happen when a single pixel is "out"
+                if angle > 165.0:
+                    # Cut spikes up to 8px long at high resolution
+                    spike_limit = max(3.0, 1.5 * scale_factor)
+                    if norm_prev < spike_limit or norm_next < spike_limit:
+                        # Skip this point to "cut" the spike
+                        continue
+                cleaned_cnt.append(contour_arr[i])
+            
+            if len(cleaned_cnt) < 3:
+                return
+                
+            contour_arr = np.array(cleaned_cnt)
+            
+            # 3. BEZIER FITTING PHASE
+            # Use adjusted_smooth (scale-aware) instead of original smooth_factor
             adaptive_smooth = compute_adaptive_smooth(
                 contour_arr, adjusted_smooth, image_class
             )
             
-            # 🔥 Scale-aware epsilon: reduce epsilon for high upscales to preserve detail
+            # Scale-aware epsilon: reduce epsilon for high upscales to preserve detail
             adjusted_epsilon = epsilon
             if scale_factor > 2.0 and epsilon is not None:
                 epsilon_reduction = min(1.0, 2.0 / scale_factor)

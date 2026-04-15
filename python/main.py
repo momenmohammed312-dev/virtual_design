@@ -1,14 +1,6 @@
 """
 main.py — Production Orchestrator for Silk Screen Pipeline
 Virtual Design Silk Screen Studio
-
-Architecture:
-- AI Analyzer: core/ai_vision_bridge.py
-- Pipeline Router: core/pipeline_router.py
-- Processing Engine: Integrated within specialized router paths
-
-Memory Optimization: < 2GB RAM
-Implementation: Senior Computer Vision Engineer
 """
 
 import argparse
@@ -20,15 +12,13 @@ import time
 import gc
 import io
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
-# إجبار المخرجات على استخدام UTF-8 لتجنب مشاكل التشفير في ويندوز
+# Force UTF-8 for Windows
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-import sys
-import time
 import cv2
 import numpy as np
 
@@ -40,6 +30,9 @@ from core.image_loader import load_image_safely
 from core.print_job_config import PrintJobConfig
 from core.pipeline_router import PipelineRouter, PipelineResult
 from core.pipeline_controller import PipelineController
+from core.decision_engine import DecisionOracle
+from core.physical_print_model import PhysicalPrintModel
+from core import ai_vision_bridge
 
 # Logging Setup
 logging.basicConfig(
@@ -48,8 +41,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger("SilkScreenPipeline")
-
-# ─── Progress Signaling (Flutter Bridge) ──────────────────────────────────────
 
 def _step(n: int, msg: str):
     print(f"\nStep {n}/10: {msg}\n", flush=True)
@@ -60,324 +51,158 @@ def _progress(pct: float, msg: str = ""):
 def _output_dir_signal(path: str):
     print(f"OUTPUT_DIR:{os.path.abspath(path)}", flush=True)
 
-# ─── Main Pipeline ────────────────────────────────────────────────────────────
-
 def run_pipeline(args: argparse.Namespace) -> int:
-    """Main execution orchestrator."""
+    """Refactored orchestrator using the Unified Decision Engine."""
     start_time = time.time()
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    _step(1, "Loading and Normalizing Engine")
+    _step(1, "Unified Engine Initialization")
     
-    # 1. Configuration & Auto-DPI Logic
-    # 🔥 FIXED: If DPI is 0 or -1, set based on detail level
-    if args.dpi <= 0:
-        if getattr(args, 'detail_level', 'medium') == 'high':
-            args.dpi = 1200
-        else:
-            args.dpi = 600
-        logger.info(f"[Main] Auto-DPI enabled. Selected: {args.dpi} DPI")
-
-    # Auto-High Quality Logic
-    if getattr(args, 'detail_level', 'medium') == 'high':
-        # Push resolution for high detail requests
-        if args.dpi < 1200:
-            logger.info(f"[Main] High Detail requested. Boosting DPI: {args.dpi} -> 1200")
-            args.dpi = 1200
-        # Store high-quality flag for router/exporter
-        args._is_high_detail = True
-    else:
-        args._is_high_detail = False
-
-    # 1. Configuration
-    job_config = PrintJobConfig(
-        mesh_count=args.mesh_count,
-        dpi=args.dpi,
-    )
-    # Clamp LPI to mesh constraints
-    args.lpi = job_config.validate_lpi(args.lpi, auto_fix=getattr(args, 'auto_fix_lpi', False))
-    
-    # 2. Loading (Memory-Safe)
-    # 🔥 FIXED: Now receives alpha_mask from transparent PNGs
+    # 1. Loading
     image, alpha_mask = load_image_safely(args.input)
     if image is None:
         logger.error(f"Failed to load image: {args.input}")
         return 2
     
-    # ⚡ No-copy float conversion if possible
-    if len(image.shape) > 2 and image.shape[2] == 4:
-        image = image[:, :, :3]
+    # 2. Decision Phase (The Oracle)
+    _step(2, "Unified Decision Oracle — AI & Physics Analysis")
+    ppm = PhysicalPrintModel(mesh_count=args.mesh_count)
+    oracle = DecisionOracle()
     
-    h, w = image.shape[:2]
+    # Solve all parameters (AI + User + Rule + Physics)
+    decision = oracle.solve(image, args, ai_vision_bridge, ppm)
     
-    # 🔥 Log alpha channel info for debugging
-    if alpha_mask is not None:
-        alpha_ratio = np.sum(alpha_mask) / alpha_mask.size
-        logger.info(f"[Pipeline] Alpha mask loaded: {alpha_ratio:.1%} visible artwork, "
-                   f"{1-alpha_ratio:.1%} transparent/background")
+    # Export Trace for transparency
+    trace_path = output_dir / "decision_trace.json"
+    with open(trace_path, "w", encoding="utf-8") as f:
+        json.dump(oracle.get_summary_dict(), f, indent=2)
     
-    # Score original image quality
-    # 🔥 Pass alpha_mask to PipelineRouter for transparent PNG handling
+    logger.info(f"[Main] Decision exported to {trace_path}")
+    logger.info(f"[Main] Resulting class: {decision.image_class.upper()}")
+    _progress(0.4, f"Oracle: {decision.image_class.upper()}")
+
+    # 3. Routing Phase
+    _step(3, "Executing Pipeline Plan")
+    job_config = PrintJobConfig(mesh_count=args.mesh_count, dpi=decision.parameters.get('dpi', 300))
     router = PipelineRouter(job_config, alpha_mask=alpha_mask)
-    qual_score = router.halftone_gen.evaluate_quality(image)
-    logger.info(f"Image loaded: {w}x{h} | Quality Score: {qual_score:.1f}")
-    _progress(0.1, "Image Loaded")
-
-    # 3. Decision Logic (AI Analyzer + Pipeline Router)
-    _step(2, "AI Image Analysis & Routing")
     
-    # --- AI Autopilot: Hybrid OpenCV + Qwen3-VL ---
-    # Task 3.4 FIX: Only run auto-colors when user hasn't explicitly set color count
-    # Check if colors is 0 (auto) and auto-colors flag is enabled
-    user_color_count = getattr(args, 'colors', 0)
-    if getattr(args, 'auto_colors', False) and user_color_count == 0 and args.image_type == 'auto':
-        try:
-            from core.ai_vision_bridge import analyze_image, apply_to_args
-            from core.color_separator import ColorSeparator
-            
-            logger.info("[Main] AI Autopilot enabled. Running hybrid color analysis...")
-            
-            # STEP 1: OpenCV K-Means extracts dominant colors
-            separator = ColorSeparator()
-            opencv_colors = separator.extract_dominant_colors_for_ai(image, max_colors=8)
-            logger.info(f"[Main] OpenCV found {len(opencv_colors)} dominant colors")
-            
-            # STEP 2: AI decides which colors to merge/ignore
-            ai_results = analyze_image(image, opencv_colors=opencv_colors)
-            
-            # STEP 3: Apply AI decisions to pipeline args
-            apply_to_args(ai_results, args)
-            
-            # 🔥 NEW: Execute AI-suggested visual interventions (intervene in logic)
-            if ai_results.get("actions"):
-                controller = PipelineController()
-                image = controller.apply_ai_actions(image, ai_results["actions"])
-            
-            # 🔥 NEW: Handle AI-requested versioning
-            if ai_results.get("is_new_version") or getattr(args, 'ai_autofix', False):
-                v_suffix = f"_AI_Refined_{int(time.time())}"
-                new_output = output_dir.parent / (output_dir.name + v_suffix)
-                new_output.mkdir(exist_ok=True, parents=True)
-                logger.info(f"[Main] AI requested NEW VERSION. Output: {new_output}")
-                output_dir = new_output
-                output_pdf = output_dir / "final_films.pdf"
-
-            _progress(0.3, "AI Analysis Complete")
-        except Exception as e:
-            logger.error(f"[Main] AI Bridge failed: {e}")
-    elif user_color_count > 0:
-        logger.info(f"[Main] Using user-specified color count: {user_color_count}")
-    # ------------------------------------------
+    result: PipelineResult = router.route_deterministic(image, decision)
     
-    # SmartAnalyzer Fallback for standard metadata
-    try:
-        from core.smart_analyzer import SmartAnalyzer
-        analyzer = SmartAnalyzer()
-        analysis_obj = analyzer.analyze(image, dpi=args.dpi)
-    except ImportError:
-        analysis_obj = None
-
-    # Routing: Decides engine paths and extracts parameters
-    result: PipelineResult = router.route(image, analysis_obj, args)
-    
-    _progress(0.4, f"Routed to {result.image_class.upper()}")
-    
-    # 🔗 ULTRA-CLEANUP: Free source image before heavy separation/export
+    # Cleanup memory
     del image
     gc.collect()
 
-    # 5. Specialized Processing (Post-Routing steps if needed)
-    _step(3, "Final Edge Cleaning & Validation")
-    
-    controller = PipelineController()
-    masks = result.masks
-    
-    # Step 4: Registration marks — VECTOR ONLY via export_vector_pdf
-    # Raster RegistrationMarksGenerator is disabled to prevent double marks.
-    _step(4, "Registration marks handled as vector in PDF export stage")
-
-    # 6. Export Stage (Split by Image Class)
+    # 4. Export Phase
     _step(9, "Exporting Films")
     try:
         output_pdf = output_dir / "final_films.pdf"
+        masks = result.masks
+        params = decision.parameters
         sep_res = result.separation_result
 
         if result.image_class in ('photo', 'artwork_halftone'):
-            # ── RASTER PATH: halftone mask → high-res raster PDF ──
-            # FIX Issue #2: Unified layout system for raster/vector exports
             from reportlab.pdfgen import canvas as rl_canvas
             from reportlab.lib.pagesizes import A4, A3, letter
             from core.vector_exporter import render_raster_halftone
             from core.vector_marks import add_vector_marks_to_page
 
             page_sizes = {'A4': A4, 'A3': A3, 'LETTER': letter}
-            page_w, page_h = page_sizes.get(
-                getattr(args, 'page_size', 'A4').upper(), A4
-            )
+            page_name = params.get('page_size', 'A4').upper()
             
-            # FIX Issue #1: Use configurable margins matching vector exporter
-            margin_pt = getattr(args, 'margin_pt', 65)
-            min_margin_pt = 20
-            margin_pt = max(margin_pt, min_margin_pt)
+            # Check for Custom dimensions (converted from mm to points)
+            custom_w = params.get('page_width', 0)
+            custom_h = params.get('page_height', 0)
+            
+            if page_name == 'CUSTOM' and custom_w > 0 and custom_h > 0:
+                # 1 mm = 2.83464567 points
+                page_w, page_h = custom_w * 2.8346, custom_h * 2.8346
+                logger.info(f"[Export] Using CUSTOM paper size: {custom_w}x{custom_h} mm")
+            else:
+                page_w, page_h = page_sizes.get(page_name, A4)
+                
+            margin_pt = params.get('margin_pt', 65.0)
 
             c = rl_canvas.Canvas(str(output_pdf), pagesize=(page_w, page_h))
-
-            for i, (mask, color_rgb, color_name) in enumerate(
-                zip(masks, sep_res['colors'], sep_res['color_names'])
-            ):
-                if i > 0:
-                    c.showPage()
-
-                # White background
+            for i, (mask, color_rgb, color_name) in enumerate(zip(masks, sep_res['colors'], sep_res['color_names'])):
+                if i > 0: c.showPage()
                 c.setFillColorRGB(1, 1, 1)
                 c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
-
-                # FIX Issue #3: Pass margin to render_raster_halftone for consistent scaling
+                
                 render_raster_halftone(
-                    c, mask, getattr(result, 'mask_dpi', args.dpi),
+                    c, mask, result.mask_dpi or params.get('dpi', 300),
                     page_w, page_h, margin_pt=margin_pt,
-                    scale_mode=getattr(args, 'scale_mode', 'fit_to_page'),
-                    custom_scale_percent=getattr(args, 'custom_scale_percent', 100.0),
-                    custom_page_w=getattr(args, 'page_width', 0),
-                    custom_page_h=getattr(args, 'page_height', 0),
-                    fit_to_artwork=getattr(args, 'fit_artwork', False)
+                    scale_mode=params.get('scale_mode', 'fit_to_page'),
+                    custom_scale_percent=params.get('custom_scale_percent', 100.0),
+                    custom_page_w=params.get('page_width', 0),
+                    custom_page_h=params.get('page_height', 0),
+                    fit_to_artwork=params.get('fit_artwork', False)
                 )
-
-                # Vector registration marks (unified with vector path)
-                job_name = Path(args.input).stem if hasattr(args, 'input') and args.input else output_pdf.stem
-                film_info = {'job_name': job_name}
-                add_vector_marks_to_page(
-                    c, page_w, page_h, margin_pt, color_rgb, color_name, film_info
-                )
-
-                # FIX Issue #2: Clean professional footer matching vector exporter format exactly
-                c.setFont("Helvetica", 9)
-                c.setFillColorRGB(0, 0, 0)
-                # Left footer: Color name only (matching vector exporter)
-                c.drawString(margin_pt, margin_pt - 15, color_name.upper())
-                # Right footer: Brand only (matching vector exporter)
-                c.drawRightString(page_w - margin_pt, margin_pt - 15, "Developed by MO2")
-
+                
+                job_name = Path(args.input).stem
+                add_vector_marks_to_page(c, page_w, page_h, margin_pt, color_rgb, color_name, {'job_name': job_name})
             c.save()
-            logger.info(
-                f"[RasterExport] Saved: {output_pdf} ({len(masks)} films)"
-            )
-
         else:
-            # ── VECTOR PATH: solid/artwork/text → Bezier vector PDF ──
             from core.vector_exporter import export_vector_pdf
-            # Use input image filename as job name for branding
-            job_name = Path(args.input).stem if hasattr(args, 'input') and args.input else None
-            # Determine if halftone was applied
-            is_halftone = getattr(args, 'halftone', False) or result.image_class == 'photo'
-            # Resolve default (-1.0) arguments for smoothing and corners
-            final_smooth = getattr(args, 'smoothing_factor', -1.0)
-            eff_smooth = getattr(result, 'effective_smoothing', -1.0)
-            
-            if final_smooth < 0:
-                final_smooth = eff_smooth if (eff_smooth is not None and eff_smooth >= 0) else 0.25
-
-            final_corner = getattr(args, 'corner_threshold', -1.0)
-            if final_corner < 0:
-                final_corner = 120.0
+            # Determine page size string
+            page_size_val = params.get('page_size', 'A4')
+            if page_size_val.upper() == 'CUSTOM':
+                # vector_exporter expects "WIDTHxHEIGHT" in mm if custom
+                page_size_val = f"{params.get('page_width', 210)}x{params.get('page_height', 297)}"
 
             export_vector_pdf(
-                masks=masks,
-                colors=sep_res['colors'],
-                color_names=sep_res['color_names'],
-                output_path=output_pdf,
-                dpi=args.dpi,
-                mask_dpi=getattr(result, 'mask_dpi', None),  # FIX A-12/C-10
-                smooth_factor=final_smooth,
-                corner_threshold=final_corner,
-                min_contour_area=getattr(args, 'contour_min_area', 50),
-                image_class=result.image_class,
-                page_size=getattr(args, 'page_size', 'A4'),
-                epsilon=getattr(args, 'simplification_epsilon', None),
-                job_name=job_name,
-                is_halftone=is_halftone,
-                args=args, # Pass full args for custom page sizes
+                masks=masks, colors=sep_res['colors'], color_names=sep_res['color_names'],
+                output_path=output_pdf, dpi=params.get('dpi', 300), mask_dpi=result.mask_dpi,
+                smooth_factor=params.get('smoothing_factor', 0.25),
+                corner_threshold=params.get('corner_threshold', 120.0),
+                min_contour_area=params.get('contour_min_area', 50),
+                image_class=result.image_class, page_size=page_size_val,
+                epsilon=params.get('simplification_epsilon', 1.2),
+                job_name=Path(args.input).stem, is_halftone=params.get('halftone', False),
+                args=args
             )
 
-        # ── Generate PNG Previews for Flutter ──
-        logger.info("[Preview] Generating PNG previews...")
+        # Previews
         for i, (mask, color_name) in enumerate(zip(masks, sep_res['color_names'])):
-            # Ensure mask is uint8
-            if mask.dtype != np.uint8:
-                mask = mask.astype(np.uint8)
-            
-            # Task 3.2 FIX: Correct preview inversion for silk-screen polarity
-            # Silk-screen: ink=0 (black), background=255 (white/transparent)
-            # Preview should show: black ink on white background (what you see when printing)
-            mask_mean = np.mean(mask)
-            if mask_mean < 127:
-                # Mask is mostly black (ink-heavy), background is dark
-                # Invert so preview shows black ink on white background
-                preview_mask = cv2.bitwise_not(mask)
-            else:
-                # Mask is already mostly white (background), ink is visible as black
-                # Use as-is for preview
-                preview_mask = mask.copy()
-            
-            # Save as PNG
-            preview_path = output_dir / f"film_{i+1}_{color_name.replace(' ', '_')}.png"
-            cv2.imwrite(str(preview_path), preview_mask)
-            logger.info(f"[Preview] Saved: {preview_path.name}")
+            preview_mask = cv2.bitwise_not(mask) if np.mean(mask) < 127 else mask.copy()
+            cv2.imwrite(str(output_dir / f"film_{i+1}_{color_name.replace(' ', '_')}.png"), preview_mask)
 
         _progress(1.0, "Complete")
-
-        # 🎯 Flutter JSON Bridge
         if getattr(args, 'json_output', False):
-            res_json = {
-                "status": "success",
-                "pdf": str(output_pdf.absolute()),
-                "layers": len(masks),
-                "colors": sep_res['color_names'],
-                "class": result.image_class,
-                "elapsed": round(time.time() - start_time, 1)
-            }
-            print(f"\nRESULTS_JSON:{json.dumps(res_json)}", flush=True)
+            print(f"\nRESULTS_JSON:{json.dumps({'status': 'success', 'layers': len(masks)})}", flush=True)
 
     except Exception as e:
         logger.error(f"Export failed: {e}", exc_info=True)
         return 1
 
-    # Signal output directory to Flutter
     _output_dir_signal(str(output_dir))
     return 0
 
-# ─── Arg Parsing ──────────────────────────────────────────────────────────────
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Silk Screen Image Processing System")
-    parser.add_argument("--input", required=True, help="Path to input image")
-    parser.add_argument("--output", required=True, help="Output directory")
-    parser.add_argument("--dpi", type=int, default=300, help="Output resolution (DPI)")
-    parser.add_argument("--mesh-count", type=int, default=160, help="Screen mesh count")
-    parser.add_argument("--lpi", type=int, default=85, help="Halftone LPI limit (higher = smaller dots)")
-    parser.add_argument("--colors", type=int, default=0, help="Number of colors (0=auto)")
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument("--mesh-count", type=int, default=160)
+    parser.add_argument("--lpi", type=int, default=85)
+    parser.add_argument("--colors", type=int, default=0)
     parser.add_argument("--image-type", choices=["text_logo", "artwork", "photo", "auto"], default="auto")
-    parser.add_argument("--halftone", action="store_true", help="Force halftone mode")
-    parser.add_argument("--combine-pdf", action="store_true", default=True)
+    parser.add_argument("--halftone", action="store_true")
+    parser.add_argument("--skip-halftone", action="store_true")
     parser.add_argument("--smoothing-factor", type=float, default=0.25)
-    parser.add_argument("--auto-fix-lpi", action="store_true", default=True)
-    parser.add_argument("--use-underbase", action="store_true", help="Generate Underbase")
+    parser.add_argument("--use-underbase", action="store_true")
     parser.add_argument("--choke-px", type=int, default=2)
     parser.add_argument("--trapping-px", type=int, default=1)
     parser.add_argument("--page-size", default="A4")
-    parser.add_argument("--page-width", type=float, default=0, help="Custom page width in mm")
-    parser.add_argument("--page-height", type=float, default=0, help="Custom page height in mm")
-    parser.add_argument("--fit-artwork", action="store_true", help="Resize page to artwork dimensions")
-    parser.add_argument("--margin-pt", type=float, default=65.0, help="Page margin in points (pt)")
+    parser.add_argument("--page-width", type=float, default=0)
+    parser.add_argument("--page-height", type=float, default=0)
+    parser.add_argument("--fit-artwork", action="store_true")
+    parser.add_argument("--margin-pt", type=float, default=65.0)
     parser.add_argument("--json-output", action="store_true")
-
-    # Advanced Professional Parameters
     parser.add_argument("--detail-level", choices=["low", "medium", "high"], default="medium")
-    parser.add_argument("--clean", action="store_true", help="Perform deep edge cleaning")
-    parser.add_argument("--validate-strokes", action="store_true", help="Ensure minimum stroke width")
-    parser.add_argument("--min-stroke", type=float, default=0.5, help="Min stroke width in mm")
-    parser.add_argument("--skip-halftone", action="store_true", help="Force skip halftone generation")
+    parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--validate-strokes", action="store_true")
+    parser.add_argument("--min-stroke", type=float, default=0.5)
     parser.add_argument("--pantone-matching", choices=["disabled", "basic", "automatic"], default="automatic")
     parser.add_argument("--underbase-mode", choices=["disabled", "automatic", "forced"], default="disabled")
     parser.add_argument("--trapping-mode", choices=["disabled", "automatic"], default="automatic")
@@ -385,25 +210,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-mesh-mode", choices=["disabled", "automatic"], default="automatic")
     parser.add_argument("--typography-mode", choices=["disabled", "automatic"], default="automatic")
     parser.add_argument("--mesh-preview-mode", choices=["disabled", "automatic"], default="automatic")
-    parser.add_argument("--noise-removal", type=int, default=3, help="Noise removal strength (1-10)")
-    parser.add_argument("--adaptive-threshold", action="store_true", help="Use adaptive binary thresholding")
-    
-    # Existing / Legacy
+    parser.add_argument("--noise-removal", type=int, default=3)
+    parser.add_argument("--adaptive-threshold", action="store_true")
     parser.add_argument("--corner-threshold", type=float, default=-1.0)
     parser.add_argument("--global-threshold", type=int, default=200)
-    parser.add_argument("--auto-crop", action="store_true")
-    
-    # AI Autopilot
-    parser.add_argument("--auto-colors", action="store_true", help="Enable AI-based automatic parameters optimization")
-    
-    # AI Vision Extended Parameters
+    parser.add_argument("--auto-colors", action="store_true")
     parser.add_argument("--dot-shape", choices=["round", "ellipse", "line", "square"], default="ellipse")
     parser.add_argument("--upscale-factor", type=float, default=1.0)
     parser.add_argument("--denoise-strength", type=int, default=3)
     parser.add_argument("--contour-min-area", type=int, default=50)
     parser.add_argument("--simplification-epsilon", type=float, default=1.2)
-    parser.add_argument("--ai-autofix", action="store_true", help="Re-analyze and auto-correct pipeline params")
-    
+    parser.add_argument("--ai-autofix", action="store_true")
     return parser.parse_args()
 
 if __name__ == "__main__":

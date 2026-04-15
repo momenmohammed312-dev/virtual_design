@@ -59,6 +59,10 @@ class PreviewController extends GetxController {
   // Cache busting
   final RxInt lastUpdateTimestamp = 0.obs;
 
+  // AI Iteration Tracking (Task 3c)
+  int _autoFixIteration = 1;
+  Map<String, dynamic>? _lastAutoFixParams;
+
   // Per-layer overrides
   final RxList<bool> isLayerInverted = <bool>[].obs;
   final RxList<bool> isLayerSolid = <bool>[].obs;
@@ -453,7 +457,11 @@ class PreviewController extends GetxController {
         originalImage: imagePath.value,
         previewImage: previewPaths[selectedFilmIndex.value],
         prompt: userPrompt,
+        iteration: _autoFixIteration,
+        prevParams: _lastAutoFixParams,
       );
+
+      _autoFixIteration++;
 
       if (result != null) {
         progress.value = 0.7;
@@ -472,6 +480,7 @@ class PreviewController extends GetxController {
               (result['global_threshold'] as num).toDouble();
         }
 
+        _lastAutoFixParams = result; // Store for next iteration
         final reason = result['adjustment_reason'] ?? 'AI adjustments applied';
         Get.snackbar(
           'AI Fix Applied',
@@ -529,10 +538,14 @@ class PreviewController extends GetxController {
       }
 
       // Run AI Auto-Fix
-      final result = await pythonProcessor.runAutoFix(
+      final result = await (pythonProcessor as PythonProcessor).runAutoFix(
         originalImage: imagePath.value,
         previewImage: previewPaths[selectedFilmIndex.value],
+        iteration: _autoFixIteration,
+        prevParams: _lastAutoFixParams,
       );
+      
+      _autoFixIteration++;
 
       if (result != null) {
         // Apply AI-suggested parameters
@@ -551,6 +564,7 @@ class PreviewController extends GetxController {
           // Update LPI if halftone
         }
 
+        _lastAutoFixParams = result; // Store for next iteration
         final reason = result['adjustment_reason'] ?? 'Parameters adjusted';
         Get.snackbar(
           'AI Auto-Fix Applied',

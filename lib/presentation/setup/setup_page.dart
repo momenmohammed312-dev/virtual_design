@@ -16,17 +16,18 @@ class SetupPage extends StatefulWidget {
 class _SetupPageState extends State<SetupPage> {
   static const Color primaryBlue = Color(0xFF1564A5);
   static const Color sidebarBlue = Color(0xFF0E3182);
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  // State variables - Now synced with controller viainitState
+  // State variables
   PrintType selectedPrintType = PrintType.screenPrinting;
   int selectedColorCount = 0;
   DetailLevel selectedDetailLevel = DetailLevel.medium;
 
   // Halftone settings
   bool showHalftoneSettings = false;
-  int lpi = 85; // Default LPI for finer dots
+  int lpi = 85; 
   DotShape selectedDotShape = DotShape.round;
-  // Custom paper size (cm) support in the UI
+  
   bool isCustomPaper = false;
   double customPaperWidthCm = 21.0;
   double customPaperHeightCm = 29.7;
@@ -47,18 +48,16 @@ class _SetupPageState extends State<SetupPage> {
   bool edgeEnhancement = false;
   bool colorCorrection = false;
   bool adaptiveThreshold = false;
+  bool responsiveMode = false;
 
   int get meshCount {
-    // Calculate mesh count based on LPI (higher LPI = higher mesh needed)
-    // Standard mesh counts: 110, 160, 200, 230, 280, 305, 355
-    // Formula: Mesh ≈ LPI × 4.5 (for safety margin)
-    if (lpi < 45) return 110; // 110 mesh / 4.5 = ~24 LPI (min)
-    if (lpi < 55) return 160; // 160 mesh / 4.5 = ~35 LPI
-    if (lpi < 70) return 200; // 200 mesh / 4.5 = ~44 LPI
-    if (lpi < 85) return 230; // 230 mesh / 4.5 = ~51 LPI
-    if (lpi < 105) return 280; // 280 mesh / 4.5 = ~62 LPI
-    if (lpi < 130) return 305; // 305 mesh / 4.5 = ~68 LPI
-    return 355; // 355 mesh / 4.5 = ~79 LPI (max ~150 with high DPI)
+    if (lpi < 45) return 110;
+    if (lpi < 55) return 160;
+    if (lpi < 70) return 200;
+    if (lpi < 85) return 230;
+    if (lpi < 105) return 280;
+    if (lpi < 130) return 305;
+    return 355;
   }
 
   int get strokeWidthInPixels {
@@ -70,19 +69,12 @@ class _SetupPageState extends State<SetupPage> {
   @override
   void initState() {
     super.initState();
-    // Sync UI local state with Controller (The source of truth)
     final controller = Get.find<SetupController>();
     selectedColorCount = controller.selectedColors.value;
     switch (controller.selectedDetail.value) {
-      case ps.DetailLevel.high:
-        selectedDetailLevel = DetailLevel.high;
-        break;
-      case ps.DetailLevel.medium:
-        selectedDetailLevel = DetailLevel.medium;
-        break;
-      case ps.DetailLevel.low:
-        selectedDetailLevel = DetailLevel.low;
-        break;
+      case ps.DetailLevel.high: selectedDetailLevel = DetailLevel.high; break;
+      case ps.DetailLevel.medium: selectedDetailLevel = DetailLevel.medium; break;
+      case ps.DetailLevel.low: selectedDetailLevel = DetailLevel.low; break;
     }
     lpi = controller.lpiValue.value;
     strokeWidth = controller.strokeWidth.value;
@@ -92,482 +84,115 @@ class _SetupPageState extends State<SetupPage> {
     edgeEnhancement = controller.edgeEnhancement.value;
     colorCorrection = controller.colorCorrection.value;
     adaptiveThreshold = controller.adaptiveThreshold.value;
+    responsiveMode = controller.responsiveMode.value;
     showHalftoneSettings = controller.isHalftone.value;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
-      body: GetBuilder<SetupController>(
-        builder: (controller) => Stack(
-          children: [
-            Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool isDesktop = constraints.maxWidth >= 900;
+        return Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: const Color(0xFFF5F5F5),
+          drawer: isDesktop ? null : _buildSidebar(isDrawer: true),
+          body: GetBuilder<SetupController>(
+            builder: (controller) => Stack(
               children: [
-                _buildSidebar(),
-                Expanded(
-                  child: Column(
-                    children: [
-                      _buildTopBar(),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.all(30),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildProgressSteps(),
-                              const SizedBox(height: 30),
-                              const Text(
-                                'Print & System Setup',
-                                style: TextStyle(
-                                  fontSize: 32,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              const Text(
-                                'Configure your print job parameters, finish type, and quality settings below.',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Color(0xFF6B7280),
-                                ),
-                              ),
-                              const SizedBox(height: 30),
-                              _buildColorComplexitySection(),
-                              const SizedBox(height: 30),
-                              _buildDetailLevelSection(),
-                              const SizedBox(height: 30),
-                              _buildPrintFinishSection(controller),
-                              const SizedBox(height: 30),
-                              if (!controller.isHalftone.value) ...[
-                                _buildSolidTuningSection(controller),
-                                const SizedBox(height: 30),
-                              ],
-                              _buildStrokeWidthSection(),
-                              const SizedBox(height: 30),
-                              _buildSpecificationsSection(),
-                              const SizedBox(height: 30),
-                              _buildAdvancedSettingsSection(),
-                              const SizedBox(height: 30),
-                              _buildOutputDirectorySection(controller),
-                              const SizedBox(height: 30),
-                              _buildBottomActions(controller),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            // Progress Overlay
-            Obx(() {
-              if (!controller.isProcessing.value) {
-                return const SizedBox.shrink();
-              }
-              return Positioned.fill(
-                child: Container(
-                  color: Colors.black.withAlpha((0.5 * 255).round()),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 400),
-                      child: Card(
-                        color: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.hourglass_bottom,
-                                size: 48,
-                                color: primaryBlue,
-                              ),
-                              const SizedBox(height: 16),
-                              const Text(
-                                'Processing Image',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: LinearProgressIndicator(
-                                  minHeight: 6,
-                                  value: controller.progress.value,
-                                  backgroundColor: const Color(0xFFE5E7EB),
-                                  valueColor:
-                                      const AlwaysStoppedAnimation<Color>(
-                                    primaryBlue,
+                Row(
+                  children: [
+                    if (isDesktop) _buildSidebar(),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          _buildTopBar(!isDesktop, _scaffoldKey),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              key: const PageStorageKey('setup_scroll'),
+                              padding: EdgeInsets.all(isDesktop ? 30 : 15),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildProgressSteps(isDesktop),
+                                  const SizedBox(height: 30),
+                                  const Text(
+                                    'Production Parameters',
+                                    style: TextStyle(
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black,
+                                    ),
                                   ),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                '${(controller.progress.value * 100).toStringAsFixed(0)}%',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: primaryBlue,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              Obx(
-                                () => Text(
-                                  controller.progressMessage.value,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Color(0xFF6B7280),
+                                  const SizedBox(height: 10),
+                                  const Text(
+                                    'Configure your print job parameters, finish type, and high-fidelity quality settings.',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Color(0xFF6B7280),
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(height: 30),
+                                  _buildColorComplexitySection(isDesktop),
+                                  const SizedBox(height: 30),
+                                  _buildDetailLevelSection(isDesktop),
+                                  const SizedBox(height: 30),
+                                  _buildPrintFinishSection(controller, isDesktop),
+                                  const SizedBox(height: 30),
+                                  _buildSpecificationsSection(isDesktop),
+                                  const SizedBox(height: 30),
+                                  _buildAdvancedSettingsSection(),
+                                  const SizedBox(height: 30),
+                                  _buildOutputDirectorySection(controller),
+                                  const SizedBox(height: 30),
+                                  _buildBottomActions(controller),
+                                ],
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============= Color Complexity Section =============
-  Widget _buildColorComplexitySection() {
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEDE7F6),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.palette_outlined,
-                  color: Color(0xFF7E57C2),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                '1. Color Complexity',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Wrap(
-            spacing: 15,
-            runSpacing: 15,
-            children: [
-              _buildAutoColorOption(),
-              ...[1, 2, 3, 4, 5, 6, 7, 8].map((count) {
-                return _buildColorOption(count);
-              }),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAutoColorOption() {
-    bool isSelected = selectedColorCount == 0;
-
-    return InkWell(
-      onTap: () {
-        setState(() => selectedColorCount = 0);
-        Get.find<SetupController>().selectedColors.value = 0;
-      },
-      child: Container(
-        width: 130,
-        height: 100,
-        padding: const EdgeInsets.all(15),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? primaryBlue : const Color(0xFFE5E7EB),
-            width: isSelected ? 2 : 1,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 35,
-              height: 35,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF9C27B0),
-              ),
-              child: const Icon(
-                Icons.auto_awesome,
-                size: 20,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Auto',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? primaryBlue : Colors.black87,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildColorOption(int count) {
-    bool isSelected = selectedColorCount == count;
-    final colors = [
-      Colors.black,
-      Colors.black,
-      const Color(0xFFEF4444),
-      const Color(0xFF4CAF50),
-      const Color(0xFF9C27B0),
-      const Color(0xFF00BCD4),
-      Colors.deepOrange,
-      Colors.teal,
-      Colors.indigo,
-    ];
-    final colorIndex = count;
-
-    return InkWell(
-      onTap: () {
-        setState(() => selectedColorCount = count);
-        // Propagate to SetupController for processing
-        Get.find<SetupController>().selectedColors.value = count;
-      },
-      child: Container(
-        width: 130,
-        height: 100,
-        padding: const EdgeInsets.all(15),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? primaryBlue : const Color(0xFFE5E7EB),
-            width: isSelected ? 2 : 1,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 35,
-              height: 35,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: colors[colorIndex],
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '$count Color${count > 1 ? 's' : ''}',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? primaryBlue : Colors.black87,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ============= Detail Level Section =============
-  Widget _buildDetailLevelSection() {
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFDCFCE7),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.tune,
-                  color: Color(0xFF16A34A),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                '4. Detail Level',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 15),
-          const Text(
-            'Affects threshold and vector simplification',
-            style: TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: DetailLevel.values.map((level) {
-              bool isSelected = selectedDetailLevel == level;
-              return Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 5),
-                  child: InkWell(
-                    onTap: () {
-                      setState(() {
-                        selectedDetailLevel = level;
-                        if (showHalftoneSettings) {
-                          // Recalculate mesh count
-                        }
-                      });
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 15),
-                      decoration: BoxDecoration(
-                        color: isSelected ? primaryBlue : Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: isSelected
-                              ? primaryBlue
-                              : const Color(0xFFE5E7EB),
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          level.displayName,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: isSelected ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============= Print Finish Section =============
-  Widget _buildPrintFinishSection(SetupController controller) {
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.gradient,
-                  color: Color(0xFFF59E0B),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                '4. Print Finish',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Obx(() => Row(
-                children: PrintFinish.values.map((finish) {
-                  // Sync with controller value
-                  bool isSelected = (controller.selectedFinish.value ==
-                              ps.PrintFinish.halftone &&
-                          finish == PrintFinish.halftone) ||
-                      (controller.selectedFinish.value ==
-                              ps.PrintFinish.solid &&
-                          finish == PrintFinish.solid);
-
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            controller.isHalftone.value =
-                                (finish == PrintFinish.halftone);
-                            controller.selectedFinish.value =
-                                (finish == PrintFinish.halftone)
-                                    ? ps.PrintFinish.halftone
-                                    : ps.PrintFinish.solid;
-                            showHalftoneSettings =
-                                (finish == PrintFinish.halftone);
-                          });
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          decoration: BoxDecoration(
-                            color: isSelected ? primaryBlue : Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: isSelected
-                                  ? primaryBlue
-                                  : const Color(0xFFE5E7EB),
                             ),
                           ),
-                          child: Center(
-                            child: Text(
-                              finish.displayName,
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                color:
-                                    isSelected ? Colors.white : Colors.black87,
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                // Progress Overlay
+                Obx(() {
+                  if (!controller.isProcessing.value) return const SizedBox.shrink();
+                  return Positioned.fill(
+                    child: Container(
+                      color: Colors.black.withAlpha((0.5 * 255).round()),
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 400),
+                            child: Card(
+                              color: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.hourglass_bottom, size: 48, color: primaryBlue),
+                                    const SizedBox(height: 16),
+                                    const Text('Processing Image', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 24),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: LinearProgressIndicator(
+                                        minHeight: 6,
+                                        value: controller.progress.value,
+                                        backgroundColor: const Color(0xFFE5E7EB),
+                                        valueColor: const AlwaysStoppedAnimation<Color>(primaryBlue),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text('${(controller.progress.value * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: primaryBlue)),
+                                    const SizedBox(height: 16),
+                                    Obx(() => Text(controller.progressMessage.value, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)))),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -575,1152 +200,196 @@ class _SetupPageState extends State<SetupPage> {
                       ),
                     ),
                   );
-                }).toList(),
-              )),
-          if (showHalftoneSettings) ...[
-            const SizedBox(height: 25),
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF9FAFB),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE5E7EB)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '📊 Halftone Settings',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // LPI Slider
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'LPI (Lines Per Inch)',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          // Dot size indicator
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: lpi >= 120
-                                  ? Colors.green.withAlpha((0.1 * 255).round())
-                                  : lpi >= 85
-                                      ? Colors.blue
-                                          .withAlpha((0.1 * 255).round())
-                                      : Colors.orange
-                                          .withAlpha((0.1 * 255).round()),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              lpi >= 120
-                                  ? 'Fine'
-                                  : lpi >= 85
-                                      ? 'Standard'
-                                      : 'Coarse',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: lpi >= 120
-                                    ? Colors.green
-                                    : lpi >= 85
-                                        ? primaryBlue
-                                        : Colors.orange,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '$lpi',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: primaryBlue,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  // Dot size description
-                  Text(
-                    lpi >= 120
-                        ? '• Smaller dots, higher detail (requires 305+ mesh)'
-                        : lpi >= 85
-                            ? '• Balanced dot size for most screens'
-                            : '• Larger dots, easier printing (any mesh)',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey[600],
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Text(
-                        '65',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: lpi.toDouble(),
-                          min: 65,
-                          max: 150,
-                          divisions: 85,
-                          activeColor: primaryBlue,
-                          onChanged: (value) {
-                            setState(() => lpi = value.toInt());
-                            Get.find<SetupController>().lpiValue.value =
-                                value.toInt();
-                          },
-                        ),
-                      ),
-                      const Text(
-                        '150',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Mesh Count (Auto)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Mesh Count',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      Text(
-                        '$meshCount (Auto)',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF6B7280),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Dot Shape
-                  const Text(
-                    'Dot Shape',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: DotShape.values.map((shape) {
-                      bool isSelected = selectedDotShape == shape;
-                      return Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: InkWell(
-                            onTap: () {
-                              setState(() => selectedDotShape = shape);
-                              Get.find<SetupController>()
-                                      .selectedDotShape
-                                      .value =
-                                  shape.technicalName == 'circle'
-                                      ? 'round'
-                                      : shape.technicalName;
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              decoration: BoxDecoration(
-                                color: isSelected ? primaryBlue : Colors.white,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: isSelected
-                                      ? primaryBlue
-                                      : const Color(0xFFE5E7EB),
-                                ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  shape.displayName,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: isSelected
-                                        ? Colors.white
-                                        : Colors.black87,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ],
-              ),
+                }),
+              ],
             ),
-          ],
-        ],
-      ),
+          ),
+        );
+      },
     );
   }
 
-  // ============= Solid Image Tuning Section =============
-  Widget _buildSolidTuningSection(SetupController controller) {
+  // ============= Widgets =============
+
+  Widget _buildSidebar({bool isDrawer = false}) {
     return Container(
-      padding: const EdgeInsets.all(25),
+      width: 280,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF3E5F5),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.auto_fix_high,
-                  color: Colors.purple,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                '5. Solid Image Tuning',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Fine-tune how the engine handles shapes and lines.',
-            style: TextStyle(fontSize: 13, color: Color(0xFF6B7281)),
-          ),
-          const SizedBox(height: 25),
-
-          // 1. Edge Smoothing (0-100%)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Edge Smoothing (Strength)',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-              Obx(() => Text(
-                    '${controller.smoothingFactor.value.toInt()}%',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: primaryBlue,
-                    ),
-                  )),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Anti-alias boost: smooths out jagged pixelation on low-resolution logos.',
-            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-          ),
-          Obx(() => SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: primaryBlue,
-                  inactiveTrackColor: primaryBlue.withValues(alpha: 0.1),
-                  thumbColor: primaryBlue,
-                ),
-                child: Slider(
-                  value: controller.smoothingFactor.value.toDouble(),
-                  min: 0,
-                  max: 100,
-                  divisions: 100,
-                  onChanged: (val) {
-                    controller.smoothingFactor.value = val;
-                    controller.smoothingAdjustmentMade = true;
-                  },
-                ),
-              )),
-
-          const SizedBox(height: 25),
-
-          // 2. Corner Threshold (15-200°)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Corner Sharpness',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-              Obx(() => Text(
-                    '${controller.cornerThreshold.value.toInt()}°',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: primaryBlue,
-                    ),
-                  )),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Higher values (150-200°) force sharper, more mechanical corner points.',
-            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-          ),
-          Obx(() => SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: primaryBlue,
-                  inactiveTrackColor: primaryBlue.withValues(alpha: 0.1),
-                  thumbColor: primaryBlue,
-                ),
-                child: Slider(
-                  value: controller.cornerThreshold.value.clamp(15.0, 200.0),
-                  min: 15,
-                  max: 200,
-                  divisions: 185,
-                  onChanged: (val) {
-                    controller.cornerThreshold.value = val;
-                    controller.cornerAdjustmentMade = true;
-                  },
-                ),
-              )),
-          const SizedBox(height: 5),
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Rounded (15°)',
-                  style: TextStyle(fontSize: 11, color: Colors.grey)),
-              Text('Sharp Core (120°)',
-                  style: TextStyle(fontSize: 11, color: Colors.grey)),
-              Text('Ultra Sharp (200°)',
-                  style: TextStyle(fontSize: 11, color: Colors.grey)),
-            ],
-          ),
-
-          const SizedBox(height: 35),
-          const Divider(),
-          const SizedBox(height: 20),
-
-          // 3. Global Threshold (0-255)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  const Text(
-                    'Global Threshold',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Text('Expert',
-                        style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.orange,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
-              Obx(() => Text(
-                    '${controller.globalThreshold.value.toInt()}',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.orange,
-                    ),
-                  )),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Magic solution: Control line thickness/weight by manual binarization.',
-            style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-          ),
-          Obx(() => SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: Colors.orange,
-                  inactiveTrackColor: Colors.orange.withValues(alpha: 0.1),
-                  thumbColor: Colors.orange,
-                ),
-                child: Slider(
-                  value: controller.globalThreshold.value,
-                  min: 0,
-                  max: 255,
-                  divisions: 255,
-                  onChanged: (val) {
-                    controller.globalThreshold.value = val;
-                    controller.thresholdAdjustmentMade = true;
-                  },
-                ),
-              )),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              TextButton.icon(
-                onPressed: () {
-                  controller.globalThreshold.value = 127;
-                  controller.thresholdAdjustmentMade = true;
-                },
-                icon: const Icon(Icons.refresh, size: 14),
-                label:
-                    const Text('Reset to 127', style: TextStyle(fontSize: 12)),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============= Stroke Width Section =============
-  Widget _buildStrokeWidthSection() {
-    bool hasWarning = strokeWidth < 0.5 || strokeWidthInPixels < 6;
-
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: hasWarning ? const Color(0xFFFBBF24) : const Color(0xFFE5E7EB),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [sidebarBlue, sidebarBlue.withBlue(100)],
         ),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE0F2FE),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.straighten,
-                  color: Color(0xFF0284C7),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                '6. Minimum Stroke Width',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ],
+          const SizedBox(height: 60),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withAlpha(30),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.auto_fix_high_rounded, color: Colors.white, size: 40),
           ),
           const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Width',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              ),
-              Text(
-                '${strokeWidth.toStringAsFixed(1)}mm (≈$strokeWidthInPixels px @ ${printQuality.toInt()} DPI)',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: primaryBlue,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Text(
-                '0.5mm',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              Expanded(
-                child: Slider(
-                  value: strokeWidth,
-                  min: 0.5,
-                  max: 2.0,
-                  divisions: 15,
-                  activeColor:
-                      hasWarning ? const Color(0xFFFBBF24) : primaryBlue,
-                  onChanged: (value) {
-                    setState(() => strokeWidth = value);
-                    Get.find<SetupController>().strokeWidth.value = value;
-                  },
-                ),
-              ),
-              const Text(
-                '2.0mm',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
-          ),
-          if (hasWarning) ...[
-            const SizedBox(height: 15),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFEF3C7),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: const [
-                  Icon(Icons.warning_amber, size: 20, color: Color(0xFFF59E0B)),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Strokes below 0.5mm may not print clearly',
-                      style: TextStyle(fontSize: 13, color: Color(0xFF92400E)),
-                    ),
-                  ),
-                ],
-              ),
+          const Text(
+            'VIRTUAL DESIGN',
+            style: TextStyle(
+              color: Colors.white, 
+              fontSize: 20, 
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.5,
             ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  // ============= Specifications Section =============
-  Widget _buildSpecificationsSection() {
-    return Container(
-      padding: const EdgeInsets.all(25),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE0F2F1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.settings_outlined,
-                  color: Color(0xFF009688),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Text(
-                '7. Specifications',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ],
           ),
-          const SizedBox(height: 25),
-          Row(
-            children: [
-              Expanded(
-                flex: 2,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          const Text(
+            'SILK SCREEN STUDIO',
+            style: TextStyle(
+              color: Colors.white70, 
+              fontSize: 11,
+              fontWeight: FontWeight.w300,
+              letterSpacing: 2.0,
+            ),
+          ),
+          const SizedBox(height: 50),
+          _buildSidebarItem(Icons.dashboard_customize_outlined, 'Job Setup', true),
+          _buildSidebarItem(Icons.layers_outlined, 'Separations', false),
+          _buildSidebarItem(Icons.analytics_outlined, 'Live Analysis', false),
+          _buildSidebarItem(Icons.history_rounded, 'Archived Jobs', false),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.all(20),
+            width: double.infinity,
+            color: Colors.black.withAlpha(40),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('SYSTEM STATUS', style: TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Row(
                   children: [
-                    const Text(
-                      'Paper Size',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 15),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FAFB),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: DropdownButton<String>(
-                        value: selectedPaperSize,
-                        isExpanded: true,
-                        underline: const SizedBox(),
-                        items: [
-                          // CM options (new default)
-                          'A4 (21 × 29.7 cm)',
-                          'A3 (29.7 × 42 cm)',
-                          'A5 (14.8 × 21 cm)',
-                          'Letter (21.6 × 27.9 cm)',
-                          // MM options (kept for compatibility)
-                          'A4 (210 × 297 mm)',
-                          'A3 (297 × 420 mm)',
-                          'Letter (216 × 279 mm)',
-                          // Custom cm-based size
-                          'Custom (cm)',
-                        ].map((String value) {
-                          return DropdownMenuItem<String>(
-                            value: value,
-                            child: Text(
-                              value,
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                          );
-                        }).toList(),
-                        onChanged: (String? newValue) {
-                          if (newValue != null) {
-                            setState(() {
-                              selectedPaperSize = newValue;
-                              // If Custom (cm) selected, show inputs
-                              isCustomPaper = newValue == 'Custom (cm)';
-                            });
-                            // 🔥 FIX: Sync controller with selected paper size
-                            final controller = Get.find<SetupController>();
-                            if (newValue == 'Custom (cm)') {
-                              controller.paperWidthCm.value =
-                                  customPaperWidthCm;
-                              controller.paperHeightCm.value =
-                                  customPaperHeightCm;
-                            } else if (newValue.contains('A4')) {
-                              controller.paperWidthCm.value = 21.0;
-                              controller.paperHeightCm.value = 29.7;
-                            } else if (newValue.contains('A3')) {
-                              controller.paperWidthCm.value = 29.7;
-                              controller.paperHeightCm.value = 42.0;
-                            } else if (newValue.contains('A5')) {
-                              controller.paperWidthCm.value = 14.8;
-                              controller.paperHeightCm.value = 21.0;
-                            } else if (newValue.contains('Letter')) {
-                              controller.paperWidthCm.value = 21.6;
-                              controller.paperHeightCm.value = 27.9;
-                            }
-                          }
-                        },
-                      ),
-                    ),
-                    if (isCustomPaper) ...[
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
-                              decoration: const InputDecoration(
-                                labelText: 'Width (cm)',
-                                border: OutlineInputBorder(),
-                              ),
-                              onChanged: (text) {
-                                final v =
-                                    double.tryParse(text) ?? customPaperWidthCm;
-                                setState(() => customPaperWidthCm = v);
-                                Get.find<SetupController>().paperWidthCm.value =
-                                    v;
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
-                              decoration: const InputDecoration(
-                                labelText: 'Height (cm)',
-                                border: OutlineInputBorder(),
-                              ),
-                              onChanged: (text) {
-                                final v = double.tryParse(text) ??
-                                    customPaperHeightCm;
-                                setState(() => customPaperHeightCm = v);
-                                Get.find<SetupController>()
-                                    .paperHeightCm
-                                    .value = v;
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                    Container(width: 8, height: 8, decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle)),
+                    const SizedBox(width: 8),
+                    const Text('AI ENGINE ONLINE', style: TextStyle(color: Colors.white, fontSize: 11)),
                   ],
                 ),
-              ),
-              const SizedBox(width: 30),
-              Expanded(
-                flex: 1,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Copies',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FAFB),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFE5E7EB)),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          IconButton(
-                            onPressed: () {
-                              if (copies > 1) setState(() => copies--);
-                            },
-                            icon: const Icon(Icons.remove, size: 18),
-                            color: Colors.grey,
-                          ),
-                          Text(
-                            '$copies',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => setState(() => copies++),
-                            icon: const Icon(Icons.add, size: 18),
-                            color: Colors.grey,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 25),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Print Quality',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    '${printQuality >= 900 ? "Ultra" : printQuality >= 600 ? "Best" : printQuality >= 450 ? "High" : "Draft"} (${printQuality.toInt()} DPI)',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: primaryBlue,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  const Text(
-                    'Draft',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  Expanded(
-                    child: Slider(
-                      value: printQuality,
-                      min: 150,
-                      max: 1200,
-                      divisions: 7,
-                      activeColor: primaryBlue,
-                      onChanged: (value) {
-                        setState(() => printQuality = value);
-                        Get.find<SetupController>().printQuality.value = value;
-                      },
-                    ),
-                  ),
-                  const Text(
-                    'Best',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ],
+                const SizedBox(height: 15),
+                const Text('v2.5.5-STABLE', style: TextStyle(color: Colors.white24, fontSize: 10)),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  // ============= Advanced Settings Section =============
-  Widget _buildAdvancedSettingsSection() {
+  Widget _buildSidebarItem(IconData icon, String title, bool isSelected) {
     return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        color: isSelected ? Colors.white.withAlpha(25) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
       ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () =>
-                setState(() => showAdvancedSettings = !showAdvancedSettings),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  const Icon(Icons.tune, size: 20, color: Color(0xFF6B7280)),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'Advanced Settings',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  AnimatedRotation(
-                    turns: showAdvancedSettings ? 0.5 : 0.0,
-                    duration: const Duration(milliseconds: 200),
-                    child: const Icon(
-                      Icons.expand_more,
-                      color: Color(0xFF6B7280),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (showAdvancedSettings) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  _buildAdvancedOption(
-                    'Auto Upscale',
-                    autoUpscale,
-                    (val) {
-                      setState(() => autoUpscale = val);
-                      Get.find<SetupController>().autoUpscale.value = val;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  _buildAdvancedOption(
-                    'Remove Background',
-                    removeBackground,
-                    (val) => setState(() => removeBackground = val),
-                  ),
-                  const SizedBox(height: 16),
-                  _buildAdvancedOption(
-                    'Edge Enhancement',
-                    edgeEnhancement,
-                    (val) {
-                      setState(() => edgeEnhancement = val);
-                      Get.find<SetupController>().edgeEnhancement.value = val;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  _buildAdvancedOption(
-                    'Color Correction',
-                    colorCorrection,
-                    (val) {
-                      setState(() => colorCorrection = val);
-                      Get.find<SetupController>().colorCorrection.value = val;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  _buildAdvancedOption(
-                    'Auto-Adjust Threshold',
-                    adaptiveThreshold,
-                    (val) {
-                      setState(() => adaptiveThreshold = val);
-                      Get.find<SetupController>().adaptiveThreshold.value = val;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            ),
-          ],
-        ],
+      child: ListTile(
+        leading: Icon(icon, color: isSelected ? Colors.white : Colors.white60),
+        title: Text(title, style: TextStyle(color: isSelected ? Colors.white : Colors.white60, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal), overflow: TextOverflow.ellipsis),
+        onTap: () {
+          Get.snackbar(
+            'Navigating to $title', 
+            'This feature is being initialized in the next build.',
+            snackPosition: SnackPosition.BOTTOM,
+            backgroundColor: sidebarBlue.withAlpha(200),
+            colorText: Colors.white,
+          );
+        },
       ),
     );
   }
 
-  Widget _buildAdvancedOption(
-    String title,
-    bool value,
-    Function(bool) onChanged,
-  ) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-          ),
-        ),
-        Switch(
-          value: value,
-          onChanged: onChanged,
-          activeThumbColor: primaryBlue,
-        ),
-      ],
-    );
-  }
-
-  // ============= Output Directory Section =============
-  Widget _buildOutputDirectorySection(SetupController controller) {
+  Widget _buildTopBar(bool showMenu, GlobalKey<ScaffoldState> scaffoldKey) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.folder_open, color: Color(0xFF1B4F8A)),
-              SizedBox(width: 8),
-              Text('مجلد الحفظ', style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Obx(
-            () => Text(
-              controller.outputDir.value.isEmpty
-                  ? 'المجلد الافتراضي (Documents/SilkScreen)'
-                  : controller.outputDir.value,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              ElevatedButton.icon(
-                onPressed: controller.selectOutputDirectory,
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: const Text('اختر مجلداً'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1B4F8A),
-                  foregroundColor: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (controller.outputDir.value.isNotEmpty)
-                TextButton(
-                  onPressed: () => controller.outputDir.value = '',
-                  child: const Text('إعادة تعيين'),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ============= Bottom Actions =============
-  Widget _buildBottomActions(SetupController controller) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      color: Colors.white,
       child: Row(
         children: [
-          TextButton(
-            onPressed: () {
-              controller.resetToDefaults();
-              setState(() {
-                selectedColorCount = 0;
-                selectedDetailLevel = DetailLevel.medium;
-                showHalftoneSettings = false;
-                lpi = 85;
-                selectedDotShape = DotShape.round;
-                strokeWidth = 0.5;
-                printQuality = 300;
-                autoUpscale = true;
-                removeBackground = true;
-                edgeEnhancement = false;
-                colorCorrection = false;
-                adaptiveThreshold = false;
-              });
-            },
-            child: const Text(
-              'Reset to Defaults',
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
+          if (showMenu) IconButton(onPressed: () => scaffoldKey.currentState?.openDrawer(), icon: const Icon(Icons.menu), color: primaryBlue),
+          const SizedBox(width: 10),
+          const Text('System Configuration', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const Spacer(),
-          ElevatedButton.icon(
-            onPressed: controller.startProcessing,
-            icon: const Icon(Icons.arrow_forward, size: 18),
-            label: const Text(
-              'Process & Preview',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryBlue,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-          ),
+          IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_none_outlined), color: Colors.grey),
         ],
       ),
     );
   }
 
-  // ============= Progress Steps =============
-  Widget _buildProgressSteps() {
+  Widget _buildProgressSteps(bool isDesktop) {
     return Row(
       children: [
-        _buildStep(1, 'Upload File', true, false),
-        _buildProgressLine(true),
-        _buildStep(2, 'System Setup', false, true),
-        _buildProgressLine(false),
-        _buildStep(3, 'Print Preview', false, false),
+        _buildStepItem('IMAGE', true, true, isDesktop),
+        _buildStepLine(true),
+        _buildStepItem('SETUP', true, false, isDesktop),
+        _buildStepLine(false),
+        _buildStepItem('PREVIEW', false, false, isDesktop),
       ],
     );
   }
 
-  Widget _buildStep(int number, String label, bool isComplete, bool isActive) {
-    return Column(
+  Widget _buildStepItem(String title, bool isCompleted, bool isActive, bool isDesktop) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 40,
-          height: 40,
+          width: 24, height: 24,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: isComplete
-                ? Colors.green
-                : isActive
-                    ? primaryBlue
-                    : const Color(0xFFE5E7EB),
+            color: isCompleted ? primaryBlue : (isActive ? primaryBlue.withAlpha(50) : const Color(0xFFE5E7EB)),
           ),
           child: Center(
-            child: isComplete
-                ? const Icon(Icons.check, color: Colors.white, size: 20)
-                : Text(
-                    '$number',
-                    style: TextStyle(
-                      color: isActive ? Colors.white : Colors.grey,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
+            child: isCompleted 
+              ? const Icon(Icons.check, color: Colors.white, size: 14) 
+              : Text('1', style: TextStyle(color: isActive ? primaryBlue : Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          label,
+        if (isDesktop) const SizedBox(width: 8),
+        if (isDesktop) Text(
+          title, 
           style: TextStyle(
-            fontSize: 12,
-            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            color: isActive ? primaryBlue : Colors.grey,
+            fontSize: 12, 
+            fontWeight: FontWeight.bold, 
+            color: isCompleted || isActive ? Colors.black87 : Colors.grey
           ),
+          overflow: TextOverflow.ellipsis,
         ),
       ],
     );
   }
 
-  Widget _buildProgressLine(bool isComplete) {
-    return Expanded(
-      child: Container(
-        height: 2,
-        margin: const EdgeInsets.only(bottom: 30),
-        color: isComplete ? Colors.green : const Color(0xFFE5E7EB),
-      ),
-    );
+  Widget _buildStepLine(bool isCompleted) {
+    return Expanded(child: Container(height: 2, margin: const EdgeInsets.symmetric(horizontal: 10), color: isCompleted ? primaryBlue : const Color(0xFFE5E7EB)));
   }
 
-  // ============= Sidebar =============
-  Widget _buildSidebar() {
+  Widget _buildColorComplexitySection(bool isDesktop) {
     return Container(
-      width: 250,
-      color: Colors.white,
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildLogo(),
-          const Divider(),
-          const SizedBox(height: 10),
-          _sideButton(Icons.dashboard, 'Dashboard', isActive: false),
-          _sideButton(Icons.tune, 'System Setup', isActive: true),
-          const Spacer(),
-          const Divider(),
-          _buildProfile(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLogo() {
-    return const SizedBox(
-      height: 60,
-      child: Row(
-        children: [
-          SizedBox(width: 15),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: sidebarBlue,
-              borderRadius: BorderRadius.all(Radius.circular(8)),
-            ),
-            child: SizedBox(
-              height: 35,
-              width: 35,
-              child: Icon(Icons.print_outlined, color: Colors.white, size: 20),
-            ),
-          ),
-          SizedBox(width: 10),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
             children: [
-              Text(
-                'Virtua Designer',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
+              Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFFEDE7F6), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.palette_outlined, color: Color(0xFF7E57C2), size: 20)),
+              const SizedBox(width: 12),
+              const Expanded(child: Text('1. Color Complexity', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 15, runSpacing: 15,
+            alignment: isDesktop ? WrapAlignment.start : WrapAlignment.center,
+            children: [
+              _buildAutoColorOption(isDesktop),
+              ...[1, 2, 3, 4, 5, 6, 7, 8].map((count) => _buildColorOption(count, isDesktop)),
             ],
           ),
         ],
@@ -1728,98 +397,311 @@ class _SetupPageState extends State<SetupPage> {
     );
   }
 
-  Widget _buildProfile() {
-    return Padding(
-      padding: const EdgeInsets.all(15),
-      child: Row(
+  Widget _buildAutoColorOption(bool isDesktop) {
+    bool isSelected = selectedColorCount == 0;
+    return InkWell(
+      onTap: () { setState(() => selectedColorCount = 0); Get.find<SetupController>().selectedColors.value = 0; },
+      child: Container(
+        width: isDesktop ? 130 : 110, height: isDesktop ? 100 : 90,
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: isSelected ? primaryBlue : const Color(0xFFE5E7EB), width: isSelected ? 2 : 1)),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(width: 35, height: 35, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF9C27B0)), child: const Icon(Icons.auto_awesome, size: 20, color: Colors.white)),
+            const SizedBox(height: 10),
+            Text('Auto', style: TextStyle(fontSize: 14, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? primaryBlue : Colors.black87)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildColorOption(int count, bool isDesktop) {
+    bool isSelected = selectedColorCount == count;
+    final colors = [Colors.black, Colors.black, const Color(0xFFEF4444), const Color(0xFF4CAF50), const Color(0xFF9C27B0), const Color(0xFF00BCD4), Colors.deepOrange, Colors.teal, Colors.indigo];
+    return InkWell(
+      onTap: () { setState(() => selectedColorCount = count); Get.find<SetupController>().selectedColors.value = count; },
+      child: Container(
+        width: isDesktop ? 130 : 110, height: isDesktop ? 100 : 90,
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: isSelected ? primaryBlue : const Color(0xFFE5E7EB), width: isSelected ? 2 : 1)),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(width: 35, height: 35, decoration: BoxDecoration(shape: BoxShape.circle, color: colors[count])),
+            const SizedBox(height: 10),
+            Text('$count Colors', style: TextStyle(fontSize: 14, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal, color: isSelected ? primaryBlue : Colors.black87)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailLevelSection(bool isDesktop) {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: const Color(0xFFFFE4E1),
-            child: const Text(
-              'JD',
-              style: TextStyle(
-                color: Color(0xFFFF6B6B),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+          Row(
+            children: [
+              Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.tune, color: Color(0xFF16A34A), size: 20)),
+              const SizedBox(width: 12),
+              const Text('2. Detail Level', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ],
           ),
-          const SizedBox(width: 10),
-          const Text(
-            'Jane Doe',
-            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          const SizedBox(height: 20),
+          isDesktop 
+            ? Row(children: DetailLevel.values.map((level) => Expanded(child: _buildDetailItem(level))).toList())
+            : Column(children: DetailLevel.values.map((level) => Padding(padding: const EdgeInsets.only(bottom: 10), child: _buildDetailItem(level))).toList()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailItem(DetailLevel level) {
+    bool isSelected = selectedDetailLevel == level;
+    return InkWell(
+      onTap: () => setState(() => selectedDetailLevel = level),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        decoration: BoxDecoration(color: isSelected ? primaryBlue : Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: isSelected ? primaryBlue : const Color(0xFFE5E7EB))),
+        child: Center(child: Text(level.displayName, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isSelected ? Colors.white : Colors.black87))),
+      ),
+    );
+  }
+
+  Widget _buildPrintFinishSection(SetupController controller, bool isDesktop) {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.gradient, color: Color(0xFFF59E0B), size: 20)),
+              const SizedBox(width: 12),
+              const Text('3. Print Finish', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Obx(() => isDesktop 
+            ? Row(children: PrintFinish.values.map((finish) => Expanded(child: _buildPrintFinishItem(controller, finish))).toList())
+            : Column(children: PrintFinish.values.map((finish) => Padding(padding: const EdgeInsets.only(bottom: 10), child: _buildPrintFinishItem(controller, finish))).toList())),
+          if (showHalftoneSettings) ...[
+            const SizedBox(height: 25),
+            _buildHalftoneSettings(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrintFinishItem(SetupController controller, PrintFinish finish) {
+    bool isSelected = (controller.selectedFinish.value == ps.PrintFinish.halftone && finish == PrintFinish.halftone) ||
+                     (controller.selectedFinish.value == ps.PrintFinish.solid && finish == PrintFinish.solid);
+    return InkWell(
+      onTap: () {
+        setState(() {
+          controller.isHalftone.value = (finish == PrintFinish.halftone);
+          controller.selectedFinish.value = (finish == PrintFinish.halftone) ? ps.PrintFinish.halftone : ps.PrintFinish.solid;
+          showHalftoneSettings = (finish == PrintFinish.halftone);
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        decoration: BoxDecoration(color: isSelected ? primaryBlue : Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: isSelected ? primaryBlue : const Color(0xFFE5E7EB))),
+        child: Center(child: Text(finish.displayName, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: isSelected ? Colors.white : Colors.black87))),
+      ),
+    );
+  }
+
+  Widget _buildHalftoneSettings() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      color: const Color(0xFFF9FAFB),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Halftone Parameters', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 15),
+          Row(
+            children: [
+              const Text('LPI'),
+              Expanded(child: Slider(value: lpi.toDouble(), min: 65, max: 150, divisions: 85, activeColor: primaryBlue, onChanged: (v) => setState(() => lpi = v.toInt()))),
+              Text('$lpi'),
+            ],
+          ),
+          const SizedBox(height: 15),
+          Row(
+            children: DotShape.values.map((shape) {
+              bool isSelected = selectedDotShape == shape;
+              return Expanded(child: InkWell(
+                onTap: () => setState(() => selectedDotShape = shape),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(color: isSelected ? primaryBlue : Colors.white, border: Border.all(color: const Color(0xFFE5E7EB))),
+                  child: Center(child: Text(shape.displayName, style: TextStyle(color: isSelected ? Colors.white : Colors.black87, fontSize: 12))),
+                ),
+              ));
+            }).toList(),
           ),
         ],
       ),
     );
   }
 
-  Widget _sideButton(IconData icon, String text, {required bool isActive}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Container(
-        decoration: BoxDecoration(
-          color: isActive ? const Color(0xFFE3F2FD) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: ListTile(
-          leading: Icon(
-            icon,
-            color: isActive ? primaryBlue : Colors.grey,
-            size: 20,
-          ),
-          title: Text(
-            text,
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: isActive ? primaryBlue : Colors.black87,
-              fontSize: 14,
+
+  Widget _buildDPISlider() {
+    String qualityLabel = 'Standard';
+    Color qualityColor = Colors.grey;
+    if (printQuality >= 4800) {
+      qualityLabel = 'MAX QUALITY (Extreme)';
+      qualityColor = Colors.deepOrange;
+    } else if (printQuality >= 2400) {
+      qualityLabel = 'Ultra Resolution';
+      qualityColor = Colors.purple;
+    } else if (printQuality >= 1200) {
+      qualityLabel = 'High Fidelity';
+      qualityColor = primaryBlue;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.high_quality_outlined, size: 18, color: Colors.black54),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Print Resolution (DPI)', style: TextStyle(fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(color: qualityColor.withAlpha(30), borderRadius: BorderRadius.circular(4)),
+              child: Text(qualityLabel, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: qualityColor)),
             ),
-          ),
-          dense: true,
-          onTap: () {
-            if (text == 'Dashboard') Get.back();
+          ],
+        ),
+        const SizedBox(height: 10),
+        Slider(
+          value: printQuality.clamp(300, 4800),
+          min: 300,
+          max: 4800,
+          divisions: 15,
+          activeColor: qualityColor,
+          label: '${printQuality.toInt()} DPI',
+          onChanged: (v) {
+            setState(() {
+              printQuality = v;
+              Get.find<SetupController>().printQuality.value = v;
+            });
           },
         ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('300', style: TextStyle(fontSize: 10, color: Colors.grey)),
+            const Text('1200', style: TextStyle(fontSize: 10, color: Colors.grey)),
+            const Text('2400', style: TextStyle(fontSize: 10, color: Colors.grey)),
+            const Text('4800', style: TextStyle(fontSize: 10, color: Colors.grey)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSpecificationsSection(bool isDesktop) {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+      child: Column(
+        children: [
+          _buildDPISlider(),
+          const SizedBox(height: 30),
+          const Divider(height: 1, color: Color(0xFFF3F4F6)),
+          const SizedBox(height: 30),
+          isDesktop 
+            ? Row(children: [Expanded(child: _buildPaperSizeColumn()), const SizedBox(width: 30), Expanded(child: _buildCopiesColumn())])
+            : Column(children: [_buildPaperSizeColumn(), const SizedBox(height: 20), _buildCopiesColumn()]),
+        ],
       ),
     );
   }
 
-  // ============= Top Bar =============
-  Widget _buildTopBar() {
-    return Container(
-      height: 60,
-      padding: const EdgeInsets.symmetric(horizontal: 30),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha((0.05 * 255).round()),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          const Text(
-            'System Configuration',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const Spacer(),
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.notifications_none_outlined),
-            color: Colors.grey,
-          ),
-          const SizedBox(width: 10),
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.help_outline),
-            color: Colors.grey,
-          ),
-        ],
-      ),
+  Widget _buildPaperSizeColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Paper Size', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 10),
+        DropdownButton<String>(
+          value: selectedPaperSize,
+          isExpanded: true,
+          items: ['A4 (21 × 29.7 cm)', 'A3 (29.7 × 42 cm)', 'A5 (14.8 × 21 cm)', 'Letter (21.6 × 27.9 cm)', 'Custom (cm)'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+          onChanged: (v) { if (v != null) setState(() { selectedPaperSize = v; isCustomPaper = (v == 'Custom (cm)'); }); },
+        ),
+      ],
     );
+  }
+
+  Widget _buildCopiesColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Copies', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 10),
+        Row(children: [
+          IconButton(onPressed: () { if (copies > 1) setState(() => copies--); }, icon: const Icon(Icons.remove)),
+          Text('$copies', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          IconButton(onPressed: () => setState(() => copies++), icon: const Icon(Icons.add)),
+        ]),
+      ],
+    );
+  }
+
+  Widget _buildAdvancedSettingsSection() {
+    return Column(
+      children: [
+        ListTile(title: const Text('Advanced Settings'), trailing: Icon(showAdvancedSettings ? Icons.expand_less : Icons.expand_more), onTap: () => setState(() => showAdvancedSettings = !showAdvancedSettings)),
+        if (showAdvancedSettings) Wrap(
+          spacing: 10,
+          children: [
+            _buildAdvancedOption('Auto Upscale', autoUpscale, (v) => setState(() => autoUpscale = v)),
+            _buildAdvancedOption('Edge Enhancement', edgeEnhancement, (v) => setState(() => edgeEnhancement = v)),
+            _buildAdvancedOption('Responsive Mode', responsiveMode, (v) => setState(() {
+              responsiveMode = v;
+              Get.find<SetupController>().responsiveMode.value = v;
+            })),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAdvancedOption(String label, bool value, Function(bool) onChanged) {
+    return FilterChip(label: Text(label), selected: value, onSelected: onChanged, selectedColor: primaryBlue.withAlpha(50));
+  }
+
+  Widget _buildOutputDirectorySection(SetupController controller) {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE5E7EB))),
+      child: Row(children: [const Icon(Icons.folder_open), const SizedBox(width: 15), const Expanded(child: Text('Output Directory')), TextButton(onPressed: () {}, child: const Text('Change'))]),
+    );
+  }
+
+  Widget _buildBottomActions(SetupController controller) {
+    return Row(children: [
+      Expanded(child: OutlinedButton(onPressed: () {}, child: const Text('Save Template'))),
+      const SizedBox(width: 20),
+      Expanded(
+        child: ElevatedButton(
+          onPressed: () => controller.startProcessing(), 
+          style: ElevatedButton.styleFrom(backgroundColor: primaryBlue, foregroundColor: Colors.white),
+          child: const Text('START PROCESSING'), 
+        ),
+      ),
+    ]);
   }
 }
