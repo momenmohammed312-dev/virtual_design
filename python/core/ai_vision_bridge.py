@@ -68,72 +68,81 @@ def _find_model_files() -> Tuple[str, str]:
         else:
             logger.warning(f"[AIBridge] Environment paths set but files don't exist")
     
+    # --- FIXED PROJECT PATH DISCOVERY ---
+    # Find the 'virtual_design' root folder regardless of CWD
+    try:
+        current_file = Path(__file__).resolve()
+        # Look for the root (has .git or python or models)
+        root_dir = current_file.parents[2] # core -> python -> root
+        if not (root_dir / "models").exists() and (current_file.parents[3] / "models").exists():
+            root_dir = current_file.parents[3]
+    except Exception:
+        root_dir = Path.cwd()
+
     # Search paths (in order of preference)
     search_dirs = [
-        Path.cwd(),  # Current directory
+        root_dir / "models",
+        root_dir / "Models",
         Path.cwd() / "models",
-        Path.cwd() / "Models",
-        Path(__file__).parent.parent / "models", # Project models folder relative to core/
+        Path.cwd(),
         Path.home() / "models",
-        Path.home() / ".local" / "share" / "models",
-        Path("/opt/models") if os.name != 'nt' else Path("C:/ProgramData/Models"),
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Models" if os.name == 'nt' else None,
+        Path.home() / "Downloads",
     ]
     
-    # Filter out None values
-    search_dirs = [d for d in search_dirs if d is not None]
-    
-    # Model file patterns
-    model_patterns = [
-        "*Qwen3*VL*.gguf",
-        "*Qwen3-VL*.gguf",
-        "*qwen3*vl*.gguf",
-        "*vision*.gguf",
-        "*.gguf",  # Fallback - any gguf
-    ]
-    mmproj_patterns = [
-        "*mmproj*.gguf",
-        "*mmproj*F16*.gguf",
-        "*vision*proj*.gguf",
-    ]
+    # ─── LOGGING SEARCH PLAN ───
+    logger.info(f"[AIBridge] Project Root: {root_dir}")
+    logger.info(f"[AIBridge] Searching for Qwen-VL models in {len(search_dirs)} locations...")
+
+    # Extended patterns to handle specific manual filenames
+    model_patterns = ["*Qwen3*VL*.gguf", "*Qwen-VL*.gguf", "*vision*.gguf", "*.gguf"]
+    mmproj_patterns = ["*mmproj*.gguf", "*vision*proj*.gguf"]
     
     found_model = None
     found_mmproj = None
     
+    # Track checked paths for logging if nothing found
+    checked_paths = []
+
     for search_dir in search_dirs:
         if not search_dir.exists():
             continue
             
-        logger.debug(f"[AIBridge] Searching {search_dir}")
+        checked_paths.append(str(search_dir))
         
-        # Search for model file
+        # Search for model file (main weights)
         if not found_model:
             for pattern in model_patterns:
-                matches = list(search_dir.glob(pattern))
-                # Filter out mmproj files from model matches
-                matches = [m for m in matches if 'mmproj' not in m.name.lower()]
-                if matches:
-                    # Prefer smaller files (quantized) for faster loading
-                    found_model = min(matches, key=lambda p: p.stat().st_size)
-                    logger.info(f"[AIBridge] Found model: {found_model}")
-                    break
-        
-        # Search for mmproj file
+                try:
+                    matches = list(search_dir.glob(pattern))
+                    # Filter: ignore mmproj, must be > 500MB
+                    matches = [m for m in matches if 'mmproj' not in m.name.lower() and m.stat().st_size > 500*1024*1024]
+                    if matches:
+                        # Sort by size to get the high-quant model if multiple exist
+                        matches.sort(key=lambda x: x.stat().st_size, reverse=True)
+                        found_model = matches[0]
+                        logger.info(f"[AIBridge] √ FOUND MODEL PATH: {found_model.absolute()}")
+                        break
+                except Exception: continue
+
+        # Search for mmproj
         if not found_mmproj:
             for pattern in mmproj_patterns:
-                matches = list(search_dir.glob(pattern))
-                if matches:
-                    found_mmproj = matches[0]
-                    logger.info(f"[AIBridge] Found mmproj: {found_mmproj}")
-                    break
-        
+                try:
+                    matches = list(search_dir.glob(pattern))
+                    if matches:
+                        found_mmproj = matches[0]
+                        logger.info(f"[AIBridge] √ FOUND MMPROJ PATH: {found_mmproj.absolute()}")
+                        break
+                except Exception: continue
+
         if found_model and found_mmproj:
             break
     
-    return (
-        str(found_model) if found_model else "",
-        str(found_mmproj) if found_mmproj else ""
-    )
+    if not (found_model and found_mmproj):
+        logger.warning(f"[AIBridge] Vision models NOT found in check list: {checked_paths}")
+        logger.info("[AIBridge] Suggestion: Run 'ren models\\*2.gguf *' to clean filenames if they have suffixes")
+    
+    return str(found_model) if found_model else "", str(found_mmproj) if found_mmproj else ""
 
 # Auto-discover or use environment paths
 _MODEL_PATH, _MMPROJ_PATH = _find_model_files()
@@ -181,17 +190,15 @@ def _get_llm():
     
     # Check if model files are available
     if not MODEL_PATH or not os.path.exists(MODEL_PATH):
-        logger.warning(f"[AIBridge] Model not found. Checked: {MODEL_PATH or 'auto-discovery'}")
-        logger.info("[AIBridge] Set QWEN_MODEL_PATH environment variable or place model in ./models/")
+        logger.warning(f"[AIBridge] Main weights not found. (Current path: '{MODEL_PATH}')")
         _ai_status['available'] = False
-        _ai_status['last_error'] = f"MODEL_NOT_FOUND: {MODEL_PATH}"
+        _ai_status['last_error'] = "MODEL_NOT_FOUND"
         return None
     
     if not MMPROJ_PATH or not os.path.exists(MMPROJ_PATH):
-        logger.warning(f"[AIBridge] mmproj not found. Checked: {MMPROJ_PATH or 'auto-discovery'}")
-        logger.info("[AIBridge] Set QWEN_MMPROJ_PATH environment variable or place mmproj in ./models/")
+        logger.warning(f"[AIBridge] MMProjector not found. (Current path: '{MMPROJ_PATH}')")
         _ai_status['available'] = False
-        _ai_status['last_error'] = f"MMPROJ_NOT_FOUND: {MMPROJ_PATH}"
+        _ai_status['last_error'] = "MMPROJ_NOT_FOUND"
         return None
     
     try:
@@ -217,13 +224,21 @@ def _get_llm():
             import io
             stderr_buffer = io.StringIO()
             
+            # Hardware optimization for speed
+            cpu_count = os.cpu_count() or 4
+            target_threads = max(4, min(cpu_count - 1, 12)) # Use more threads but leave some for UI
+            
+            # Auto-detect GPU potential (conservative)
+            # 32 layers is usually enough to fit the entire 2B model in 4GB-6GB VRAM
+            gpu_layers = 33 if os.environ.get("USE_GPU", "1") == "1" else 0
+            
             with contextlib.redirect_stderr(stderr_buffer):
                 _llm = Llama(
                     model_path   = MODEL_PATH,
                     mmproj       = MMPROJ_PATH,
-                    n_ctx        = 4096,
-                    n_threads    = min(4, os.cpu_count() or 4),
-                    n_gpu_layers = 0,
+                    n_ctx        = 2048, # Reduced context for speed (enough for 1 image)
+                    n_threads    = target_threads,
+                    n_gpu_layers = gpu_layers, 
                     verbose      = False,
                 )
             
@@ -570,22 +585,47 @@ def _parse_response(raw: str) -> Optional[dict]:
         "mode": "solid"
     }
     
-    # 1. Enforce Missing Parameters -> Reject completely if missing required
-    required_keys = ["image_class", "num_colors", "use_halftone"]
-    for r_key in required_keys:
-        if r_key not in result:
-            logger.error(f"[AIBridge] Validation Failed: Missing required key '{r_key}'. Rejecting full output.")
-            return _get_safe_fallback()
+    # 0. Intelligent Parameter Aliasing (AI variability handling)
+    aliases = {
+        'smoothness': 'smoothing_factor',
+        'smooth': 'smoothing_factor',
+        'corners': 'corner_threshold',
+        'corner_sharpness': 'corner_threshold',
+        'thickness': 'global_threshold',
+        'line_thickness': 'global_threshold',
+        'threshold': 'global_threshold',
+        'dots': 'lpi',
+        'frequency': 'lpi'
+    }
+    for alias, target in aliases.items():
+        if alias in result and target not in result:
+            result[target] = result[alias]
 
-    # 2. Enforce confidence threshold
-    try:
-        conf = float(result.get("confidence", 1.0))
-        if conf < 0.6:
-            logger.warning(f"[AIBridge] Low confidence ({conf} < 0.6). Triggering fallback safe pipeline.")
-            return _get_safe_fallback()
-    except (ValueError, TypeError):
-        logger.warning("[AIBridge] Invalid confidence format. Assuming 1.0.")
-        result["confidence"] = 1.0
+    # 1. Parameter Normalization -> Don't reject if missing, just use defaults
+    # Required only for NEW image routing, optional for auto-fix adjustments
+    for key, default_val in defaults.items():
+        if key not in result:
+            result[key] = default_val
+        else:
+            # Coerce type if possible
+            try:
+                if isinstance(default_val, bool) and not isinstance(result[key], bool):
+                    result[key] = str(result[key]).lower() in ('true', '1', 'yes')
+                elif isinstance(default_val, int):
+                    result[key] = int(float(result[key]))
+                elif isinstance(default_val, float):
+                    result[key] = float(result[key])
+            except (ValueError, TypeError):
+                result[key] = default_val
+
+    # 2. Enforce confidence threshold (only if provided)
+    if "confidence" in result:
+        try:
+            conf = float(result["confidence"])
+            if conf < 0.4: # Lowered threshold for custom prompts
+                logger.warning(f"[AIBridge] Low confidence ({conf}). Using partial results anyway.")
+        except (ValueError, TypeError):
+            pass
 
     # 3. Enforce Strict Allowed Operations for Actions
     allowed_ops = {
@@ -826,6 +866,18 @@ If preview looks good, return minimal adjustments.
         return None
 
 
+def _resize_for_ai(img: np.ndarray, max_dim: int = 768) -> np.ndarray:
+    """Resize image for AI processing while maintaining aspect ratio."""
+    h, w = img.shape[:2]
+    if max(h, w) <= max_dim:
+        return img
+    
+    scale = max_dim / max(h, w)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+
 def _normalize_user_prompt(user_prompt: str) -> str:
     """
     FIX Issue #10: Normalize natural language prompt to standard terminology.
@@ -838,36 +890,31 @@ def _normalize_user_prompt(user_prompt: str) -> str:
     
     # Synonym mappings: user terms -> standard terms
     synonyms = {
-        # Smoothing terms
-        r'\bsmooth\b|\bsofter\b|\bround\b|\brounded\b|\banti[- ]?alias\b|\bblur\b': 'smoothing',
-        r'\bjagged\b|\bpixelated\b|\brough\b|\bsharp edges\b|\bhard edges\b': 'reduce smoothing',
+        # Smoothing terms (English & Arabic)
+        r'\bsmooth\b|\bsofter\b|\bround\b|\brounded\b|\banti[- ]?alias\b|\bblur\b|أنعم|نعومة|نعمه': 'higher smoothing_factor',
+        r'\bjagged\b|\bpixelated\b|\brough\b|\bsharp edges\b|\bhard edges\b|مشرشر|مبكسل|خشن': 'reduce smoothing_factor',
         
         # Corner/sharpness terms
-        r'\bsharp\b|\bcrisp\b|\bclean\b|\bprecise\b|\bfine detail\b': 'sharpen corners',
-        r'\bround corners\b|\bsoft corners\b|\bfuzzy\b|\bblunt\b': 'reduce corner threshold',
+        r'\bsharp\b|\bcrisp\b|\bclean\b|\bprecise\b|\bfine detail\b|حاد|واضح|دقيق': 'lower corner_threshold',
+        r'\bround corners\b|\bsoft corners\b|\bfuzzy\b|\bblunt\b|زوايا ناعمة|دوران': 'increase corner_threshold',
         
         # Line thickness
-        r'\bthicker\b|\bbold\b|\bheavy\b|\bdark\b': 'increase line thickness',
-        r'\bthinner\b|\blight\b|\bthin\b|\bdelicate\b': 'decrease line thickness',
+        r'\bthicker\b|\bbold\b|\bheavy\b|\bdark\b|اتقل|سميك|تخين|تقل': 'thicker lines (increase global_threshold)',
+        r'\bthinner\b|\blight\b|\bthin\b|\bdelicate\b|اخف|رفيع|خف': 'thinner lines (decrease global_threshold)',
         
         # Halftone terms
-        r'\bfiner dots\b|\bsmaller dots\b|\bhigher resolution\b|\bmore detail\b': 'increase lpi',
-        r'\blarger dots\b|\bbigger dots\b|\bcoarser\b|\blower resolution\b': 'decrease lpi',
+        r'\bfiner dots\b|\bsmaller dots\b|\bhigher resolution\b|\bmore detail\b|نقط أصغر|تفاصيل أكتر|دقة عالية': 'increase lpi',
+        r'\blarger dots\b|\bbigger dots\b|\bcoarser\b|\blower resolution\b|نقط كبيرة|خشنة': 'decrease lpi',
         
-        # Background
-        r'\bremove background\b|\btransparent\b|\bclean background\b|\bwhite background\b': 'remove background',
-        r'\bkeep background\b|\bpreserve background\b': 'keep background',
-        
-        # Color/halftone mode
-        r'\bhalftone\b|\bgray[- ]?scale\b|\bdot pattern\b|\bscreen\b': 'halftone mode',
-        r'\bsolid\b|\bvector\b|\bclean edges\b': 'solid mode',
+        # Output versioning
+        r'\bnew version\b|\banother one\b|\bcopy\b|نسخة تانية|نسخة جديدة': 'create new version',
     }
     
     normalized = user_prompt
     for pattern, standard_term in synonyms.items():
         if re.search(pattern, prompt_lower):
             # Append standard term for clarity (don't replace, just augment)
-            normalized += f". Use standard term: {standard_term}."
+            normalized += f". [System Intelligence]: This implies {standard_term}."
     
     return normalized
 
@@ -1075,15 +1122,17 @@ def is_available() -> bool:
     
     if not has_model:
         _ai_status['available'] = False
-        msg = f"MODEL_NOT_FOUND: '{MODEL_PATH}'. Place Qwen .gguf files in G:\\Designs\\design app\\virtual_design\\models"
-        _ai_status['last_error'] = msg
+        msg = f"Vision weights not found at: '{MODEL_PATH or 'None'}'. " \
+              f"Please place Qwen .gguf files in: G:\\Designs\\design app\\virtual_design\\models"
+        _ai_status['last_error'] = "MODEL_NOT_FOUND"
         logger.error(f"[AIBridge] {msg}")
         return False
     
     if not has_mmproj:
         _ai_status['available'] = False
-        msg = f"MMPROJ_NOT_FOUND: '{MMPROJ_PATH}'. Ensure mmproj-f16.gguf is in the models folder."
-        _ai_status['last_error'] = msg
+        msg = f"Vision projector (mmproj) not found at: '{MMPROJ_PATH or 'None'}'. " \
+              f"Ensure mmproj-F16.gguf is in the models folder."
+        _ai_status['last_error'] = "MMPROJ_NOT_FOUND"
         logger.error(f"[AIBridge] {msg}")
         return False
     

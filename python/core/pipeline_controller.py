@@ -447,6 +447,52 @@ class PipelineController:
 
         logger.info(f"  [Safety] {stage} coverage verified: {ink_ratio:.2%}")
 
+    def apply_ai_actions(self, image: np.ndarray, actions: list) -> np.ndarray:
+        """
+        Execute advanced OpenCV operations suggested by the AI Autopilot.
+        Allows the AI to 'intervene' in the image processing logic.
+        """
+        if not actions or image is None:
+            return image
+            
+        processed = image.copy()
+        logger.info(f"[PipelineController] Executing {len(actions)} AI-suggested visual interventions...")
+        
+        for action in actions:
+            op = action.get("op")
+            try:
+                if op == "denoise":
+                    strength = action.get("strength", 3)
+                    processed = cv2.fastNlMeansDenoisingColored(processed, None, strength, strength, 7, 21)
+                elif op == "bilateral_filter":
+                    d = action.get("d", 9)
+                    processed = cv2.bilateralFilter(processed, d, 75, 75)
+                elif op == "sharpen":
+                    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+                    processed = cv2.filter2D(processed, -1, kernel)
+                elif op == "background_remove":
+                    # Simple AI-guided background removal via thresholding
+                    if len(processed.shape) == 3:
+                        gray = cv2.cvtColor(processed, cv2.COLOR_BGR2GRAY)
+                    else:
+                        gray = processed
+                    _, mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
+                    processed = cv2.bitwise_and(processed, processed, mask=mask)
+                elif op == "morph_open":
+                    k = action.get("k", 3)
+                    kernel = np.ones((k,k), np.uint8)
+                    processed = cv2.morphologyEx(processed, cv2.MORPH_OPEN, kernel)
+                elif op == "morph_close":
+                    k = action.get("k", 3)
+                    kernel = np.ones((k,k), np.uint8)
+                    processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
+                
+                logger.info(f"  [AI-Intervention] √ Executed '{op}'")
+            except Exception as e:
+                logger.warning(f"  [AI-Intervention] Failed to execute '{op}': {e}")
+                
+        return processed
+
     def get_audit_log(self) -> list:
         """Return the audit log for debugging."""
         return self._audit_log

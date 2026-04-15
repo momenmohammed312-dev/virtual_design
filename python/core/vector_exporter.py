@@ -126,11 +126,30 @@ def fit_bezier_to_contour(
         p1 = pts[i]
         p2 = pts[(i+1)%n]
         p3 = pts[(i+2)%n]
+        
+        # Check if this segment is part of a corner
         is_corner = (i in corners) or ((i+1)%n in corners)
-        sf = 0.0 if is_corner else smooth_factor
-        if sf == 0:
+        
+        # FIX: Even segments between corners can be too short for curves
+        # If segment is very short, keep it as a line to prevent "waviness"
+        # Increased threshold from 2.0 to 4.5 for more stability at high scales
+        seg_len = np.linalg.norm(p2 - p1)
+        if seg_len < (4.5 / smooth_factor if smooth_factor > 0 else 100):
+            sf = 0.0 # Force line for short segments
+        else:
+            sf = 0.0 if is_corner else smooth_factor
+            
+            # Additional check: if the segment is very "inflected" (turning sharply), 
+            # reduce sf to prevent overshooting
+            angle_p1p2 = _get_angle(p0, p1, p2)
+            angle_p2p3 = _get_angle(p1, p2, p3)
+            if angle_p1p2 < 150 or angle_p2p3 < 150:
+                sf *= 0.5 # Dampen curves on sharp turns
+            
+        if sf <= 0.01:
             commands.append(('L', p2[0], p2[1]))
         else:
+            # Traditional Catmull-Rom
             cp1x = p1[0] + (p2[0]-p0[0])*sf
             cp1y = p1[1] + (p2[1]-p0[1])*sf
             cp2x = p2[0] - (p3[0]-p1[0])*sf
@@ -149,37 +168,48 @@ def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smoot
     Returns:
         Tuple of (processed_mask, upsample_factor)
     """
-    # FIX GROUP 4.2: Only upscale when mask is small (< 800px max dimension)
     max_dim = max(mask.shape[0], mask.shape[1])
-    if max_dim < 800:
-        # 1) upscale (subpixel support) for small masks only
-        bw = cv2.resize(mask, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_LINEAR)
-        upsample_factor = 2.0
-        logger.debug(f"[Preprocess] Upscaling small mask {mask.shape} -> {bw.shape}")
+    # NEW FIX: Mask-specific noise removal (Essential for clean vector edges)
+    # Remove small non-contiguously connected noise pixels
+    if max_dim < 3000:
+        kernel_noise = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_noise)
+    
+    # 1) upscale (subpixel support) for small masks only
+    if max_dim < 1200:
+        bw = cv2.resize(mask, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_LANCZOS4)
+        upsample_factor = 2.5
+        logger.debug(f"[Preprocess] Upscaling small mask {mask.shape} -> {bw.shape} (Lanczos4)")
     else:
-        # Skip upscale for large masks to save memory
         bw = mask.copy()
         upsample_factor = 1.0
 
     # FIX: Even low smooth_factor (0.25) should trigger a gentle blur pass 
-    # to 'melt' pixel steps when upscaling. Previously this was locked behind > 0.4.
-    if apply_blur or smooth_factor > 0.1:
+    if apply_blur or smooth_factor > 0.05:
         # 2) float smoothing (critical for artwork to melt artifacts)
         bw_f = bw.astype(np.float32) / 255.0
         
-        # Determine blur strength: more continuous and aggressive for low-res inputs
+        # USE BILATERAL FILTER TO PRESERVE EDGES WHILE SMOOTHING NOISE
+        # This prevents the "waviness" that Gaussian Blur can introduce on jagged steps
+        if smooth_factor > 0.1:
+            bw_u8 = (bw_f * 255).astype(np.uint8)
+            d = 5 if smooth_factor < 0.25 else 9
+            bw_u8 = cv2.bilateralFilter(bw_u8, d, 75, 75)
+            bw_f = bw_u8.astype(np.float32) / 255.0
+
+        # Determine blur strength based on smooth_factor
         if smooth_factor > 0.6:
-            k_size = (5, 5)
-            sigma = 1.2
+            k_size = (7, 7)
+            sigma = 1.5
         elif smooth_factor > 0.4:
-            k_size = (3, 3)
-            sigma = 0.9
+            k_size = (5, 5)
+            sigma = 1.1
         elif smooth_factor > 0.2:
             k_size = (3, 3)
-            sigma = 0.6
+            sigma = 0.8
         else:
             k_size = (3, 3)
-            sigma = 0.4
+            sigma = 0.4 # Subtler blur for low smooth factor
             
         bw_f = cv2.GaussianBlur(bw_f, k_size, sigma)
         
@@ -188,7 +218,6 @@ def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smoot
         _, bw = cv2.threshold(bw_f, thresh_val, 1.0, cv2.THRESH_BINARY)
         bw = (bw * 255).astype(np.uint8)
     else:
-        # Zero blur case (TEXT_LOGO / precise)
         _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
         
     # APPLY MORPHOLOGICAL CLOSING BEFORE CONTOUR EXTRACTION (Solid mode fix)
@@ -324,8 +353,29 @@ def export_vector_pdf(
     # Ensure minimum margins
     margin_pt = max(margin_pt, MIN_MARGIN_PT)
     
+    # --- PAGE DETERMINATION ---
+    custom_w_mm = getattr(args, 'page_width', 0)
+    custom_h_mm = getattr(args, 'page_height', 0)
+    fit_to_artwork = getattr(args, 'fit_artwork', False)
+    
     page_sizes = {'A4': A4, 'A3': A3, 'LETTER': letter}
-    page_w, page_h = page_sizes.get(page_size.upper(), A4)
+    
+    if fit_to_artwork and masks:
+        # Determine exact artwork size
+        m_h, m_w = masks[0].shape[:2]
+        effective_dpi = mask_dpi if mask_dpi is not None else dpi
+        artwork_w_pt = (m_w / effective_dpi * 72.0) + (2 * margin_pt)
+        artwork_h_pt = (m_h / effective_dpi * 72.0) + (2 * margin_pt)
+        page_w, page_h = artwork_w_pt, artwork_h_pt
+        page_size = f"Custom (Fit Artwork: {m_w}x{m_h}px)"
+        
+    elif custom_w_mm > 0 and custom_h_mm > 0:
+        page_w = custom_w_mm * 72.0 / 25.4
+        page_h = custom_h_mm * 72.0 / 25.4
+        page_size = f"Custom ({custom_w_mm}x{custom_h_mm}mm)"
+        
+    else:
+        page_w, page_h = page_sizes.get(page_size.upper(), A4)
     
     # Log page setup
     logger.info(f"[VectorExporter] Page setup: {page_size} = {page_w:.1f}pt x {page_h:.1f}pt "
@@ -613,13 +663,12 @@ def render_vector_halftone(canvas, mask, color_rgb, page_h, lpi: int = 55, angle
 
 def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, page_h: float, 
                            margin_pt: float = 65.0, lpi: int = 55, mesh_count: int = 160,
-                           scale_mode: str = 'fit_to_page', custom_scale_percent: float = 100.0) -> None:
+                           scale_mode: str = 'fit_to_page', custom_scale_percent: float = 100.0,
+                           custom_page_w: float = 0, custom_page_h: float = 0,
+                           fit_to_artwork: bool = False) -> None:
     """Embed halftone mask as a high-resolution raster image inside the PDF.
-
-    This is used as a fallback for dense halftone patterns where vector dots become
-    too heavy/slow or cause visual artifacts in PDF renderers.
     
-    FIX: Now supports fit_to_page scaling the same way vector_exporter does.
+    FIX: Now supports custom pages and fit_to_artwork.
     """
     if mask.dtype != np.uint8:
         mask_u8 = mask.astype(np.uint8)
@@ -639,38 +688,45 @@ def render_raster_halftone(canvas, mask: np.ndarray, dpi: int, page_w: float, pa
     from reportlab.lib.utils import ImageReader
     img_reader = ImageReader(io.BytesIO(png_bytes.tobytes()))
 
+    # Calculate actual page size if custom
+    if fit_to_artwork:
+        # Match vector_exporter calculation
+        target_page_w = (mask_w / dpi * 72.0) + (2 * margin_pt)
+        target_page_h = (mask_h / dpi * 72.0) + (2 * margin_pt)
+    elif custom_page_w > 0 and custom_page_h > 0:
+        target_page_w = custom_page_w * 72.0 / 25.4
+        target_page_h = custom_page_h * 72.0 / 25.4
+    else:
+        target_page_w = page_w
+        target_page_h = page_h
+
     # Reserve space for header/footer
     header_pt = 40.0
     footer_pt = 30.0
-    available_w = page_w - 2 * margin_pt
-    available_h = page_h - header_pt - footer_pt - 2 * margin_pt
+    available_w = target_page_w - 2 * margin_pt
+    available_h = target_page_h - header_pt - footer_pt - 2 * margin_pt
 
-    # Calculate physical size of the mask at given DPI
-    img_w_mm = (mask_w / max(1, dpi)) * 25.4
-    img_h_mm = (mask_h / max(1, dpi)) * 25.4
-    img_w_pt = img_w_mm * 72.0 / 25.4
-    img_h_pt = img_h_mm * 72.0 / 25.4
-
-    # FIX: Implement identical scaling logic to vector path
-    scale_x = available_w / img_w_pt if img_w_pt > 0 else 1.0
-    scale_y = available_h / img_h_pt if img_h_pt > 0 else 1.0
-
-    if scale_mode == 'actual_size':
+    # Scale according to mode
+    if scale_mode == 'actual_size' or fit_to_artwork:
         scale_factor = 1.0
     elif scale_mode == 'custom_scale':
         scale_factor = custom_scale_percent / 100.0
-    else:  # fit_to_page
+    else: # fit_to_page
+        img_w_pt = (mask_w / dpi) * 72.0
+        img_h_pt = (mask_h / dpi) * 72.0
+        scale_x = available_w / img_w_pt if img_w_pt > 0 else 1.0
+        scale_y = available_h / img_h_pt if img_h_pt > 0 else 1.0
         scale_factor = min(scale_x, scale_y)
-        scale_factor = min(scale_factor, 5.0)  # MAX_SCALE_PERCENT/100
+        scale_factor = min(scale_factor, 5.0)
         scale_factor = max(scale_factor, 0.1)
 
-    draw_w = img_w_pt * scale_factor
-    draw_h = img_h_pt * scale_factor
+    draw_w = (mask_w / dpi * 72.0) * scale_factor
+    draw_h = (mask_h / dpi * 72.0) * scale_factor
     draw_x = margin_pt + (available_w - draw_w) / 2
     draw_y = margin_pt + footer_pt + (available_h - draw_h) / 2
 
     canvas.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, 
-                     mask='auto', preserveAspectRatio=True)
+                     mask='auto')
     
     logger.debug(f"[RasterHalftone] Embedded {mask_w}x{mask_h} mask at {dpi}DPI "
-                f"({img_w_mm:.1f}mm x {img_h_mm:.1f}mm) with scale={scale_factor:.2f} (mode={scale_mode})")
+                f"with scale={scale_factor:.2f} (fit_art={fit_to_artwork})")

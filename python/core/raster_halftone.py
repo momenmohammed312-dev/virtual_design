@@ -96,18 +96,30 @@ class RasterHalftoneEngine:
         # Build threshold matrix
         screen_matrix = self._build_screen_matrix(gray.shape, cfg.dpi, cfg.lpi,
                                                    cfg.angle, cfg.dot_fn)
-
+        # Apply noise suppression and cleaning to input grayscale
+        # (reduces stray dots in highlight/shadow areas)
+        gray_clean = cv2.medianBlur(gray, 3)
+        
         # Apply gamma compensation to input (controls dot growth curve)
         if cfg.gamma != 1.0:
             lut = self._gamma_lut(cfg.gamma)
-            gray_g = lut[gray]
+            gray_g = lut[gray_clean]
         else:
-            gray_g = gray
+            gray_g = gray_clean
 
+        # Intensity clamping: ensure areas with < 2% or > 98% density stay solid
+        # prevents 'pepper noise' dots in near-white or near-black regions
+        gray_f = gray_g.astype(np.float32) / 255.0
+        # Clamp white (background): if gray > 0.98 (very light) -> 1.0 (pure white)
+        gray_f[gray_f > 0.98] = 1.0
+        # Clamp black (ink): if gray < 0.02 (very dark) -> 0.0 (pure black)
+        gray_f[gray_f < 0.02] = 0.0
+        
         # Threshold: ink where pixel < screen matrix threshold
         # (dark pixels -> big dots -> more ink)
-        ink_float = 1.0 - (gray_g.astype(np.float32) / 255.0)
+        ink_float = 1.0 - gray_f
         screen_f  = screen_matrix.astype(np.float32) / 255.0
+        
         # Invert so ink=0 (black), background=255 (white/transparent)
         bitmap    = (ink_float >= screen_f).astype(np.uint8) * 255
         bitmap    = cv2.bitwise_not(bitmap)  # 255->0 (ink), 0->255 (bg)

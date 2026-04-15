@@ -27,6 +27,8 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
+import sys
+import time
 import cv2
 import numpy as np
 
@@ -68,6 +70,15 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
     _step(1, "Loading and Normalizing Engine")
     
+    # 1. Configuration & Auto-DPI Logic
+    # 🔥 FIXED: If DPI is 0 or -1, set based on detail level
+    if args.dpi <= 0:
+        if getattr(args, 'detail_level', 'medium') == 'high':
+            args.dpi = 1200
+        else:
+            args.dpi = 600
+        logger.info(f"[Main] Auto-DPI enabled. Selected: {args.dpi} DPI")
+
     # Auto-High Quality Logic
     if getattr(args, 'detail_level', 'medium') == 'high':
         # Push resolution for high detail requests
@@ -76,6 +87,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
             args.dpi = 1200
         # Store high-quality flag for router/exporter
         args._is_high_detail = True
+    else:
+        args._is_high_detail = False
 
     # 1. Configuration
     job_config = PrintJobConfig(
@@ -136,6 +149,20 @@ def run_pipeline(args: argparse.Namespace) -> int:
             # STEP 3: Apply AI decisions to pipeline args
             apply_to_args(ai_results, args)
             
+            # 🔥 NEW: Execute AI-suggested visual interventions (intervene in logic)
+            if ai_results.get("actions"):
+                controller = PipelineController()
+                image = controller.apply_ai_actions(image, ai_results["actions"])
+            
+            # 🔥 NEW: Handle AI-requested versioning
+            if ai_results.get("is_new_version") or getattr(args, 'ai_autofix', False):
+                v_suffix = f"_AI_Refined_{int(time.time())}"
+                new_output = output_dir.parent / (output_dir.name + v_suffix)
+                new_output.mkdir(exist_ok=True, parents=True)
+                logger.info(f"[Main] AI requested NEW VERSION. Output: {new_output}")
+                output_dir = new_output
+                output_pdf = output_dir / "final_films.pdf"
+
             _progress(0.3, "AI Analysis Complete")
         except Exception as e:
             logger.error(f"[Main] AI Bridge failed: {e}")
@@ -211,7 +238,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
                     c, mask, getattr(result, 'mask_dpi', args.dpi),
                     page_w, page_h, margin_pt=margin_pt,
                     scale_mode=getattr(args, 'scale_mode', 'fit_to_page'),
-                    custom_scale_percent=getattr(args, 'custom_scale_percent', 100.0)
+                    custom_scale_percent=getattr(args, 'custom_scale_percent', 100.0),
+                    custom_page_w=getattr(args, 'page_width', 0),
+                    custom_page_h=getattr(args, 'page_height', 0),
+                    fit_to_artwork=getattr(args, 'fit_artwork', False)
                 )
 
                 # Vector registration marks (unified with vector path)
@@ -267,6 +297,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 epsilon=getattr(args, 'simplification_epsilon', None),
                 job_name=job_name,
                 is_halftone=is_halftone,
+                args=args, # Pass full args for custom page sizes
             )
 
         # ── Generate PNG Previews for Flutter ──
@@ -334,7 +365,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-underbase", action="store_true", help="Generate Underbase")
     parser.add_argument("--choke-px", type=int, default=2)
     parser.add_argument("--trapping-px", type=int, default=1)
-    parser.add_argument("--page-size", choices=["A4", "A3", "LETTER"], default="A4")
+    parser.add_argument("--page-size", default="A4")
+    parser.add_argument("--page-width", type=float, default=0, help="Custom page width in mm")
+    parser.add_argument("--page-height", type=float, default=0, help="Custom page height in mm")
+    parser.add_argument("--fit-artwork", action="store_true", help="Resize page to artwork dimensions")
     parser.add_argument("--margin-pt", type=float, default=65.0, help="Page margin in points (pt)")
     parser.add_argument("--json-output", action="store_true")
 

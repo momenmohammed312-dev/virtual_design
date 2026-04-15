@@ -208,6 +208,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
             dot_fn=dot_shape,
             gamma=1.6,
             oversample=2,
+            source_dpi=output_dpi,
         )
         ht_engine = RasterHalftoneEngine(raster_cfg)
         ht = ht_engine.generate(enhanced)

@@ -1,9 +1,11 @@
 import cv2
 import math
 import numpy as np
+import logging
 from typing import List, Literal, Optional
 from dataclasses import dataclass
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class HalftoneDot:
@@ -98,11 +100,16 @@ class HalftoneGenerator:
         angle: float = 45.0,
         dot_shape: str = "circle",
         gamma: float = 1.6,
+        dpi_override: Optional[int] = None,
     ) -> List[HalftoneDot]:
         """Vectorized Halftone Dot generation with gamma correction for professional screen printing."""
         gray = self._to_gray(image)
         h, w = gray.shape
-        dot_spacing = self.dpi / lpi
+        
+        # FIX A-02: Use effective DPI (if downscaled) to calculate pixel-space spacing.
+        dpi_to_use = dpi_override if dpi_override is not None else self.dpi
+        dot_spacing = dpi_to_use / lpi
+        
         angle_rad = math.radians(angle)
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
@@ -137,27 +144,23 @@ class HalftoneGenerator:
         norm = gray[iy, ix] / 255.0
         intensities = 1.0 - norm
 
-        # FIX A-02: Single dot-gain compensation point.
-        # The previous code applied BOTH _apply_dot_gain_curve() AND
-        # PrintJobConfig.apply_dot_gain_compensation() here, PLUS the gamma
-        # power below — three stacked operations that crushed midtones to ~18%.
-        # Now only the gamma exponent remains; the RasterHalftoneEngine which
-        # is the production path applies its own gamma LUT and needs nothing here.
         if gamma != 1.0:
             intensities = np.power(intensities, 1.0 / gamma)
 
         # LPI-adaptive shadow gap (unchanged)
         shadow_gap = 0.90 - (lpi / 1000.0)
         shadow_gap = max(0.75, min(0.92, shadow_gap))
+        
         # FIX A-14: Clamp radii to [0, dot_spacing*0.5] to prevent dot coalescence
-        # when any compensation function returns values > 1.0
         radii = np.clip(intensities, 0.0, 1.0) * dot_spacing * 0.5 * shadow_gap
 
         # 5. Build dot list
+        # FIX A-15: Allow dots smaller than 1.0px to preserve highlight detail.
+        # They will be handled (or skipped if too small) during rasterization.
         dots = [
             HalftoneDot(cx=float(px[i]), cy=float(py[i]), radius=float(radii[i]), shape=dot_shape)
             for i in range(len(px))
-            if radii[i] >= 1.0  
+            if radii[i] > 0.1  # Only skip almost-invisible dots
         ]
         
         return dots
@@ -167,26 +170,29 @@ class HalftoneGenerator:
     def generate(
         self,
         image: np.ndarray,
-        lpi: int = 45,  # FIX GROUP 5.1: Changed default from 85 to 45
+        lpi: int = 45,  
         angle: float = 45.0,
         dot_shape: Literal["round", "square", "ellipse", "dither"] = "round",
         dpi: Optional[int] = None,
         gamma: float = 1.6,
         apply_clahe: bool = True,
-        image_class: str = 'auto'  # FIX GROUP 5.4: Added image_class parameter
+        image_class: str = 'auto'  
     ) -> np.ndarray:
         """Generate halftone as binary numpy array."""
         gray = self._to_gray(image)
         
         # ⚡ 1. PERFORMANCE: Safety downscale for large images (>2400px)
-        # Prevents OOM while maintaining visual print quality (at 300dpi, 8" width = 2400px)
         max_res = 2400
+        effective_dpi = dpi if dpi is not None else self.dpi
+        
         if max(gray.shape) > max_res:
             scale = max_res / max(gray.shape)
             gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-            logger.info(f"[Halftone] Downscaled large image to {gray.shape[1]}x{gray.shape[0]} for speed")
+            # FIX A-02: Track effective DPI to maintain correct dot scaling.
+            effective_dpi = int(effective_dpi * scale)
+            logger.info(f"[Halftone] Downscaled: scale={scale:.3f}, effective_dpi={effective_dpi}")
 
-        # FIX GROUP 5.4: Only apply CLAHE for photos, not for text_logo or artwork
+        # FIX GROUP 5.4: Only apply CLAHE for photos
         if apply_clahe and image_class == 'photo':
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             gray = clahe.apply(gray)
@@ -195,9 +201,12 @@ class HalftoneGenerator:
             return self.floyd_steinberg_dithering(gray)
             
         shape_map = {"round": "circle", "square": "square", "ellipse": "circle"}
+        
+        # Pass effective_dpi to generate_vector_dots
         dots = self.generate_vector_dots(gray, lpi=lpi, angle=angle,
                                          dot_shape=shape_map.get(dot_shape, "circle"),
-                                         gamma=gamma)
+                                         gamma=gamma,
+                                         dpi_override=effective_dpi)
         return self._rasterize(dots, gray.shape)
 
     @staticmethod
@@ -211,17 +220,7 @@ class HalftoneGenerator:
         return score
 
     def floyd_steinberg_dithering(self, gray: np.ndarray) -> np.ndarray:
-        """
-        FIX A-11: Correct pixel-by-pixel Floyd-Steinberg error diffusion.
-
-        The previous vectorized numpy implementation had an off-by-one slice
-        error: `err[:-1]` shifted all horizontal error propagation one column
-        to the right, producing systematic diagonal banding in the output.
-
-        This implementation is the reference pixel-by-pixel loop which is
-        correct by construction.  It is slower but will be the canonical
-        implementation until a vectorized version is externally validated.
-        """
+        """Correct pixel-by-pixel Floyd-Steinberg error diffusion."""
         img = gray.astype(np.float32) / 255.0
         h, w = img.shape
 
@@ -241,8 +240,6 @@ class HalftoneGenerator:
                     if x + 1 < w:
                         img[y + 1, x + 1] += err * 1 / 16
 
-        # FIX A-11: Clip accumulated errors before final threshold to avoid
-        # values > 1.0 or < 0.0 causing binary artefacts on the last row.
         img[-1] = np.clip(img[-1], 0.0, 1.0)
         img[-1] = (img[-1] >= 0.5).astype(np.float32)
 
@@ -262,7 +259,12 @@ class HalftoneGenerator:
         for dot in dots:
             cx = int(round(dot.cx * scale))
             cy = int(round(dot.cy * scale))
-            r = max(scale, int(round(dot.radius * scale)))
+            
+            # FIX A-10: Remove minimum radius floor to allow small dots in highlights.
+            r = int(round(dot.radius * scale))
+            if r < 1:
+                continue   # dot too small to render — correct behavior
+                
             if dot.shape == "square":
                 x1, y1 = max(0, cx - r), max(0, cy - r)
                 x2, y2 = min(big.shape[1] - 1, cx + r), min(big.shape[0] - 1, cy + r)
