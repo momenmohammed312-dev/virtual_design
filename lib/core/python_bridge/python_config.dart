@@ -60,7 +60,7 @@ class PythonConfig {
             : '${venvDir.path}${sep}bin${sep}python';
             
         if (await File(venvPython).exists()) {
-          print('[PythonConfig] Found robust venv: $venvPython');
+          debugPrint('[PythonConfig] Found robust venv: $venvPython');
           try {
             final result = await Process.run(venvPython, ['--version']);
             if (result.exitCode == 0) {
@@ -69,7 +69,7 @@ class PythonConfig {
               return venvPython;
             }
           } catch (e) {
-            print('[PythonConfig] venv candidate failed: $e');
+            debugPrint('[PythonConfig] venv candidate failed: $e');
           }
         }
       }
@@ -189,7 +189,7 @@ print(f"MISSING:{','.join(missing)}")
       
       return missing;
     } catch (e) {
-      print('[PythonConfig] Check failed: $e');
+      debugPrint('[PythonConfig] Check failed: $e');
       return []; 
     }
   }
@@ -219,7 +219,7 @@ print(f"MISSING:{','.join(missing)}")
     if (Platform.isWindows && !_isDebugMode()) {
       final exeDir = File(Platform.resolvedExecutable).parent.path;
       final releasePath = '$exeDir${sep}python';
-      print('[PythonConfig] Release mode, checking: $releasePath');
+      debugPrint('[PythonConfig] Release mode, checking: $releasePath');
       return releasePath;
     }
 
@@ -234,10 +234,10 @@ print(f"MISSING:{','.join(missing)}")
         // Verify the directory is accessible
         try {
           await candidate.list().first;
-          print('[PythonConfig] Found python dir: ${candidate.path}');
+          debugPrint('[PythonConfig] Found python dir: ${candidate.path}');
           return candidate.path;
         } catch (e) {
-          print('[PythonConfig] python dir found but inaccessible: ${candidate.path} — $e');
+          debugPrint('[PythonConfig] python dir found but inaccessible: ${candidate.path} — $e');
           // Continue searching up
         }
       }
@@ -246,7 +246,7 @@ print(f"MISSING:{','.join(missing)}")
 
     // Fallback: try Directory.current (original behavior)
     final fallback = '${Directory.current.path}${sep}python';
-    print('[PythonConfig] WARN: using fallback path: $fallback');
+    debugPrint('[PythonConfig] WARN: using fallback path: $fallback');
     return fallback;
   }
 

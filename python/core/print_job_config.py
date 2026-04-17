@@ -68,7 +68,10 @@ class PrintJobConfig:
             Maximum safe LPI (integer, always >= LPI_ABSOLUTE_MIN)
         """
         dpi = output_dpi if output_dpi is not None else self.dpi
-        mesh = max(1, int(self.mesh_count))
+        
+        # FIX: Robust fallback for None mesh_count to prevent TypeError
+        mesh_val = self.mesh_count if self.mesh_count is not None else 160
+        mesh = max(1, int(mesh_val))
 
         mesh_ceiling = int(mesh / self.MESH_RATIO_DIVISOR)    # e.g. 355/3.5 = 101
         dpi_ceiling  = int(dpi  / self.DPI_RATIO_DIVISOR)     # e.g. 1200/4  = 300

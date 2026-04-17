@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../presentation/upload/upload_controller.dart';
+import '../../core/utils/responsive.dart';
 import '../dashboard/dashboard_controller.dart';
 import '../../domain/entities/print_project.dart';
 
@@ -14,6 +14,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _searchController = TextEditingController();
   late final DashboardController controller;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   static const Color primaryBlue = Color(0xFF1564A5);
   static const Color sidebarBlue = Color(0xFF0E3182);
@@ -32,37 +33,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // ================= Clickable Container =================
   Widget clickableContainer({
-    required double width,
-    required double height,
-    required Color color,
     required Widget child,
+    double? width,
+    double? height,
+    Color color = Colors.white,
     bool isClickable = true,
     VoidCallback? onTap,
   }) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         onTap: isClickable ? onTap ?? () {} : null,
-        splashColor: primaryBlue.withAlpha((0.2 * 255).round()),
-        highlightColor: primaryBlue.withAlpha((0.1 * 255).round()),
         child: Ink(
+          width: width,
+          height: height,
           decoration: BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withAlpha((0.05 * 255).round()),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
+                color: Colors.black.withAlpha(12),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
-          child: SizedBox(
-            width: width,
-            height: height,
-            child: child,
-          ),
+          child: child,
         ),
       ),
     );
@@ -72,419 +69,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFECECEC),
+      key: _scaffoldKey,
+      backgroundColor: const Color(0xFFF5F7FB),
+      drawer: context.isDesktop ? null : Drawer(child: _buildSidebar()),
       body: SafeArea(
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSidebar(),
+            if (context.isDesktop) _buildSidebar(),
             Expanded(
               child: Column(
                 children: [
                   _buildTopBar(),
-                  const SizedBox(height: 20),
-                  
-                  // ================= Statistics Cards =================
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.24,
-                      child: Obx(() {
-                        if (controller.isLoading.value) {
-                          return const Center(child: CircularProgressIndicator());
-                        }
-                        return ListView(
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            clickableContainer(
-                              width: MediaQuery.of(context).size.width * 0.17,
-                              height: MediaQuery.of(context).size.height * 0.24,
-                              color: Colors.white,
-                              isClickable: false,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 35, left: 22),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 38,
-                                      height: 38,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(10),
-                                        color: const Color.fromARGB(70, 55, 155, 237),
-                                      ),
-                                      child: const Icon(
-                                        Icons.print_outlined,
-                                        size: 23,
-                                        color: Color.fromARGB(154, 18, 98, 163),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'Total Print',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color.fromARGB(255, 72, 72, 72),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Obx(() => Text(
-                                          controller.totalProjects.value.toString(),
-                                          style: const TextStyle(
-                                            fontSize: 25,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        )),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 15),
-                            clickableContainer(
-                              width: MediaQuery.of(context).size.width * 0.17,
-                              height: MediaQuery.of(context).size.height * 0.24,
-                              color: Colors.white,
-                              isClickable: false,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 35, left: 22),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 38,
-                                      height: 38,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(10),
-                                        color: const Color.fromARGB(70, 237, 182, 55),
-                                      ),
-                                      child: const Icon(
-                                        Icons.pending_actions_outlined,
-                                        size: 23,
-                                        color: Color.fromARGB(154, 232, 129, 4),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'Pending Jobs',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color.fromARGB(255, 72, 72, 72),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Obx(() => Text(
-                                          controller.pendingCount.toString(),
-                                          style: const TextStyle(
-                                            fontSize: 25,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        )),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 15),
-                            clickableContainer(
-                              width: MediaQuery.of(context).size.width * 0.17,
-                              height: MediaQuery.of(context).size.height * 0.24,
-                              color: Colors.white,
-                              isClickable: false,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 35, left: 22),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 38,
-                                      height: 38,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(10),
-                                        color: const Color.fromARGB(70, 55, 237, 83),
-                                      ),
-                                      child: const Icon(
-                                        Icons.check_circle_outline,
-                                        size: 23,
-                                        color: Color.fromARGB(154, 0, 200, 17),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'Complete',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color.fromARGB(255, 72, 72, 72),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Obx(() => Text(
-                                          controller.totalFilms.value.toString(),
-                                          style: const TextStyle(
-                                            fontSize: 25,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        )),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 15),
-                            clickableContainer(
-                              width: MediaQuery.of(context).size.width * 0.17,
-                              height: MediaQuery.of(context).size.height * 0.24,
-                              color: Colors.white,
-                              isClickable: false,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 35, left: 22),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 38,
-                                      height: 38,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(10),
-                                        color: const Color.fromARGB(70, 237, 66, 4),
-                                      ),
-                                      child: const Icon(
-                                        Icons.storage_outlined,
-                                        size: 23,
-                                        color: Color.fromARGB(154, 232, 129, 4),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    const Text(
-                                      'Storage Used',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color.fromARGB(255, 72, 72, 72),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Obx(() => Text(
-                                          controller.storageUsed.value,
-                                          style: const TextStyle(
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        )),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      }),
-                    ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  // ================= Quick Actions Title =================
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Quick Actions',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-
-                  // ================= Quick Actions Cards =================
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.19,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        children: [
-                          clickableContainer(
-                            width: MediaQuery.of(context).size.width * 0.17,
-                            height: MediaQuery.of(context).size.height * 0.19,
-                            color: Colors.white,
-                            onTap: () => Get.toNamed('/upload'),
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(50),
-                                      color: const Color.fromARGB(70, 104, 117, 214),
-                                    ),
-                                    child: const Icon(
-                                      Icons.add,
-                                      size: 28,
-                                      color: Color.fromARGB(200, 69, 135, 249),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  const Text(
-                                    'New Print Job',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 15),
-                          clickableContainer(
-                            width: MediaQuery.of(context).size.width * 0.17,
-                            height: MediaQuery.of(context).size.height * 0.19,
-                            color: Colors.white,
-                            onTap: () async {
-                              // Get UploadController and directly pick file
-                              final uploadController = Get.put(UploadController());
-                              await uploadController.pickFile();
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    width: 48,
-                                    height: 48,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(50),
-                                      color: const Color.fromARGB(70, 104, 117, 214),
-                                    ),
-                                    child: const Icon(
-                                      Icons.cloud_upload_outlined,
-                                      size: 28,
-                                      color: Color.fromARGB(200, 69, 135, 249),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  const Text(
-                                    'Upload File',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.black87,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  // ================= Recent Projects =================
                   Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          _buildStatisticsGrid(),
+                          const SizedBox(height: 32),
+                          const Text(
+                            'Quick Actions',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 16),
+                          _buildQuickActions(),
+                          const SizedBox(height: 32),
                           const Text(
                             'Recent Projects',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
-                          const SizedBox(height: 15),
-                          Expanded(
-                            child: Obx(() {
-                              if (controller.isLoading.value) {
-                                return Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Center(
-                                    child: CircularProgressIndicator(),
-                                  ),
-                                );
-                              }
-
-                              if (controller.recentProjects.isEmpty) {
-                                return Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const Icon(
-                                        Icons.folder_open,
-                                        size: 64,
-                                        color: Colors.grey,
-                                      ),
-                                      const SizedBox(height: 16),
-                                      const Text(
-                                        'No recent projects',
-                                        style: TextStyle(
-                                          color: Colors.grey,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      ElevatedButton.icon(
-                                        onPressed: () => Get.toNamed('/upload'),
-                                        icon: const Icon(Icons.add_circle_outline),
-                                        label: const Text('Start New Project'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: const Color(0xFF6C63FF),
-                                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }
-
-                              return Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: GridView.builder(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                                    maxCrossAxisExtent: 280,
-                                    mainAxisSpacing: 20,
-                                    crossAxisSpacing: 20,
-                                    childAspectRatio: 0.75,
-                                  ),
-                                  itemCount: controller.recentProjects.length,
-                                  itemBuilder: (context, index) {
-                                    final project = controller.recentProjects[index];
-                                    return _buildRecentProjectCard(project);
-                                  },
-                                ),
-                              );
-                            }),
-                          ),
+                          const SizedBox(height: 16),
+                          _buildProjectsGrid(),
+                          const SizedBox(height: 40),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -494,162 +116,162 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ================= Sidebar =================
-  Widget _buildSidebar() {
+  Widget _buildTopBar() {
     return Container(
-      width: 250,
-      color: Colors.white,
-      child: Column(
-        children: [
-          _buildLogo(),
-          const Divider(),
-          const SizedBox(height: 10),
-          _sideButton(Icons.dashboard, 'Dashboard', () => Get.toNamed('/dashboard')),
-          _sideButton(Icons.folder_open, 'My Folders', () => Get.toNamed('/files')),
-          const Spacer(),
-          const Divider(),
-          _systemSection(),
-          const Divider(),
-          _buildProfile(),
-        ],
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE))),
       ),
-    );
-  }
-
-  Widget _buildLogo() {
-    return const SizedBox(
-      height: 50,
       child: Row(
         children: [
-          SizedBox(width: 8),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: sidebarBlue,
-              borderRadius: BorderRadius.all(Radius.circular(8)),
+          if (!context.isDesktop)
+            IconButton(
+              icon: const Icon(Icons.menu),
+              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
             ),
-            child: SizedBox(
-              height: 35,
-              width: 35,
-              child: Icon(Icons.print_outlined, color: Colors.white),
+          const SizedBox(width: 8),
+          const Text(
+            'Dashboard',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const Spacer(),
+          SizedBox(
+            width: context.isMobile ? 150 : 300,
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search projects...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: const Color(0xFFF0F2F5),
+              ),
             ),
           ),
-          SizedBox(width: 8),
-          Text(
-            'Virtual Designer',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          const SizedBox(width: 16),
+          IconButton(
+            icon: const Icon(Icons.notifications_none_outlined),
+            onPressed: () {},
           ),
         ],
       ),
     );
   }
 
-  Widget _systemSection() {
-    return Column(
-      children: [
-        const SizedBox(height: 8),
-        const Text(
-          'SYSTEM',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey,
-          ),
+  Widget _buildStatisticsGrid() {
+    return Obx(() {
+      if (controller.isLoading.value) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      // Adaptive grid layout: 1 column on small mobile, 2 on tablet, 4 on desktop
+      int crossAxisCount = context.width < 600 ? 1 : (context.width < 1000 ? 2 : 4);
+      double aspectRatio = context.width < 600 ? 3.0 : 1.6;
+      
+      return GridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: crossAxisCount,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: aspectRatio,
+        children: [
+          _statCard('Total Jobs', controller.totalProjects.value.toString(), Icons.print_outlined, Colors.blue),
+          _statCard('Pending', controller.pendingCount.toString(), Icons.pending_actions_outlined, Colors.orange),
+          _statCard('Complete', controller.totalFilms.value.toString(), Icons.check_circle_outline, Colors.green),
+          _statCard('Storage', controller.storageUsed.value, Icons.storage_outlined, Colors.purple),
+        ],
+      );
+    });
+  }
+
+  Widget _statCard(String title, String value, IconData icon, Color color) {
+    return clickableContainer(
+      isClickable: false,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(height: 8),
+            Text(title, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
         ),
-        const SizedBox(height: 8),
-        _sideButton(Icons.person_2_rounded, 'Users', () => Get.toNamed('/users')),
-        _sideButton(Icons.settings, 'Settings', () => Get.toNamed('/settings')),
+      ),
+    );
+  }
+
+  Widget _buildQuickActions() {
+    return Wrap(
+      spacing: 16,
+      runSpacing: 16,
+      children: [
+        _actionButton('New Project', Icons.add, () => Get.toNamed('/upload')),
+        _actionButton('Import URL', Icons.link, () {
+           // Show URL dialog
+        }),
       ],
     );
   }
 
-  Widget _buildProfile() {
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Row(
-        children: [
-          const Icon(Icons.person_outlined, size: 28, color: Colors.grey),
-          const SizedBox(width: 8),
-          const Text(
-            'Administrator',
-            style: TextStyle(fontWeight: FontWeight.w600),
-          ),
-          const Spacer(),
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.logout, size: 20, color: Colors.grey),
-          ),
-        ],
+  Widget _actionButton(String label, IconData icon, VoidCallback onTap) {
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon),
+      label: Text(label),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: primaryBlue,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
 
-  Widget _sideButton(IconData icon, String text, VoidCallback? onTap) {
-    final isActive = Get.currentRoute == _getRouteForText(text);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: ElevatedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, color: isActive ? Colors.white : primaryBlue),
-        label: Text(
-          text,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: isActive ? Colors.white : primaryBlue,
-          ),
+  Widget _buildProjectsGrid() {
+    return Obx(() {
+      if (controller.recentProjects.isEmpty) {
+        return const Center(child: Padding(
+          padding: EdgeInsets.all(40),
+          child: Text('No projects found'),
+        ));
+      }
+      return GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 300,
+          mainAxisSpacing: 20,
+          crossAxisSpacing: 20,
+          childAspectRatio: 0.8,
         ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isActive ? primaryBlue : Colors.white,
-          elevation: 0,
-          alignment: Alignment.centerLeft,
-          minimumSize: const Size(double.infinity, 45),
-        ),
-      ),
-    );
+        itemCount: controller.recentProjects.length,
+        itemBuilder: (context, index) => _buildRecentProjectCard(controller.recentProjects[index]),
+      );
+    });
   }
 
-  String _getRouteForText(String text) {
-    switch (text) {
-      case 'Dashboard':
-        return '/dashboard';
-      case 'My Folders':
-        return '/files';
-      case 'Users':
-        return '/users';
-      case 'Settings':
-        return '/settings';
-      default:
-        return '';
-    }
-  }
-
-  // ================= Recent Project Card (16:9) =================
   Widget _buildRecentProjectCard(PrintProject project) {
-    final statusColor = project.status == ProjectStatus.completed
-        ? Colors.green
-        : project.status == ProjectStatus.processing
-            ? Colors.blue
-            : Colors.red;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
-      ),
+    return clickableContainer(
+      onTap: () => Get.toNamed('/project-details', arguments: project),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Thumbnail with 16:9 aspect ratio
-          ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Container(
-                color: const Color(0xFFF0F0F0),
-                child: const Center(
-                  child: Icon(Icons.image, size: 48, color: Colors.grey),
-                ),
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F2F5),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
               ),
+              child: const Icon(Icons.image, color: Colors.grey, size: 40),
             ),
           ),
           Padding(
@@ -657,48 +279,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  project.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(project.name, style: const TextStyle(fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        project.createdAt.toString().split(' ')[0],
-                        style: const TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: statusColor.withAlpha((0.15 * 255).round()),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        project.status == ProjectStatus.completed
-                            ? 'Complete'
-                            : project.status == ProjectStatus.processing
-                                ? 'Processing'
-                                : 'Failed',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: statusColor,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                Text('Status: ${project.status.name}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
               ],
             ),
           ),
@@ -707,42 +290,64 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ================= Top Bar =================
-  Widget _buildTopBar() {
+  Widget _buildSidebar() {
     return Container(
-      height: 50,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      width: 260,
+      height: double.infinity,
       color: Colors.white,
+      child: Column(
+        children: [
+          _buildLogo(),
+          const Divider(height: 1),
+          const SizedBox(height: 20),
+          _sideButton(Icons.dashboard_rounded, 'Dashboard', () {}),
+          _sideButton(Icons.folder_rounded, 'My Projects', () {}),
+          _sideButton(Icons.settings_rounded, 'Settings', () {}),
+          const Spacer(),
+          _buildProfile(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLogo() {
+    return Container(
+      padding: const EdgeInsets.all(24),
       child: Row(
         children: [
-          const Text(
-            'Dashboard Overview',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: primaryBlue, borderRadius: BorderRadius.circular(8)),
+            child: const Icon(Icons.auto_awesome, color: Colors.white, size: 24),
           ),
-          const Spacer(),
-          SizedBox(
-            width: 320,
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search...',
-                filled: true,
-                fillColor: const Color(0xFFECECEC),
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  borderSide: BorderSide.none,
-                ),
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: _searchController.clear,
-                ),
-              ),
-            ),
-          ),
+          const SizedBox(width: 12),
+          Text('VIRTUAL', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: sidebarBlue)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildProfile() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          const CircleAvatar(backgroundColor: Color(0xFFEEEEEE), child: Icon(Icons.person, color: Colors.black54)),
+          const SizedBox(width: 12),
+          const Text('Admin User', style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  Widget _sideButton(IconData icon, String title, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: ListTile(
+        onTap: onTap,
+        leading: Icon(icon, color: Colors.black54),
+        title: Text(title, style: const TextStyle(color: Colors.black87)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }

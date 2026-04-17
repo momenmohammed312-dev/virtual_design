@@ -322,6 +322,12 @@ class PythonProcessor {
       args.addAll(['--film-label', settings.filmLabel]);
     }
 
+    // Scaling & Physical Sizing (Phase 2 Upgrade)
+    args.addAll(['--target-width-mm', settings.targetWidthMm.toString()]);
+    args.addAll(['--source-dpi', settings.sourceDpi.toString()]);
+    args.addAll(['--scale-mode', settings.scaleMode]);
+    args.addAll(['--custom-scale-percent', settings.customScalePercent.toString()]);
+
     return args;
   }
 

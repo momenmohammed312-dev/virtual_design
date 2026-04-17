@@ -62,6 +62,12 @@ class SetupController extends GetxController {
   final RxBool adaptiveThreshold = false.obs;
   final RxBool responsiveMode = false.obs;
   final Rx<ps.ImageType> selectedImageType = ps.ImageType.auto.obs;
+  
+  // Scaling & Sizing
+  final RxDouble targetWidthMm = 0.0.obs;
+  final RxInt sourceDpi = 300.obs;
+  final RxString scaleMode = 'fit_to_page'.obs;
+  final RxDouble customScalePercent = 100.0.obs;
 
   // Output directory selection
   final RxString outputDir = ''.obs;
@@ -177,6 +183,10 @@ class SetupController extends GetxController {
     isAiAutoFix.value = true;
     selectedDpi.value = 1200;
     colorComplexity.value = 'Auto';
+    targetWidthMm.value = 0.0;
+    sourceDpi.value = 300;
+    scaleMode.value = 'fit_to_page';
+    customScalePercent.value = 100.0;
     update();
   }
 
@@ -249,6 +259,10 @@ class SetupController extends GetxController {
         smoothingFactor: smoothingAdjustmentMade ? smoothingFactor.value : -1.0,
         cornerThreshold: cornerAdjustmentMade ? cornerThreshold.value : -1.0,
         smoothingSlider: -1, // Use independent smoothingFactor instead
+        targetWidthMm: targetWidthMm.value,
+        sourceDpi: sourceDpi.value,
+        scaleMode: scaleMode.value,
+        customScalePercent: customScalePercent.value,
       );
 
       Get.log(

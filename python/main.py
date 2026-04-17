@@ -87,7 +87,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
     job_config = PrintJobConfig(mesh_count=args.mesh_count, dpi=decision.parameters.get('dpi', 300))
     router = PipelineRouter(job_config, alpha_mask=alpha_mask)
     
+    # Inject decision metadata into args for downstream logic (Halftone skip bypass, etc.)
+    setattr(args, 'overrides', decision.explicit_user_overrides)
+    setattr(args, 'reasoning', decision.reasoning)
+    
     result: PipelineResult = router.route_deterministic(image, decision)
+
     
     # Cleanup memory
     del image
@@ -221,6 +226,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--contour-min-area", type=int, default=50)
     parser.add_argument("--simplification-epsilon", type=float, default=1.2)
     parser.add_argument("--ai-autofix", action="store_true")
+
+    # Scaling & Physical Source Integrity (Phase 2 Upgrade)
+    parser.add_argument("--target-width-mm", type=float, default=0.0, help="Explicit target width in mm")
+    parser.add_argument("--source-dpi", type=int, default=-1, help="Original artwork DPI (overrides metadata)")
+    parser.add_argument("--scale-mode", choices=["fit_to_page", "actual_size", "specific_width", "custom_scale"], default="fit_to_page")
+    parser.add_argument("--custom-scale-percent", type=float, default=100.0)
+
     return parser.parse_args()
 
 if __name__ == "__main__":

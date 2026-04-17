@@ -67,9 +67,9 @@ def preprocess_text_logo(image: np.ndarray) -> np.ndarray:
         bilat = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR) if len(gray.shape) == 2 else gray
     else:
         bilat = cv2.bilateralFilter(image, 5, 50, 50)
-    # Sharpening pass (unsharp mask — less destructive than the 3×3 kernel)
-    blurred = cv2.GaussianBlur(bilat, (0, 0), 1.0)
-    sharpened = cv2.addWeighted(bilat, 1.5, blurred, -0.5, 0)
+    # Subtle Sharpening (less destructive for text)
+    blurred = cv2.GaussianBlur(bilat, (0, 0), 0.5)
+    sharpened = cv2.addWeighted(bilat, 1.3, blurred, -0.3, 0)
     return sharpened
 
 def preprocess_artwork(image: np.ndarray) -> np.ndarray:
@@ -192,7 +192,8 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
     except Exception as _e:
         # Fallback: inline formula so the pipeline never crashes on import error.
         logger.warning(f"[HalftonePipeline] PrintJobConfig unavailable ({_e}), using inline LPI fallback")
-        mesh_ceiling = int(mesh_count / 3.5)
+        mesh_safe = mesh_count if mesh_count is not None else 160
+        mesh_ceiling = int(mesh_safe / 3.5)
         dpi_ceiling  = output_dpi // 4
         max_safe_lpi = max(25, min(mesh_ceiling, dpi_ceiling))
         effective_lpi = min(requested_lpi, max_safe_lpi)
@@ -211,18 +212,23 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
             result.append(mask)
             continue
 
+        # SAFETY CHECK: Near-solid coverage handling
         if coverage_percentage > 95.0:
-            # FIX 4: Near-solid mask passed as-is to avoid halftone on flood-fill areas.
-            # RISK: If this is a legitimate dark design (not a background fill), the lack
-            # of halftone may cause ink flooding on press.  Operator must verify.
-            logger.warning(
-                f"[Halftone] Mask {i+1} has {coverage_percentage:.1f}% ink coverage — "
-                f"exceeds 95%% threshold. Skipping halftone to avoid dot merging. "
-                f"VERIFY on press: if this is a dark tone area (not solid black), "
-                f"consider reducing LPI or using solid-ink mode instead."
-            )
-            result.append(mask)
-            continue
+            # Policy: If User EXPLICITLY forced halftone (Level 1), obey even if solid.
+            # Otherwise (Auto/Default), skip to avoid flooding.
+            is_explicit = getattr(args, 'halftone', False) and 'halftone' in getattr(args, 'overrides', [])
+            
+            if is_explicit:
+                logger.info(f"[Halftone] Mask {i+1} is {coverage_percentage:.1f}% solid but FORCE HALFTONE is ON. Proceeding.")
+            else:
+                # FIX 4: Near-solid mask passed as-is to avoid halftone on flood-fill areas.
+                logger.warning(
+                    f"[Halftone] Mask {i+1} has {coverage_percentage:.1f}% ink coverage — "
+                    f"exceeds 95%% threshold. Skipping halftone (Auto-Safe). "
+                    f"Use Force Halftone to override."
+                )
+                result.append(mask)
+                continue
 
         # FIX 2b: [Halftone Coverage] Binary mask -> edge-softened gradient
         enhanced_raw = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()

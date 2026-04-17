@@ -132,7 +132,19 @@ class ProcessingSettings {
     this.meshPreviewMode = MeshPreviewMode.automatic,
     this.smoothingSlider = 35,
     this.responsiveMode = false,
+    // Scaling & Source Integrity
+    this.targetWidthMm = 0.0,
+    this.sourceDpi = 300,
+    this.scaleMode = 'fit_to_page',
+    this.customScalePercent = 100.0,
   });
+
+  // Scaling logic
+  final double targetWidthMm;
+  final int sourceDpi;
+  final String scaleMode;
+  final double customScalePercent;
+
 
   // ─── Mesh Count Calculations (MED #6 FIX) ──────────────────────────────
 
@@ -259,6 +271,10 @@ class ProcessingSettings {
     ImageType? imageType,
     int? smoothingSlider,
     bool? responsiveMode,
+    double? targetWidthMm,
+    int? sourceDpi,
+    String? scaleMode,
+    double? customScalePercent,
   }) =>
       ProcessingSettings(
         colorCount: colorCount ?? this.colorCount,
@@ -289,6 +305,10 @@ class ProcessingSettings {
         imageType: imageType ?? this.imageType,
         smoothingSlider: smoothingSlider ?? this.smoothingSlider,
         responsiveMode: responsiveMode ?? this.responsiveMode,
+        targetWidthMm: targetWidthMm ?? this.targetWidthMm,
+        sourceDpi: sourceDpi ?? this.sourceDpi,
+        scaleMode: scaleMode ?? this.scaleMode,
+        customScalePercent: customScalePercent ?? this.customScalePercent,
       );
 
   Map<String, dynamic> toJson() => {
@@ -320,6 +340,10 @@ class ProcessingSettings {
         'imageType': imageType.name,
         'smoothingSlider': smoothingSlider,
         'responsiveMode': responsiveMode,
+        'targetWidthMm': targetWidthMm,
+        'sourceDpi': sourceDpi,
+        'scaleMode': scaleMode,
+        'customScalePercent': customScalePercent,
       };
 
   factory ProcessingSettings.fromJson(Map<String, dynamic> json) =>
@@ -389,5 +413,9 @@ class ProcessingSettings {
         ),
         smoothingSlider: (json['smoothingSlider'] as int?) ?? 35,
         responsiveMode: (json['responsiveMode'] as bool?) ?? false,
+        targetWidthMm: (json['targetWidthMm'] as num?)?.toDouble() ?? 0.0,
+        sourceDpi: (json['sourceDpi'] as int?) ?? 300,
+        scaleMode: (json['scaleMode'] as String?) ?? 'fit_to_page',
+        customScalePercent: (json['customScalePercent'] as num?)?.toDouble() ?? 100.0,
       );
 }

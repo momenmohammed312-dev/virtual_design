@@ -384,22 +384,52 @@ def export_vector_pdf(
                f"({page_w/72*25.4:.1f}mm x {page_h/72*25.4:.1f}mm)")
     logger.info(f"[VectorExporter] Scale mode: {scale_mode}, margin: {margin_pt}pt, DPI: {dpi}")
     
-    # Professional 1:1 scaling: pixels to points with calibration
+    # 🎯 NEW: Physical Sizing & Scaling Engine
+    # Standardize on 'mm' as the internal unit of truth
+    
+    # 1. Determine Source Size in MM
+    # We use source_dpi to understand how many mm the pixels represent
+    source_dpi = getattr(args, 'source_dpi', dpi) or dpi
+    
+    first_mask = masks[0] if masks else None
+    if first_mask is not None:
+        first_h, first_w = first_mask.shape[:2]
+        src_w_mm = first_w / source_dpi * 25.4
+        src_h_mm = first_h / source_dpi * 25.4
+        logger.info(f"[VectorExporter] Source Artwork: {first_w}x{first_h}px @ {source_dpi} DPI = {src_w_mm:.1f}mm x {src_h_mm:.1f}mm")
+        
+        # 2. Identify Scaling Mode
+        scale_mode = getattr(args, 'scale_mode', 'fit_to_page')
+        target_width_mm = getattr(args, 'target_width_mm', 0)
+        
+        # 3. Compute Final Scale Factor (relative to source mm)
+        if target_width_mm > 0:
+            scale_factor = target_width_mm / src_w_mm
+        elif scale_mode == 'actual_size':
+            scale_factor = 1.0
+        elif scale_mode == 'custom_scale':
+            scale_factor = getattr(args, 'custom_scale_percent', 100.0) / 100.0
+        else: # fit_to_page
+            printable_w_mm = (page_w - 2 * margin_pt) * 25.4 / 72.0
+            printable_h_mm = (page_h - 2 * margin_pt) * 25.4 / 72.0
+            scale_factor = min(printable_w_mm / src_w_mm, printable_h_mm / src_h_mm)
+            
+            # Capping: Don't blow up tiny logos unless explicit
+            if 'scale_mode' not in getattr(args, 'overrides', []):
+                if scale_factor > 2.0: scale_factor = 2.0
+
+        final_w_mm = src_w_mm * scale_factor
+        final_h_mm = src_h_mm * scale_factor
+        logger.info(f"[VectorExporter] Final Print Size: {final_w_mm:.1f}mm x {final_h_mm:.1f}mm (Scale: {scale_factor:.2f}x)")
+    else:
+        scale_factor = 1.0
+
     def px_to_pt(px: float) -> float:
-        if calib:
-            mm = calib.pixels_to_mm(px)
-            return mm * 72.0 / 25.4  # mm to points
-        else:
-            effective_dpi = mask_dpi if mask_dpi is not None else dpi
-            return px / effective_dpi * 72.0
+        return px / source_dpi * 72.0
     
     def px_to_mm(px: float) -> float:
-        if calib:
-            return calib.pixels_to_mm(px)
-        else:
-            effective_dpi = mask_dpi if mask_dpi is not None else dpi
-            return px / effective_dpi * 25.4
-    
+        return px / source_dpi * 25.4
+
     if (corner_threshold or 0.0) > 150.0:
         logger.info(f"[VectorExporter] Applying Hard-Corner Logic (Threshold: {corner_threshold:.1f})")
     
@@ -409,56 +439,8 @@ def export_vector_pdf(
     printable_w = page_w - 2 * margin_pt
     printable_h = page_h - 2 * margin_pt
     
-    logger.info(f"[VectorExporter] Printable area: {printable_w:.1f}pt x {printable_h:.1f}pt "
-               f"({printable_w/72*25.4:.1f}mm x {printable_h/72*25.4:.1f}mm)")
-    
-    # Compute scale factor once (for multi-film consistency)
-    # Use first mask to determine artwork bounds
-    first_mask = masks[0] if masks else None
-    if first_mask is not None:
-        first_h, first_w = first_mask.shape[:2]
-        artwork_w_pt = px_to_pt(first_w)
-        artwork_h_pt = px_to_pt(first_h)
-        artwork_w_mm = px_to_mm(first_w)
-        artwork_h_mm = px_to_mm(first_h)
-        
-        logger.info(f"[VectorExporter] Original artwork: {first_w}x{first_h}px = "
-                   f"{artwork_w_mm:.1f}mm x {artwork_h_mm:.1f}mm")
-        
-        # Calculate scale factor based on mode
-        if scale_mode == 'actual_size':
-            scale_factor = 1.0
-            logger.info(f"[VectorExporter] Scale mode: actual_size (1:1, no scaling)")
-            
-        elif scale_mode == 'custom_scale':
-            scale_factor = custom_scale_percent / 100.0
-            logger.info(f"[VectorExporter] Scale mode: custom_scale ({custom_scale_percent}%)")
-            
-        else:  # fit_to_page (default)
-            # Calculate scale to fit within printable area
-            scale_w = printable_w / artwork_w_pt if artwork_w_pt > 0 else 1.0
-            scale_h = printable_h / artwork_h_pt if artwork_h_pt > 0 else 1.0
-            scale_factor = min(scale_w, scale_h)
-            
-            # Clamp to reasonable limits
-            scale_factor = min(scale_factor, MAX_SCALE_PERCENT / 100.0)
-            scale_factor = max(scale_factor, 0.1)  # Minimum 10%
-            
-            logger.info(f"[VectorExporter] Scale mode: fit_to_page, computed scale: {scale_factor:.2f}x "
-                       f"(w_ratio={scale_w:.2f}, h_ratio={scale_h:.2f})")
-        
-        final_w_pt = artwork_w_pt * scale_factor
-        final_h_pt = artwork_h_pt * scale_factor
-        final_w_mm = artwork_w_mm * scale_factor
-        final_h_mm = artwork_h_mm * scale_factor
-        
-        logger.info(f"[VectorExporter] Final render size: {final_w_pt:.1f}pt x {final_h_pt:.1f}pt "
-                   f"({final_w_mm:.1f}mm x {final_h_mm:.1f}mm)")
-    else:
-        scale_factor = 1.0
-        logger.warning("[VectorExporter] No masks provided, using default scale=1.0")
-    
     MARGIN_PT = margin_pt  # Use configured margin
+
     
     for film_idx, (mask, color_rgb, color_name) in enumerate(
         zip(masks, colors, color_names)
