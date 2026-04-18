@@ -338,16 +338,16 @@ if __name__ == '__main__':
 """
 Registration Marks Generator
 ============================
-يضيف علامات التسجيل (Registration Marks) على الصور لضمان دقة التوافق
-بين الشاشات المختلفة في طباعة السيلك سكرين
+Adds registration marks to images for accurate alignment
+between different screens in screen printing.
 
 Types of marks supported:
-- Crosshair (نجمة التقاطع) - الأكثر شيوعاً
-- Circle + Cross (دائرة مع صليب)
-- Corner marks (علامات الزوايا)
-- Crop marks (علامات القص)
-- Color bars (شريط مقارنة الألوان)
-- Color labels (اسم اللون على كل فيلم)
+- Crosshair - Most common
+- Circle + Cross
+- Corner marks
+- Crop marks
+- Color bars
+- Color labels
 """
 
 import cv2
@@ -636,7 +636,7 @@ class RegistrationMarksGenerator:
         """
         Draw a single registration mark (crosshair + circle)
         
-        الشكل النهائي:
+        Final shape:
            ─────────
               ╋
            ─────────

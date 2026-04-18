@@ -1,10 +1,10 @@
 // lib/data/repositories/processing_repository_impl.dart
 
-import '../../domain/repositories/processing_repository.dart';
-import '../../domain/entities/processing_settings.dart';
-import '../../core/python_bridge/process_result.dart';
-import '../../core/python_bridge/python_processor.dart';
-import '../datasources/local/hive_service.dart';
+import 'package:virtual_design/domain/repositories/processing_repository.dart';
+import 'package:virtual_design/domain/entities/processing_settings.dart';
+import 'package:virtual_design/core/python_bridge/process_result.dart';
+import 'package:virtual_design/core/python_bridge/python_processor.dart';
+import 'package:virtual_design/data/datasources/local/hive_service.dart';
 
 class ProcessingRepositoryImpl implements ProcessingRepository {
   final PythonProcessor _processor;
@@ -23,9 +23,76 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
     String? outputDir,
     void Function(double, String)? onProgress,
   }) async {
+    // Convert ProcessingSettings to Map<String, dynamic>
+    // Only include settings that Python main.py accepts
+    final settingsMap = <String, dynamic>{
+      // Core settings (mapped to Python argument names)
+      'colors': settings.colorCount, // Python: --colors
+      'detail-level': settings.detailLevel.name, // Python: --detail-level
+      'dpi': settings.dpi,
+      'mesh-count': settings.meshCount, // Python: --mesh-count
+      'image-type': settings.imageType.name, // Python: --image-type
+      'global-threshold':
+          settings.globalThreshold, // Python: --global-threshold
+      'smoothing-factor':
+          settings.smoothingFactor, // Python: --smoothing-factor
+      'corner-threshold':
+          settings.cornerThreshold, // Python: --corner-threshold
+      'noise-removal': settings.noiseRemoval, // Python: --noise-removal
+      'adaptive-threshold':
+          settings.adaptiveThreshold, // Python: --adaptive-threshold
+
+      // Mode settings
+      'pantone-matching':
+          settings.pantoneMatching.name, // Python: --pantone-matching
+      'underbase-mode': settings.underbaseMode.name, // Python: --underbase-mode
+      'trapping-mode': settings.trappingMode.name, // Python: --trapping-mode
+      'overprint-mode': settings.overprintMode.name, // Python: --overprint-mode
+      'gradient-mesh-mode':
+          settings.gradientMeshMode.name, // Python: --gradient-mesh-mode
+      'typography-mode':
+          settings.typographyMode.name, // Python: --typography-mode
+      'mesh-preview-mode':
+          settings.meshPreviewMode.name, // Python: --mesh-preview-mode
+
+      // Scaling settings
+      'target-width-mm': settings.targetWidthMm, // Python: --target-width-mm
+      'source-dpi': settings.sourceDpi, // Python: --source-dpi
+      'scale-mode': settings.scaleMode, // Python: --scale-mode
+      'custom-scale-percent':
+          settings.customScalePercent, // Python: --custom-scale-percent
+
+      // Paper size settings (convert cm to mm for Python)
+      'page-width': settings.paperWidthCm * 10, // Python: --page-width (mm)
+      'page-height': settings.paperHeightCm * 10, // Python: --page-height (mm)
+      'page-size': 'CUSTOM', // Python: --page-size (always custom for now)
+
+      // Halftone flag
+      'halftone': settings.forceHalftone, // Python: --halftone
+    };
+
+    // Add halftone settings if present
+    if (settings.halftoneSettings != null) {
+      settingsMap['lpi'] = settings.halftoneSettings!.lpi; // Python: --lpi
+      settingsMap['dot-shape'] =
+          settings.halftoneSettings!.dotShape; // Python: --dot-shape
+      // Python doesn't use angle directly, it's handled in halftone generation
+    }
+
+    // Filter out null values and false booleans (for flags)
+    // NOTE: Keep halftone flag even if false to distinguish intent
+    settingsMap.removeWhere((key, value) {
+      if (value == null) return true;
+      // Keep halftone flag always (both true and false have meaning)
+      if (key == 'halftone') return false;
+      if (value is bool && !value) return true; // Remove false flags
+      if (value is String && value.isEmpty) return true;
+      return false;
+    });
+
     return await _processor.processImage(
       imagePath: imagePath,
-      settings: settings,
+      settings: settingsMap,
       outputDir: outputDir,
       onProgress: onProgress,
     );

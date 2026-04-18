@@ -7,41 +7,39 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:virtual_design/core/python_bridge/python_config.dart';
 import 'package:virtual_design/core/python_bridge/process_result.dart';
-
 
 // ─── ProcessResult Tests ──────────────────────────────────────────────────────
 
 void main() {
   group('ProcessResult', () {
     test('success factory sets correct fields', () {
-      final result = ProcessResult.success(outputDirectory: '/tmp/output_123');
+      final result = ProcessResult.success(outputPath: '/tmp/output_123');
       expect(result.success, isTrue);
       expect(result.outputDirectory, equals('/tmp/output_123'));
       expect(result.errorMessage, isNull);
     });
 
     test('failure factory sets correct fields', () {
-      final result = ProcessResult.failure('Python not found');
+      final result = ProcessResult.failure(errorMessage: 'Python not found');
       expect(result.success, isFalse);
       expect(result.errorMessage, equals('Python not found'));
       expect(result.outputDirectory, isNull);
     });
 
     test('hasValidOutput is true when outputDirectory is not empty', () {
-      final result = ProcessResult.success(outputDirectory: '/some/path');
+      final result = ProcessResult.success(outputPath: '/some/path');
       expect(result.hasValidOutput, isTrue);
     });
 
     test('hasValidOutput is false when outputDirectory is empty', () {
-      final result = ProcessResult.failure('error');
+      final result = ProcessResult.failure(errorMessage: 'error');
       expect(result.hasValidOutput, isFalse);
     });
 
     test('toString includes success status', () {
-      final r1 = ProcessResult.success(outputDirectory: '/tmp');
-      final r2 = ProcessResult.failure('failed');
+      final r1 = ProcessResult.success(outputPath: '/tmp');
+      final r2 = ProcessResult.failure(errorMessage: 'failed');
       expect(r1.toString(), contains('success'));
       expect(r2.toString(), contains('failed'));
     });
@@ -51,33 +49,19 @@ void main() {
 
   group('PythonInitResult', () {
     test('success result has correct state', () {
-      final result = PythonInitResult(
-        success: true,
+      final result = PythonInitResult.success(
         pythonVersion: 'Python 3.11.0',
-        missingPackages: [],
+        venvPath: '/venv',
       );
       expect(result.success, isTrue);
-      expect(result.hasMissingPackages, isFalse);
       expect(result.pythonVersion, equals('Python 3.11.0'));
-    });
-
-    test('hasMissingPackages is true when packages are missing', () {
-      final result = PythonInitResult(
-        success: false,
-        missingPackages: ['opencv-python', 'numpy'],
-      );
-      expect(result.hasMissingPackages, isTrue);
-      expect(result.missingPackages.length, equals(2));
+      expect(result.venvPath, equals('/venv'));
     });
 
     test('failure result has error message', () {
-      final result = PythonInitResult(
-        success: false,
-        error: 'Python not found',
-        missingPackages: [],
-      );
+      final result = PythonInitResult.failure('Python not found');
       expect(result.success, isFalse);
-      expect(result.error, equals('Python not found'));
+      expect(result.errorMessage, equals('Python not found'));
     });
   });
 
@@ -109,9 +93,7 @@ String generateTestKey({
   const secretKey = 'VD_SILK_SCREEN_SECRET_KEY_2026_CHANGE_ME';
   final data = '$email|$tier|${expiryDate.toIso8601String()}';
   final keyData = base64.encode(utf8.encode(data));
-  final sig = sha256
-      .convert(utf8.encode(data + secretKey))
-      .toString()
-      .substring(0, 16);
+  final sig =
+      sha256.convert(utf8.encode(data + secretKey)).toString().substring(0, 16);
   return '$keyData-$sig';
 }

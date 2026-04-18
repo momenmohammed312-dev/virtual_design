@@ -167,10 +167,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 args=args
             )
 
-        # Previews
+        # Previews - save mask directly (ink=0 black, background=255 white)
         for i, (mask, color_name) in enumerate(zip(masks, sep_res['color_names'])):
-            preview_mask = cv2.bitwise_not(mask) if np.mean(mask) < 127 else mask.copy()
-            cv2.imwrite(str(output_dir / f"film_{i+1}_{color_name.replace(' ', '_')}.png"), preview_mask)
+            cv2.imwrite(str(output_dir / f"film_{i+1}_{color_name.replace(' ', '_')}.png"), mask)
 
         _progress(1.0, "Complete")
         if getattr(args, 'json_output', False):

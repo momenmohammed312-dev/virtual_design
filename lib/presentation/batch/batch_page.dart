@@ -1,5 +1,5 @@
 // batch_page.dart — Batch Processing Screen
-// Virtual Design Silk Screen Studio
+// Virtual Designer � Screen Printing Studio
 //
 // MED #5 FIX: الـ use case كان موجوداً لكن الـ UI غائب
 

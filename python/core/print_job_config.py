@@ -178,3 +178,46 @@ class PrintJobConfig:
         compensated = np.interp(intensities_clipped, input_values, output_values)
         
         return compensated
+
+    def compute_adaptive_lpi(
+        self,
+        image_width_mm: float,
+        image_height_mm: float,
+    ) -> int:
+        """
+        Compute an adaptive LPI based on image physical dimensions.
+
+        Smaller images benefit from higher LPI (finer detail) while larger
+        images can use lower LPI without visible quality loss. The result
+        is always clamped within the mesh/DPI safety ceiling.
+
+        Args:
+            image_width_mm:  Physical width in millimeters
+            image_height_mm: Physical height in millimeters
+
+        Returns:
+            Recommended LPI (integer)
+        """
+        # Approximate area in cm²
+        area_cm2 = (image_width_mm / 10.0) * (image_height_mm / 10.0)
+
+        # Base recommendations by area
+        if area_cm2 < 100:       # Small (< 10cm × 10cm)
+            base_lpi = 110
+        elif area_cm2 < 500:     # Medium
+            base_lpi = 85
+        elif area_cm2 < 2000:    # Large (posters)
+            base_lpi = 65
+        else:                     # Very large (banners)
+            base_lpi = 55
+
+        # Clamp to mesh/DPI safety ceiling
+        ceiling = self.max_safe_lpi()
+        adaptive = min(base_lpi, ceiling)
+        adaptive = max(adaptive, self.LPI_ABSOLUTE_MIN)
+
+        logger.info(
+            f"[JobConfig] adaptive_lpi: area={area_cm2:.0f}cm², "
+            f"base={base_lpi}, ceiling={ceiling}, result={adaptive}"
+        )
+        return adaptive

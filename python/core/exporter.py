@@ -96,11 +96,11 @@ class Exporter:
     ) -> List[Path]:
         """
         Export all films.
-        - combine_pdf=True: كل الأفلام في films_combined.pdf واحد (الموصى به)
-        - combine_pdf=False: فيلم منفصل لكل لون
+        - combine_pdf=True: All films in one films_combined.pdf (recommended)
+        - combine_pdf=False: Separate PDF for each color
         """
         if combine_pdf and REPORTLAB_AVAILABLE:
-            # استخدام vector exporter المحسّن
+            # Use enhanced vector exporter
             from core.vector_exporter import export_vector_pdf
             
             combined_path = self.output_dir / "films_combined.pdf"
@@ -116,7 +116,7 @@ class Exporter:
             return [combined_path]
         
         elif REPORTLAB_AVAILABLE:
-            # أفلام منفصلة — vector
+            # Separate films — vector
             from core.vector_exporter import export_vector_pdf
             paths = []
             for idx, (mask, color, name) in enumerate(zip(masks, colors, color_names)):
@@ -300,8 +300,8 @@ class Exporter:
             if len(contour) < 3:
                 continue
 
-            # Douglas-Peucker simplification: تنظيف النقاط غير الضرورية
-            epsilon = 0.25  # pixels - قيمة صغيرة جداً للحفاظ على التفاصيل مع التحويل لـ Bezier لاحقاً
+            # Douglas-Peucker simplification: Remove unnecessary points
+            epsilon = 0.25  # pixels - Small value to preserve details for Bezier conversion
             approx = cv2.approxPolyDP(contour, epsilon, True)
 
             if len(approx) < 3:

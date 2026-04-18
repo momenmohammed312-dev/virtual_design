@@ -1,9 +1,9 @@
 import 'package:get/get.dart';
-import '../../core/repositories/folder_repository.dart';
+import 'package:virtual_design/core/repositories/folder_repository.dart';
 
 class FilesController extends GetxController {
   final FolderRepository _folderRepository = FolderRepository();
-  
+
   final RxList<Map<String, dynamic>> userFolders = <Map<String, dynamic>>[].obs;
   final RxBool isLoading = false.obs;
   final RxString errorMessage = ''.obs;
@@ -19,10 +19,10 @@ class FilesController extends GetxController {
     try {
       isLoading.value = true;
       errorMessage.value = '';
-      
+
       final userId = await _folderRepository.getCurrentUserId();
       final folders = await _folderRepository.getFoldersByUser(userId);
-      
+
       userFolders.value = folders;
     } catch (e) {
       errorMessage.value = 'Failed to load folders: $e';

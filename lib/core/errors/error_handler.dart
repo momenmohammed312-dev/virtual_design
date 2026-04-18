@@ -1,5 +1,5 @@
 // error_handler.dart â€” Centralized Error Processing
-// Virtual Design Silk Screen Studio
+// Virtual Designer — Screen Printing Studio
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';

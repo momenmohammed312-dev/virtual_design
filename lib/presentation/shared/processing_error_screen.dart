@@ -1,5 +1,5 @@
 // processing_error_screen.dart â€” User-Friendly Error Display
-// Virtual Design Silk Screen Studio
+// Virtual Designer — Screen Printing Studio
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';

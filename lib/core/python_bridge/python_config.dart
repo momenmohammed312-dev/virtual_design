@@ -1,5 +1,5 @@
 // python_config.dart — Python Command Auto-Detection
-// Virtual Design Silk Screen Studio
+// Virtual Designer � Screen Printing Studio
 //
 // FATAL #1 FIX: getPythonScriptsDir() walks up from exe to find python/ folder
 // HIGH #2 FIX: isPythonAvailable flag blocks processing when Python is absent
@@ -48,17 +48,17 @@ class PythonConfig {
     if (_resolvedCommand != null) return _resolvedCommand!;
 
     final sep = Platform.pathSeparator;
-    
+
     // 🔍 Phase 30: Robust Venv Detection (Climbing Up)
     // Flutter often runs with CWD pointing to the 'windows' or 'build' subfolders
     var dir = File(Platform.resolvedExecutable).parent;
     for (int i = 0; i < 7; i++) {
       final venvDir = Directory('${dir.path}${sep}venv');
       if (await venvDir.exists()) {
-        final venvPython = Platform.isWindows 
+        final venvPython = Platform.isWindows
             ? '${venvDir.path}${sep}Scripts${sep}python.exe'
             : '${venvDir.path}${sep}bin${sep}python';
-            
+
         if (await File(venvPython).exists()) {
           debugPrint('[PythonConfig] Found robust venv: $venvPython');
           try {
@@ -80,10 +80,9 @@ class PythonConfig {
       try {
         final result = await Process.run(cmd, ['--version']);
         if (result.exitCode == 0) {
-          final versionOutput =
-              (result.stdout as String).trim().isNotEmpty
-                  ? result.stdout as String
-                  : result.stderr as String;
+          final versionOutput = (result.stdout as String).trim().isNotEmpty
+              ? result.stdout as String
+              : result.stderr as String;
           _resolvedCommand = cmd;
           _resolvedVersion = versionOutput.trim();
           return cmd;
@@ -109,12 +108,12 @@ class PythonConfig {
       final missing = await _checkDependencies();
       _initialized = true;
       _pythonAvailable = missing.isEmpty;
-      
+
       String? error;
       if (missing.isNotEmpty) {
         error = 'Missing packages: ${missing.join(", ")}';
       }
-      
+
       return PythonInitResult(
         success: missing.isEmpty,
         pythonVersion: _resolvedVersion,
@@ -167,11 +166,11 @@ print(f"MISSING:{','.join(missing)}")
       final python = await resolvePythonCommand();
       final result = await Process.run(python, ['-c', checkScript]);
       final output = (result.stdout as String);
-      
+
       final lines = output.split('\n');
       String? pythonPath;
       List<String> missing = [];
-      
+
       for (final line in lines) {
         if (line.startsWith('PATH:')) {
           pythonPath = line.substring(5).trim();
@@ -182,15 +181,15 @@ print(f"MISSING:{','.join(missing)}")
           }
         }
       }
-      
+
       if (pythonPath != null) {
         _resolvedCommand = pythonPath;
       }
-      
+
       return missing;
     } catch (e) {
       debugPrint('[PythonConfig] Check failed: $e');
-      return []; 
+      return [];
     }
   }
 
@@ -237,7 +236,8 @@ print(f"MISSING:{','.join(missing)}")
           debugPrint('[PythonConfig] Found python dir: ${candidate.path}');
           return candidate.path;
         } catch (e) {
-          debugPrint('[PythonConfig] python dir found but inaccessible: ${candidate.path} — $e');
+          debugPrint(
+              '[PythonConfig] python dir found but inaccessible: ${candidate.path} — $e');
           // Continue searching up
         }
       }

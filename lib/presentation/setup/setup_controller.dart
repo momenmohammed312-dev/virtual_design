@@ -1,12 +1,11 @@
 // lib/presentation/setup/setup_controller.dart
 // Fixes 2, 4, 7: Real UI values, dot_shape, temp file cleanup
-
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
-import '../../domain/entities/processing_settings.dart' as ps;
-import '../../domain/repositories/processing_repository.dart';
-import '../../core/utils/sound_manager.dart';
+import 'package:virtual_design/domain/entities/processing_settings.dart' as ps;
+import 'package:virtual_design/domain/repositories/processing_repository.dart';
+import 'package:virtual_design/core/utils/sound_manager.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
@@ -62,7 +61,7 @@ class SetupController extends GetxController {
   final RxBool adaptiveThreshold = false.obs;
   final RxBool responsiveMode = false.obs;
   final Rx<ps.ImageType> selectedImageType = ps.ImageType.auto.obs;
-  
+
   // Scaling & Sizing
   final RxDouble targetWidthMm = 0.0.obs;
   final RxInt sourceDpi = 300.obs;
@@ -304,7 +303,7 @@ class SetupController extends GetxController {
       Get.log('Processing result: ${result.success}');
       if (result.success) {
         Get.log(
-          '✅ Success! Navigating to preview with: ${result.outputDirectory}',
+          '✅ Success! Navigating to preview with: ${result.outputPath}',
         );
         // Play completion sound
         SoundManager().playDone();
@@ -312,7 +311,7 @@ class SetupController extends GetxController {
         Get.offNamed(
           '/preview',
           arguments: {
-            'outputDirectory': result.outputDirectory,
+            'outputDirectory': result.outputPath,
             'imagePath': imagePath.value,
             'originalPath': _originalTempPath,
             'settings': settings,

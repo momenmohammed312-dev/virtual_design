@@ -1,5 +1,5 @@
 // app_constants.dart — App-wide Constants
-// Virtual Design Silk Screen Studio
+// Virtual Designer � Screen Printing Studio
 //
 // MED #4 FIX: حُذِفَ منه static const lightTheme / darkTheme
 //             استخدم AppTheme.darkTheme من app_theme.dart دائماً
@@ -10,8 +10,8 @@ class AppConstants {
   AppConstants._();
 
   // ─── App Info ─────────────────────────────────────────────────────────────
-  static const String appName = 'Virtual Design';
-  static const String appSubtitle = 'Silk Screen Studio';
+  static const String appName = 'Virtual Designer';
+  static const String appSubtitle = 'Screen Printing Studio';
   static const String appVersion = '1.1.0';
   static const String appBuildNumber = '11';
 

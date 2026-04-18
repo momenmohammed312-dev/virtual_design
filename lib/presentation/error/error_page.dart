@@ -2,9 +2,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../core/python_bridge/process_result.dart';
-import '../../core/errors/error_codes.dart';
-import '../shared/error_screen_widget.dart';
+import 'package:virtual_design/core/python_bridge/process_result.dart';
+import 'package:virtual_design/core/errors/error_codes.dart'
+    hide ProcessingError, ProcessingErrorType;
+import 'package:virtual_design/presentation/shared/error_screen_widget.dart';
 
 class ErrorPage extends StatelessWidget {
   const ErrorPage({super.key});
@@ -14,7 +15,8 @@ class ErrorPage extends StatelessWidget {
     // Get error data from arguments
     final args = Get.arguments as Map<String, dynamic>?;
 
-    ErrorCode errorCode = args?['errorCode'] as ErrorCode? ?? ErrorCode.unknownError;
+    ErrorCode errorCode =
+        args?['errorCode'] as ErrorCode? ?? ErrorCode.unknownError;
     String? rawMessage = args?['rawMessage'] as String?;
     VoidCallback? onRetry = args?['onRetry'] as VoidCallback?;
     VoidCallback? onGoBack = args?['onGoBack'] as VoidCallback?;
@@ -23,7 +25,9 @@ class ErrorPage extends StatelessWidget {
     if (args?['processResult'] != null) {
       final result = args!['processResult'];
       if (result is ProcessResult && !result.success) {
-        final error = ProcessingError.fromMessage(result.errorMessage ?? 'Unknown error');
+        final error = ProcessingError.fromMessage(
+          result.errorMessage ?? 'Unknown error',
+        );
         errorCode = _mapProcessingErrorToErrorCode(error.type);
         rawMessage = result.errorMessage;
       }
@@ -44,12 +48,16 @@ class ErrorPage extends StatelessWidget {
           type: _mapErrorCodeToProcessingErrorType(errorCode),
           rawMessage: rawMessage ?? '',
         ),
-        onRetry: onRetry ?? () {
-          Get.back();
-        },
-        onGoBack: onGoBack ?? () {
-          Get.offAllNamed('/dashboard');
-        },
+        onRetry:
+            onRetry ??
+            () {
+              Get.back();
+            },
+        onGoBack:
+            onGoBack ??
+            () {
+              Get.offAllNamed('/dashboard');
+            },
       ),
     );
   }

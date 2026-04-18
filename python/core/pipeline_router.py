@@ -103,6 +103,7 @@ class PipelineRouter:
 
     def _run_artwork(self, image: np.ndarray, params: Dict[str, Any]) -> PipelineResult:
         from core.router_utils import preprocess_artwork, apply_halftone_pipeline
+        logger.info(f"[_run_artwork] Params: halftone={params.get('halftone')}, lpi={params.get('lpi')}, dpi={params.get('dpi')}, colors={params.get('colors')}")
         preprocessed = preprocess_artwork(image)
         target_colors = params.get('colors', 1)
         should_halftone = params.get('halftone', False)
@@ -131,22 +132,31 @@ class PipelineRouter:
         if should_halftone:
             # We need to wrap params in an object that looks like args for router_utils
             class ParamProxy:
-                def __init__(self, p): self.p = p
-                def __getattr__(self, k): return self.p.get(k)
+                def __init__(self, p): 
+                    self.p = p
+                    self._halftone_raster_dpi = None  # Will be set by apply_halftone_pipeline
+                def __getattr__(self, k): 
+                    val = self.p.get(k)
+                    if k in ['lpi', 'dpi', 'halftone', 'mesh_count']:
+                        logger.info(f"[ParamProxy] Accessing {k} = {val}")
+                    return val
+            logger.info(f"[PipelineRouter] Applying halftone with params: lpi={params.get('lpi')}, dpi={params.get('dpi')}, dot_shape={params.get('dot-shape')}")
             masks = apply_halftone_pipeline(masks, ParamProxy(params), self.halftone_gen)
 
         processed_masks = []
         for i, m in enumerate(masks):
-            # Enforce binary for non-halftone or final step
+            # For non-halftone: binarize to 0/255
+            # For halftone: keep grayscale values (0-255) for dot patterns
             if not should_halftone:
                 m = edge_aware_binarize(m, use_adaptive=False)
+                m = (m > 127).astype(np.uint8) * 255  # Binary: only for non-halftone
             
             if self.alpha_mask is not None:
                 alpha_resized = self._resize_alpha(self.alpha_mask, m.shape)
                 m = m.copy()
                 m[~alpha_resized] = 255
             
-            m = (m > 127).astype(np.uint8) * 255
+            # Note: For halftone, we keep m as grayscale (0-255) to preserve dot patterns
             try:
                 self.controller.validate_mask_coverage(m, f"artwork_mask_{i}")
                 processed_masks.append(m)

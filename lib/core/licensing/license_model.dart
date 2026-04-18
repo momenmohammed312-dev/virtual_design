@@ -1,81 +1,136 @@
-// license_model.dart — License Data Model
-// Virtual Design Silk Screen Studio
+// lib/core/licensing/license_model.dart
 
+/// License status
+enum LicenseStatus {
+  active,
+  expired,
+  invalid,
+  notFound,
+  notActivated,
+  valid,
+}
+
+/// License model
 class License {
-  final String activationKey;
-  final String licenseHash;
-  final String deviceId;
-  final DateTime activated;
-  final DateTime expiresAt;
+  final String key;
+  final LicenseStatus status;
+  final DateTime? expiryDate;
+  final Map<String, dynamic>? features;
+  final String? owner;
+  final String? licenseHash;
+  final String? deviceId;
+  final DateTime? activated;
 
-  const License({
-    required this.activationKey,
-    required this.licenseHash,
-    required this.deviceId,
-    required this.activated,
-    required this.expiresAt,
+  License({
+    required this.key,
+    required this.status,
+    this.expiryDate,
+    this.features,
+    this.owner,
+    this.licenseHash,
+    this.deviceId,
+    this.activated,
   });
 
-  /// Check if license has expired
-  bool get isExpired => DateTime.now().isAfter(expiresAt);
+  bool get isValid => status == LicenseStatus.active || status == LicenseStatus.valid;
+  bool get isExpired => status == LicenseStatus.expired || _isDateExpired;
 
-  /// Get remaining days
+  bool get _isDateExpired {
+    if (expiryDate == null) return false;
+    return DateTime.now().isAfter(expiryDate!);
+  }
+
+  /// Days remaining until expiration
   int get daysRemaining {
-    final remaining = expiresAt.difference(DateTime.now()).inDays;
-    return remaining > 0 ? remaining : 0;
+    if (expiryDate == null) return 0;
+    if (isExpired) return 0;
+    return expiryDate!.difference(DateTime.now()).inDays;
   }
 
-  /// Get expiration percentage (0-100)
-  double get expirationPercentage {
-    final total = expiresAt.difference(activated).inDays;
-    final remaining = daysRemaining;
-    if (total == 0) return 100;
-    return ((total - remaining) / total) * 100;
-  }
+  /// Alias for key to maintain compatibility
+  String get activationKey => key;
 
-  /// Convert to JSON for storage
-  Map<String, dynamic> toJson() => {
-    'activationKey': activationKey,
-    'licenseHash': licenseHash,
-    'deviceId': deviceId,
-    'activated': activated.toIso8601String(),
-    'expiresAt': expiresAt.toIso8601String(),
-  };
+  /// Alias for expiryDate to maintain compatibility
+  DateTime? get expiresAt => expiryDate;
 
-  /// Create License from JSON
-  factory License.fromJson(Map<String, dynamic> json) {
-    return License(
-      activationKey: json['activationKey'] as String,
-      licenseHash: json['licenseHash'] as String,
-      deviceId: json['deviceId'] as String,
-      activated: DateTime.parse(json['activated'] as String),
-      expiresAt: DateTime.parse(json['expiresAt'] as String),
-    );
-  }
-
-  /// Create a copy with modified fields
   License copyWith({
-    String? activationKey,
+    String? key,
+    LicenseStatus? status,
+    DateTime? expiryDate,
+    Map<String, dynamic>? features,
+    String? owner,
     String? licenseHash,
     String? deviceId,
     DateTime? activated,
-    DateTime? expiresAt,
   }) {
     return License(
-      activationKey: activationKey ?? this.activationKey,
+      key: key ?? this.key,
+      status: status ?? this.status,
+      expiryDate: expiryDate ?? this.expiryDate,
+      features: features ?? this.features,
+      owner: owner ?? this.owner,
       licenseHash: licenseHash ?? this.licenseHash,
       deviceId: deviceId ?? this.deviceId,
       activated: activated ?? this.activated,
-      expiresAt: expiresAt ?? this.expiresAt,
     );
   }
 
-  @override
-  String toString() => '''
-License(
-  activated: $activated,
-  expiresAt: $expiresAt,
-  daysRemaining: $daysRemaining,
-  isExpired: $isExpired
-)''';
+  factory License.fromJson(Map<String, dynamic> json) {
+    return License(
+      key: json['key'] as String? ?? json['activationKey'] as String? ?? '',
+      status: LicenseStatus.values.firstWhere(
+        (e) => e.name == json['status'],
+        orElse: () => LicenseStatus.invalid,
+      ),
+      expiryDate: json['expiryDate'] != null
+          ? DateTime.parse(json['expiryDate'] as String)
+          : json['expiresAt'] != null
+              ? DateTime.parse(json['expiresAt'] as String)
+              : null,
+      features: json['features'] as Map<String, dynamic>?,
+      owner: json['owner'] as String?,
+      licenseHash: json['licenseHash'] as String?,
+      deviceId: json['deviceId'] as String?,
+      activated: json['activated'] != null
+          ? DateTime.parse(json['activated'] as String)
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'key': key,
+      'activationKey': key,
+      'status': status.name,
+      'expiryDate': expiryDate?.toIso8601String(),
+      'expiresAt': expiryDate?.toIso8601String(),
+      'features': features,
+      'owner': owner,
+      'licenseHash': licenseHash,
+      'deviceId': deviceId,
+      'activated': activated?.toIso8601String(),
+    };
+  }
+}
+
+/// Extension for LicenseStatus descriptions
+extension LicenseStatusExtension on LicenseStatus {
+  String get description {
+    switch (this) {
+      case LicenseStatus.active:
+        return 'Active';
+      case LicenseStatus.valid:
+        return 'Valid';
+      case LicenseStatus.expired:
+        return 'Expired';
+      case LicenseStatus.invalid:
+        return 'Invalid';
+      case LicenseStatus.notFound:
+        return 'Not Found';
+      case LicenseStatus.notActivated:
+        return 'Not Activated';
+    }
+  }
+
+  bool get requiresActivation => this == LicenseStatus.notActivated;
 }

@@ -1,5 +1,5 @@
 // license_page.dart — License Activation Screen
-// Virtual Design Silk Screen Studio
+// Virtual Designer � Screen Printing Studio
 //
 // شاشة تفعيل الترخيص — كانت موجودة في الـ routes بدون محتوى
 

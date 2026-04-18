@@ -254,7 +254,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None) ->
             enhanced = clahe.apply(enhanced)
 
         angle = CMYK_ANGLES[i % 4]
-        dot_shape = getattr(args, 'dot_shape', 'round')
+        dot_shape = getattr(args, 'dot_shape', None) or 'round'
 
         raster_cfg = RasterHalftoneConfig(
             lpi=effective_lpi,

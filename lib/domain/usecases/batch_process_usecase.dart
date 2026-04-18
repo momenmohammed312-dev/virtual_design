@@ -1,5 +1,5 @@
 // batch_process_usecase.dart — Batch Processing Use Case
-// Virtual Design Silk Screen Studio
+// Virtual Designer � Screen Printing Studio
 //
 // MED #5 FIX: Batch Processing مذكور في SOP ومفيش له كود — إضافة جديدة
 

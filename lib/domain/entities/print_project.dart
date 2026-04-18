@@ -1,7 +1,5 @@
-// print_project.dart — Domain Entity
-// Virtual Design Silk Screen Studio
-//
-// تمثيل مشروع الطباعة بجميع بيانات وحالاته
+// print_project.dart - Domain Entity
+// Virtual Designer - Screen Printing Studio
 
 import 'package:virtual_design/domain/entities/processing_settings.dart';
 

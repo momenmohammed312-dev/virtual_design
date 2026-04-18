@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 from enum import Enum
 
+from core.smart_analyzer import SmartAnalyzer, ImageClass
+
 logger = logging.getLogger(__name__)
 
 class DecisionSource(Enum):
@@ -47,6 +49,9 @@ class DecisionOracle:
     def update_param(self, param: str, value: Any, source: DecisionSource, reason: str):
         prev = self.decision.parameters.get(param)
         self.decision.parameters[param] = value
+        # Sync image_class to the direct attribute as well
+        if param == 'image_class':
+            self.decision.image_class = value
         self.decision.audit_trail.append(ParameterAudit(
             parameter=param,
             value=value,
@@ -84,17 +89,44 @@ class DecisionOracle:
                 is_default = (val == defaults.get(p))
                 source = DecisionSource.USER_DEFAULT if is_default else DecisionSource.USER_EXPLICIT
                 self.update_param(p, val, source, "Initial Input Analysis")
+                if p == 'halftone':
+                    logger.info(f"[DecisionEngine] Loaded halftone={val} from args (source={source})")
 
         # Special Case: --skip-halftone flag is always EXPLICIT
         if getattr(args, 'skip_halftone', False):
             self.update_param('halftone', False, DecisionSource.USER_EXPLICIT, "User forced --skip-halftone")
 
-        # 2. HEURISTICS: Fast Statistical Analysis
-        stats = self._get_image_stats(image)
-        if stats['is_binary'] and self.decision.parameters.get('image_type') == 'auto':
-            self.update_param('image_class', 'text_logo', DecisionSource.HEURISTIC, "High contrast binary content detected")
+        # Special Case: --halftone flag is always EXPLICIT user intent
+        halftone_flag = getattr(args, 'halftone', False)
+        logger.info(f"[DecisionEngine] args.halftone = {halftone_flag} (type: {type(halftone_flag)})")
+        if halftone_flag:
+            self.update_param('halftone', True, DecisionSource.USER_EXPLICIT, "User explicitly requested halftone")
+            logger.info("[DecisionEngine] Set halftone to True with USER_EXPLICIT")
+
+        # 2. HEURISTICS: Smart Analyzer (proper image classification)
+        if self.decision.parameters.get('image_type') == 'auto':
+            analyzer = SmartAnalyzer()
+            dpi = self.decision.parameters.get('dpi', 300)
+            smart_result = analyzer.analyze(image, dpi=dpi)
+            detected_class = smart_result.image_class.value
+            self.update_param('image_class', detected_class, DecisionSource.HEURISTIC, 
+                            f"SmartAnalyzer classification with confidence {smart_result.confidence:.0%}")
+            logger.info(f"[DecisionEngine] SmartAnalyzer detected: {detected_class} ({smart_result.confidence:.0%} confidence)")
         else:
             self.decision.image_class = self.decision.parameters.get('image_type', 'artwork')
+
+        # INTENT PRESERVATION (Phase 2.5): Upgrade image_class BEFORE AI if user wants halftone
+        halftone_val = self.decision.parameters.get('halftone')
+        user_wants_halftone = bool(halftone_val) and 'halftone' in self.decision.explicit_user_overrides
+        logger.info(f"[DecisionEngine] user_wants_halftone={user_wants_halftone}, image_class={self.decision.image_class}, halftone_val={halftone_val}, overrides={self.decision.explicit_user_overrides}")
+        if user_wants_halftone and self.decision.image_class == 'text_logo':
+            self.decision.reasoning.append("User forced halftone on Logo: Pre-upgrading to artwork_halftone pipeline")
+            self.decision.image_class = 'artwork'  # Upgrade to artwork BEFORE AI runs
+            self.decision.parameters['image_class'] = 'artwork'  # Sync to parameters
+            self.decision.explicit_user_overrides.add('image_class')  # Mark as override
+            logger.info("[DecisionEngine] UPGRADED: text_logo -> artwork for halftone")
+        elif user_wants_halftone:
+            logger.info(f"[DecisionEngine] User wants halftone but image_class is {self.decision.image_class} (not text_logo), no upgrade needed")
 
         # 3. AI VISION: The Brain Module
         # We only let AI override if the parameter is NOT an explicit user override
@@ -103,21 +135,23 @@ class DecisionOracle:
             if ai_result:
                 ai_class = ai_result.get('image_class')
                 if ai_class:
-                    self.decision.image_class = ai_class
-                    self.decision.confidence = ai_result.get('confidence', 0.8)
-                
+                    # If user wants halftone, NEVER let AI change image_class (always keep artwork)
+                    if user_wants_halftone:
+                        if ai_class != 'artwork':
+                            self.decision.reasoning.append(f"AI suggested {ai_class} but user forced halftone - forcing artwork")
+                        # Keep/force artwork regardless of AI suggestion
+                        self.decision.image_class = 'artwork'
+                        self.decision.confidence = 1.0  # High confidence because user forced it
+                    else:
+                        self.decision.image_class = ai_class
+                        self.decision.confidence = ai_result.get('confidence', 0.8)
+
                 for p, val in ai_result.items():
                     if p in params_to_track:
                         if p not in self.decision.explicit_user_overrides:
                             self.update_param(p, val, DecisionSource.AI, ai_result.get('reason', 'AI Optimization'))
                         else:
                             self.decision.reasoning.append(f"AI suggested {p}={val} but respect User explicit setting")
-
-        # INTENT PRESERVATION: If user explicitly wants halftone, we MUST ensure class allows it
-        if self.decision.parameters.get('halftone') is True and 'halftone' in self.decision.explicit_user_overrides:
-            if self.decision.image_class == 'text_logo':
-                 self.decision.reasoning.append("User forced halftone on Logo: Moving to artwork_halftone pipeline")
-                 self.decision.image_class = 'artwork' # Upgrade to artwork pipeline to support halftone steps
 
         # 4. PHYSICAL SAFETY: Levels 0 (The Guardian)
         # These rules override EVERYBODY (User & AI)

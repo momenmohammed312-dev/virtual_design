@@ -76,8 +76,8 @@ def apply_ink_trapping(
 
 class MaskGenerator:
     """
-    يولّد binary mask (أبيض وأسود) لكل لون من نتيجة ColorSeparator.
-    يطبق morphological operations لتنظيف الـ masks.
+    Generates binary mask (black and white) for each color from ColorSeparator result.
+    Applies morphological operations to clean masks.
     FIXED: Correct ink pixel counting and adaptive contour epsilon
     """
 
@@ -92,19 +92,19 @@ class MaskGenerator:
         dpi: int = 300,  # FIX GROUP 2.1: Added DPI parameter for scaling
     ) -> List[np.ndarray]:
         """
-        توليد قائمة masks — mask لكل لون.
+        Generate list of masks - one mask per color.
 
         Args:
-            image: الصورة الأصلية (للمرجع)
-            separation_result: نتيجة ColorSeparator.separate()
-            morph_kernel_size: حجم kernel للـ morphological ops
-            min_area: أصغر مساحة (pixels) تُحذَف كـ noise
-            apply_cleanup: تطبيق التنظيف المورفولوجي
-            grayscale_output: إذا كان True، الـ mask يحتفظ بـ grayscale intensity
-                              من الصورة الأصلية (للـ halftone قبل الـ binarization)
+            image: Original image (for reference)
+            separation_result: ColorSeparator.separate() result
+            morph_kernel_size: Kernel size for morphological ops
+            min_area: Smallest area (pixels) deleted as noise
+            apply_cleanup: Apply morphological cleanup
+            grayscale_output: If True, mask keeps grayscale intensity
+                              from original image (for halftone before binarization)
 
         Returns:
-            List[np.ndarray]: mask لكل لون (film polarity: ink=0, bg=255)
+            List[np.ndarray]: mask for each color (film polarity: ink=0, bg=255)
         """
         label_map = separation_result["label_map"]
         num_colors = separation_result["num_colors"]

@@ -1,8 +1,8 @@
 // lib/data/models/print_project_model.dart
 
 import 'package:hive/hive.dart';
-import '../../domain/entities/print_project.dart';
-import 'processing_settings_model.dart';
+import 'package:virtual_design/domain/entities/print_project.dart';
+import 'package:virtual_design/data/models/processing_settings_model.dart';
 
 part 'print_project_model.g.dart';
 

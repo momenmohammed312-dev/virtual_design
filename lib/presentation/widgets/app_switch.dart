@@ -1,5 +1,5 @@
 // setup_page_switch_fix.dart
-// Virtual Design Silk Screen Studio
+// Virtual Designer � Screen Printing Studio
 //
 // MED #3 FIX: activeThumbColor deprecated في Flutter 3.x
 //

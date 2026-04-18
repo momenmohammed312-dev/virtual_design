@@ -1,15 +1,15 @@
 // lib/data/repositories/project_repository_impl.dart
 
-import '../../domain/repositories/project_repository.dart';
-import '../../domain/entities/print_project.dart';
-import '../datasources/local/hive_service.dart';
-import '../models/print_project_model.dart';
+import 'package:virtual_design/domain/repositories/project_repository.dart';
+import 'package:virtual_design/domain/entities/print_project.dart';
+import 'package:virtual_design/data/datasources/local/hive_service.dart';
+import 'package:virtual_design/data/models/print_project_model.dart';
 
 class ProjectRepositoryImpl implements ProjectRepository {
   final HiveService _hiveService;
 
   ProjectRepositoryImpl({HiveService? hiveService})
-    : _hiveService = hiveService ?? HiveService.instance;
+      : _hiveService = hiveService ?? HiveService.instance;
 
   @override
   Future<void> saveProject(PrintProject project) async {

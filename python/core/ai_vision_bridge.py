@@ -124,7 +124,7 @@ def _get_llm():
         _llm = Llama(
             model_path   = MODEL_PATH,
             mmproj       = MMPROJ_PATH,
-            n_ctx        = 2048,
+            n_ctx        = 8192,
             n_threads    = target_threads,
             n_gpu_layers = gpu_layers, 
             verbose      = False,
@@ -260,3 +260,181 @@ def apply_to_args(ai_result: dict, args) -> None:
          args.simplification = 0.05
     if getattr(args, 'colors', 0) == 0:
         args.colors = ai_result.get("num_colors", 1)
+
+
+# ─── Auto-Fix Functions (used by auto_fix.py) ────────────────────────────────
+
+def analyze_preview_flaws(
+    original_path: str,
+    preview_path: str,
+    prev_params: Optional[dict] = None,
+    iteration: int = 1,
+) -> Optional[dict]:
+    """
+    Compare original vs preview image and suggest parameter adjustments.
+    Uses heuristic analysis (histogram + edge density) with AI enhancement
+    when available.
+    """
+    original = cv2.imread(original_path)
+    preview = cv2.imread(preview_path)
+
+    if original is None or preview is None:
+        logger.error(f"[AutoFix] Failed to load images: orig={original_path}, prev={preview_path}")
+        return None
+
+    # Convert to grayscale for analysis
+    orig_gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY) if len(original.shape) == 3 else original
+    prev_gray = cv2.cvtColor(preview, cv2.COLOR_BGR2GRAY) if len(preview.shape) == 3 else preview
+
+    # Resize preview to match original if needed
+    if orig_gray.shape != prev_gray.shape:
+        prev_gray = cv2.resize(prev_gray, (orig_gray.shape[1], orig_gray.shape[0]),
+                               interpolation=cv2.INTER_AREA)
+
+    # --- Heuristic Analysis ---
+    # 1. Histogram comparison (detail preservation)
+    hist_orig = cv2.calcHist([orig_gray], [0], None, [256], [0, 256]).flatten()
+    hist_prev = cv2.calcHist([prev_gray], [0], None, [256], [0, 256]).flatten()
+    hist_orig = hist_orig / hist_orig.sum()
+    hist_prev = hist_prev / hist_prev.sum()
+    hist_correlation = float(cv2.compareHist(
+        hist_orig.astype(np.float32), hist_prev.astype(np.float32), cv2.HISTCMP_CORREL
+    ))
+
+    # 2. Edge density comparison (sharpness preservation)
+    edges_orig = cv2.Canny(orig_gray, 50, 150)
+    edges_prev = cv2.Canny(prev_gray, 50, 150)
+    edge_density_orig = np.sum(edges_orig > 0) / edges_orig.size
+    edge_density_prev = np.sum(edges_prev > 0) / edges_prev.size
+    edge_ratio = edge_density_prev / max(edge_density_orig, 1e-6)
+
+    # 3. Build suggestions
+    suggestions = {}
+
+    # If preview lost too many edges → reduce smoothing
+    if edge_ratio < 0.6:
+        suggestions['smoothing_factor'] = max(0.05, (prev_params or {}).get('smoothing_factor', 0.25) * 0.7)
+        suggestions['reason_smoothing'] = f'Edge loss detected (ratio={edge_ratio:.2f}), reducing smoothing'
+
+    # If preview has too many edges → increase smoothing
+    if edge_ratio > 1.5:
+        suggestions['smoothing_factor'] = min(0.5, (prev_params or {}).get('smoothing_factor', 0.25) * 1.3)
+        suggestions['reason_smoothing'] = f'Edge noise detected (ratio={edge_ratio:.2f}), increasing smoothing'
+
+    # If histogram diverges significantly → adjust corner threshold
+    if hist_correlation < 0.85:
+        suggestions['corner_threshold'] = min(150.0, (prev_params or {}).get('corner_threshold', 95.0) * 1.1)
+        suggestions['reason_histogram'] = f'Histogram divergence (corr={hist_correlation:.3f})'
+
+    # Build result
+    result = {
+        'iteration': iteration,
+        'analysis': {
+            'hist_correlation': hist_correlation,
+            'edge_ratio': edge_ratio,
+            'edge_density_original': float(edge_density_orig),
+            'edge_density_preview': float(edge_density_prev),
+        },
+        'suggestions': suggestions,
+        'adjusted_params': {**(prev_params or {}), **suggestions},
+    }
+
+    logger.info(f"[AutoFix] Iteration {iteration}: hist_corr={hist_correlation:.3f}, "
+                f"edge_ratio={edge_ratio:.2f}, suggestions={list(suggestions.keys())}")
+    return result
+
+
+def analyze_with_prompt(
+    original_path: str,
+    preview_path: str,
+    user_prompt: str,
+    iteration: int = 1,
+    previous_params: Optional[dict] = None,
+) -> Optional[dict]:
+    """
+    AI-guided analysis using a user-provided natural language prompt.
+    Falls back to heuristic analysis when AI model is unavailable.
+    """
+    # First, run heuristic analysis as baseline
+    base_result = analyze_preview_flaws(
+        original_path, preview_path,
+        prev_params=previous_params,
+        iteration=iteration,
+    )
+    if base_result is None:
+        return None
+
+    base_result['user_prompt'] = user_prompt
+
+    # Attempt AI-enhanced analysis if model is available
+    llm = _get_llm()
+    if llm is None:
+        logger.info("[AutoFix] AI model not available, using heuristic-only analysis")
+        base_result['ai_enhanced'] = False
+        return base_result
+
+    # Load and encode images for AI
+    try:
+        original = cv2.imread(original_path)
+        preview = cv2.imread(preview_path)
+        if original is None or preview is None:
+            base_result['ai_enhanced'] = False
+            return base_result
+
+        # Resize for AI input
+        for img_ref in [original, preview]:
+            h, w = img_ref.shape[:2]
+            if max(h, w) > AI_MAX_DIM:
+                scale = AI_MAX_DIM / max(h, w)
+                img_ref = cv2.resize(img_ref, (int(w * scale), int(h * scale)),
+                                     interpolation=cv2.INTER_AREA)
+
+        _, buf_orig = cv2.imencode('.jpg', original, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        _, buf_prev = cv2.imencode('.jpg', preview, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        b64_orig = base64.b64encode(buf_orig).decode()
+        b64_prev = base64.b64encode(buf_prev).decode()
+
+        ai_prompt = (
+            f"You are a silk screen printing expert. Analyze the user's request carefully.\n\n"
+            f"USER'S REQUEST (IMPORTANT): \"{user_prompt}\"\n\n"
+            f"Current parameters: {json.dumps(previous_params or {})}\n\n"
+            f"Instructions:\n"
+            f"1. Focus on what the user is specifically asking for in their request.\n"
+            f"2. Adjust parameters to match the user's needs exactly.\n"
+            f"3. If user asks for 'halftone' or 'dots', set use_halftone=true and adjust lpi.\n"
+            f"4. If user asks for 'smoother', increase smoothing_factor.\n"
+            f"5. If user asks for 'sharper edges', increase corner_threshold.\n\n"
+            f"Respond ONLY with a JSON object containing adjusted parameters:\n"
+            f'{{"smoothing_factor": 0.0-0.5, "corner_threshold": 20-180, '
+            f'"simplification_epsilon": 0.01-3.0, "use_halftone": true/false, '
+            f'"lpi": 45-150, "reason": "brief explanation based on user request"}}'
+        )
+
+        response = llm.create_chat_completion(
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_orig}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_prev}"}},
+                    {"type": "text", "text": ai_prompt},
+                ]
+            }],
+            temperature=0.7,  # Increased for more varied responses
+            max_tokens=300,
+        )
+
+        raw = response["choices"][0]["message"]["content"]
+        ai_params = _parse_response(raw)
+        if ai_params:
+            base_result['ai_enhanced'] = True
+            base_result['ai_suggestions'] = ai_params
+            # Merge AI suggestions into adjusted params
+            base_result['adjusted_params'].update(ai_params)
+        else:
+            base_result['ai_enhanced'] = False
+
+    except Exception as e:
+        logger.warning(f"[AutoFix] AI-enhanced analysis failed: {e}")
+        base_result['ai_enhanced'] = False
+
+    return base_result

@@ -1,7 +1,7 @@
 // lib/domain/repositories/processing_repository.dart
 
-import '../../core/python_bridge/process_result.dart';
-import '../entities/processing_settings.dart';
+import 'package:virtual_design/core/python_bridge/process_result.dart';
+import 'package:virtual_design/domain/entities/processing_settings.dart';
 
 /// Repository interface for image processing operations
 /// This follows Clean Architecture - Domain layer defines the contract

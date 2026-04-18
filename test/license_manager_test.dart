@@ -2,7 +2,6 @@
 // Virtual Design Silk Screen Studio
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:virtual_design/core/licensing/license_manager.dart';
 import 'package:virtual_design/core/licensing/license_model.dart';
 
 void main() {

@@ -1,11 +1,11 @@
 // lib/app/bindings/initial_binding.dart
 
 import 'package:get/get.dart';
-import '../../data/datasources/local/hive_service.dart';
-import '../../core/python_bridge/python_processor.dart';
-import '../../core/python_bridge/python_config.dart';
-import '../../core/licensing/license_manager.dart';
-import '../../core/permissions/permission_service.dart';
+import 'package:virtual_design/data/datasources/local/hive_service.dart';
+import 'package:virtual_design/core/python_bridge/python_processor.dart';
+import 'package:virtual_design/core/python_bridge/python_config.dart';
+import 'package:virtual_design/core/licensing/license_manager.dart';
+import 'package:virtual_design/core/permissions/permission_service.dart';
 
 class InitialBinding extends Bindings {
   @override

@@ -1,8 +1,8 @@
 // lib/data/datasources/local/hive_service.dart
 
 import 'package:hive_flutter/hive_flutter.dart';
-import '../../models/processing_settings_model.dart';
-import '../../models/print_project_model.dart';
+import 'package:virtual_design/data/models/processing_settings_model.dart';
+import 'package:virtual_design/data/models/print_project_model.dart';
 
 class HiveService {
   static const String _projectsBox = 'projects';

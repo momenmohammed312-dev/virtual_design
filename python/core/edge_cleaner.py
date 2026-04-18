@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 class EdgeCleaner:
     """
-    تنظيف حواف الـ masks باستخدام morphological operations وGaussian smoothing.
-    يُحسّن جودة الطباعة بإزالة الحواف المتعرجة والضوضاء الدقيقة.
+    Clean mask edges using morphological operations and Gaussian smoothing.
+    Improves print quality by removing jagged edges and fine noise.
     """
 
     def clean(
@@ -26,17 +26,17 @@ class EdgeCleaner:
         iterations: int = 1,
     ) -> np.ndarray:
         """
-        تنظيف حواف الـ mask.
+        Clean mask edges.
 
         Args:
-            mask: binary mask (0 و 255)
-            kernel_size: حجم kernel المورفولوجي
-            smooth: تطبيق Gaussian smoothing على الحواف
-            smooth_sigma: قوة الـ smoothing (أكبر = أنعم أكثر)
-            iterations: عدد مرات تطبيق العملية
+            mask: binary mask (0 and 255)
+            kernel_size: Morphological kernel size
+            smooth: Apply Gaussian smoothing to edges
+            smooth_sigma: Smoothing strength (higher = smoother)
+            iterations: Number of iterations to apply
 
         Returns:
-            np.ndarray: mask مع حواف نظيفة
+            np.ndarray: mask with clean edges
         """
         logger.debug(f"[EdgeCleaner] Cleaning mask {mask.shape}, kernel={kernel_size}")
 
@@ -47,10 +47,10 @@ class EdgeCleaner:
         )
 
         for _ in range(iterations):
-            # 1. إزالة النقاط الصغيرة خارج الشكل (speckles)
+            # 1. Remove small speckles outside shape
             result = cv2.morphologyEx(result, cv2.MORPH_OPEN, kernel)
 
-            # 2. سد الفراغات الصغيرة داخل الشكل (holes)
+            # 2. Fill small holes inside shape
             result = cv2.morphologyEx(result, cv2.MORPH_CLOSE, kernel)
 
         # TASK 12: Gaussian blur and secondary thresholding removed.
@@ -65,28 +65,28 @@ class EdgeCleaner:
         kernel_size: int = 3,
         smooth: bool = True,
     ) -> list:
-        """تنظيف قائمة من الـ masks دفعة واحدة."""
+        """Clean a batch of masks at once."""
         logger.info(f"[EdgeCleaner] Cleaning {len(masks)} masks")
         return [self.clean(m, kernel_size, smooth) for m in masks]
 
     def anti_alias_edges(self, mask: np.ndarray, radius: int = 1) -> np.ndarray:
         """
-        Anti-aliasing للحواف — مفيد للـ halftone printing.
-        يُنعّم الحواف بدرجات رمادية بدل الحافة الحادة.
+        Anti-aliasing for edges - useful for halftone printing.
+        Smooths edges with gray levels instead of hard edges.
         """
         blurred = cv2.GaussianBlur(mask, (radius * 4 + 1, radius * 4 + 1), radius)
         return blurred
 
     def expand_edges(self, mask: np.ndarray, pixels: int = 1) -> np.ndarray:
         """
-        توسيع الحواف بـ pixels — مفيد لتجنب gaps بين الألوان عند الطباعة.
+        Expand edges by pixels - useful to avoid gaps between colors during printing.
         """
         kernel = np.ones((pixels * 2 + 1, pixels * 2 + 1), np.uint8)
         return cv2.dilate(mask, kernel, iterations=1)
 
     def shrink_edges(self, mask: np.ndarray, pixels: int = 1) -> np.ndarray:
         """
-        تقليص الحواف بـ pixels — يُجنّب تداخل الألوان.
+        Shrink edges by pixels - prevents color overlap.
         """
         kernel = np.ones((pixels * 2 + 1, pixels * 2 + 1), np.uint8)
         return cv2.erode(mask, kernel, iterations=1)

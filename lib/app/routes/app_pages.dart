@@ -1,20 +1,20 @@
 // lib/app/routes/app_pages.dart
 
 import 'package:get/get.dart';
-import '../../presentation/splash/splash_screen.dart';
-import '../../presentation/dashboard/dashboard.dart';
-import '../../presentation/upload/upload_page.dart';
-import '../../presentation/setup/setup_page.dart';
-import '../../presentation/preview/preview_page.dart';
-import '../../presentation/print_type/select_print_type_screen.dart';
-import '../../presentation/settings/settings_page.dart';
-import '../../presentation/users/users_page.dart';
-import '../../presentation/files/files_page.dart';
-import '../../presentation/error/error_page.dart';
-import '../bindings/dashboard_binding.dart';
-import '../bindings/upload_binding.dart';
-import '../bindings/setup_binding.dart';
-import '../bindings/preview_binding.dart';
+import 'package:virtual_design/presentation/splash/splash_screen.dart';
+import 'package:virtual_design/presentation/dashboard/dashboard.dart';
+import 'package:virtual_design/presentation/upload/upload_page.dart';
+import 'package:virtual_design/presentation/setup/setup_page.dart';
+import 'package:virtual_design/presentation/preview/preview_page.dart';
+import 'package:virtual_design/presentation/print_type/select_print_type_screen.dart';
+import 'package:virtual_design/presentation/settings/settings_page.dart';
+import 'package:virtual_design/presentation/users/users_page.dart';
+import 'package:virtual_design/presentation/files/files_page.dart';
+import 'package:virtual_design/presentation/error/error_page.dart';
+import 'package:virtual_design/app/bindings/dashboard_binding.dart';
+import 'package:virtual_design/app/bindings/upload_binding.dart';
+import 'package:virtual_design/app/bindings/setup_binding.dart';
+import 'package:virtual_design/app/bindings/preview_binding.dart';
 import 'app_routes.dart';
 
 class AppPages {

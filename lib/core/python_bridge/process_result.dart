@@ -1,42 +1,108 @@
-// process_result.dart — Result object from Python processing
-// Virtual Design Silk Screen Studio
+// lib/core/python_bridge/process_result.dart
 
+import 'dart:io';
+
+/// Result of a Python image processing operation
 class ProcessResult {
   final bool success;
-  final String? outputDirectory;
+  final String outputPath;
   final String? errorMessage;
+  final List<String> generatedFiles;
+  final Map<String, dynamic>? metadata;
 
-  const ProcessResult._({
+  ProcessResult({
     required this.success,
-    this.outputDirectory,
+    required this.outputPath,
     this.errorMessage,
+    this.generatedFiles = const [],
+    this.metadata,
   });
 
-  /// نجاح مع مسار الـ output
-  factory ProcessResult.success({required String outputDirectory}) {
-    return ProcessResult._(
+  factory ProcessResult.success({
+    required String outputPath,
+    List<String>? generatedFiles,
+    Map<String, dynamic>? metadata,
+  }) {
+    return ProcessResult(
       success: true,
-      outputDirectory: outputDirectory,
+      outputPath: outputPath,
+      generatedFiles: generatedFiles ?? [],
+      metadata: metadata,
     );
   }
 
-  /// فشل مع رسالة خطأ
-  factory ProcessResult.failure(String message) {
-    return ProcessResult._(
+  factory ProcessResult.failure({
+    required String errorMessage,
+    String outputPath = '',
+  }) {
+    return ProcessResult(
       success: false,
-      errorMessage: message,
+      outputPath: outputPath,
+      errorMessage: errorMessage,
     );
   }
 
-  /// هل الـ output directory موجود ويمكن قراءته؟
+  /// Check if the output directory exists and contains files
   bool get hasValidOutput {
-    if (outputDirectory == null || outputDirectory!.isEmpty) return false;
-    // يمكن إضافة Directory.existsSync() لو أردت
-    return true;
+    if (!success || outputPath.isEmpty) return false;
+    final dir = Directory(outputPath);
+    if (!dir.existsSync()) return false;
+
+    final files = dir.listSync().whereType<File>().toList();
+    return files.isNotEmpty;
+  }
+
+  get outputDirectory => null;
+
+  /// Get list of film files (PNG/PDF) from the output directory
+  List<File> getFilmFiles() {
+    if (!hasValidOutput) return [];
+
+    final dir = Directory(outputPath);
+    return dir
+        .listSync()
+        .whereType<File>()
+        .where((f) =>
+            f.path.toLowerCase().endsWith('.png') ||
+            f.path.toLowerCase().endsWith('.pdf'))
+        .toList();
   }
 
   @override
-  String toString() => success
-      ? 'ProcessResult(success, output=$outputDirectory)'
-      : 'ProcessResult(failed, error=$errorMessage)';
+  String toString() {
+    return 'ProcessResult(success: $success, outputPath: $outputPath, files: ${generatedFiles.length})';
+  }
+}
+
+/// Result of Python initialization
+class PythonInitResult {
+  final bool success;
+  final String? errorMessage;
+  final String? pythonVersion;
+  final String? venvPath;
+
+  PythonInitResult({
+    required this.success,
+    this.errorMessage,
+    this.pythonVersion,
+    this.venvPath,
+  });
+
+  factory PythonInitResult.success({
+    String? pythonVersion,
+    String? venvPath,
+  }) {
+    return PythonInitResult(
+      success: true,
+      pythonVersion: pythonVersion,
+      venvPath: venvPath,
+    );
+  }
+
+  factory PythonInitResult.failure(String errorMessage) {
+    return PythonInitResult(
+      success: false,
+      errorMessage: errorMessage,
+    );
+  }
 }

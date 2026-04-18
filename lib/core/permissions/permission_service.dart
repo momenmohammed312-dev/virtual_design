@@ -1,123 +1,89 @@
-// permission_service.dart — Runtime Storage Permission Handling
-// Virtual Design Silk Screen Studio
-//
-// HIGH #5 FIX: طلب إذن Storage من المستخدم runtime على Android
+// lib/core/permissions/permission_service.dart
 
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class PermissionService {
-  /// طلب إذن الوصول للصور
-  /// يرجع true لو تم منح الإذن
-  Future<PermissionResult> requestImageAccess() async {
-    // Windows/macOS/Linux لا تحتاج runtime permissions
+  /// Request storage permissions
+  Future<bool> requestStoragePermission() async {
     if (!Platform.isAndroid && !Platform.isIOS) {
-      return PermissionResult.granted();
-    }
-
-    if (Platform.isAndroid) {
-      return await _requestAndroidImagePermission();
-    }
-
-    if (Platform.isIOS) {
-      return await _requestIOSPhotoPermission();
-    }
-
-    return PermissionResult.granted();
-  }
-
-  Future<PermissionResult> _requestAndroidImagePermission() async {
-    // Android 13+ (API 33): استخدم READ_MEDIA_IMAGES
-    if (await _isAndroid13OrHigher()) {
-      final status = await Permission.photos.request();
-      return _fromStatus(status);
-    }
-
-    // Android 10-12: READ_EXTERNAL_STORAGE
-    final status = await Permission.storage.request();
-    return _fromStatus(status);
-  }
-
-  Future<PermissionResult> _requestIOSPhotoPermission() async {
-    final status = await Permission.photos.request();
-    return _fromStatus(status);
-  }
-
-  Future<bool> _isAndroid13OrHigher() async {
-    if (!Platform.isAndroid) return false;
-    // يمكن استخدام device_info_plus للتحقق من SDK version
-    // للتبسيط: نجرب READ_MEDIA_IMAGES أولاً
-    return true;
-  }
-
-  PermissionResult _fromStatus(PermissionStatus status) {
-    switch (status) {
-      case PermissionStatus.granted:
-      case PermissionStatus.limited:
-        return PermissionResult.granted();
-      case PermissionStatus.denied:
-        return PermissionResult.denied(
-          'يحتاج التطبيق إذن الوصول للصور لاختيار الصورة.',
-        );
-      case PermissionStatus.permanentlyDenied:
-        return PermissionResult.permanentlyDenied(
-          'تم رفض الإذن نهائياً. افتح إعدادات التطبيق وامنح إذن الصور.',
-        );
-      default:
-        return PermissionResult.denied('Permission request failed.');
-    }
-  }
-
-  /// فتح إعدادات التطبيق لو تم الرفض نهائياً
-  Future<bool> openSettings() async {
-    return await openAppSettings();
-  }
-
-  /// التحقق من وجود الإذن بدون طلب
-  Future<bool> hasImageAccess() async {
-    if (!Platform.isAndroid && !Platform.isIOS) return true;
-    final status = await Permission.photos.status;
-    return status.isGranted || status.isLimited;
-  }
-
-  /// التأكد من وجود الإذن - يتحقق أولاً ثم يطلبه إذا لزم الأمر
-  /// يرجع true لو تم منح الإذن
-  Future<bool> ensureImageAccess() async {
-    // التحقق أولاً إذا كان الإذن موجوداً بالفعل
-    final alreadyHasAccess = await hasImageAccess();
-    if (alreadyHasAccess) {
+      // Desktop platforms don't need explicit storage permission
       return true;
     }
 
-    // إذا لم يكن موجوداً، قم بطلبه
-    final result = await requestImageAccess();
-    return result.isGranted;
+    try {
+      if (Platform.isAndroid) {
+        // For Android 13+ (API 33+)
+        final photos = await Permission.photos.request();
+        final mediaLocation = await Permission.accessMediaLocation.request();
+
+        if (photos.isGranted && mediaLocation.isGranted) {
+          return true;
+        }
+
+        // Fallback for older Android versions
+        final storage = await Permission.storage.request();
+        return storage.isGranted;
+      } else if (Platform.isIOS) {
+        final photos = await Permission.photos.request();
+        return photos.isGranted;
+      }
+
+      return false;
+    } catch (e) {
+      debugPrint('[PermissionService] Error requesting storage: $e');
+      return false;
+    }
   }
-}
 
-// ─── Permission Result ────────────────────────────────────────────────────────
+  /// Check if storage permission is granted
+  Future<bool> hasStoragePermission() async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return true;
+    }
 
-class PermissionResult {
-  final bool isGranted;
-  final bool isPermanentlyDenied;
-  final String? message;
+    try {
+      if (Platform.isAndroid) {
+        final photos = await Permission.photos.status;
+        final mediaLocation = await Permission.accessMediaLocation.status;
 
-  const PermissionResult._({
-    required this.isGranted,
-    this.isPermanentlyDenied = false,
-    this.message,
-  });
+        if (photos.isGranted && mediaLocation.isGranted) {
+          return true;
+        }
 
-  factory PermissionResult.granted() =>
-      const PermissionResult._(isGranted: true);
+        final storage = await Permission.storage.status;
+        return storage.isGranted;
+      } else if (Platform.isIOS) {
+        final photos = await Permission.photos.status;
+        return photos.isGranted;
+      }
 
-  factory PermissionResult.denied(String message) =>
-      PermissionResult._(isGranted: false, message: message);
+      return false;
+    } catch (e) {
+      debugPrint('[PermissionService] Error checking storage: $e');
+      return false;
+    }
+  }
 
-  factory PermissionResult.permanentlyDenied(String message) =>
-      PermissionResult._(
-        isGranted: false,
-        isPermanentlyDenied: true,
-        message: message,
-      );
+  /// Request all required permissions at once
+  Future<Map<Permission, PermissionStatus>> requestAllPermissions() async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return {};
+    }
+
+    final permissions = <Permission>[
+      Permission.photos,
+      Permission.accessMediaLocation,
+      if (Platform.isAndroid) Permission.storage,
+    ];
+
+    return await permissions.request();
+  }
+
+  /// Ensure image access permission (convenience method for upload flow)
+  Future<bool> ensureImageAccess() async {
+    return await requestStoragePermission();
+  }
 }

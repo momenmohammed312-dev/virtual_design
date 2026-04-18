@@ -88,12 +88,9 @@ class RasterHalftoneEngine:
                 f"@ {cfg.source_dpi} DPI → {new_w}x{new_h} @ {cfg.dpi} DPI"
             )
 
-        # Build threshold matrix
-        screen_matrix = self._build_screen_matrix(gray.shape, cfg.dpi, cfg.lpi,
-                                                   cfg.angle, cfg.dot_fn)
         # Apply noise suppression and cleaning to input grayscale
         gray_clean = cv2.medianBlur(gray, 3)
-        
+
         # Apply gamma compensation to input (controls dot growth curve)
         if cfg.gamma != 1.0:
             lut = self._gamma_lut(cfg.gamma)
@@ -101,23 +98,18 @@ class RasterHalftoneEngine:
         else:
             gray_g = gray_clean
 
-        # Intensity clamping: Task A-14 Fix (Prevent 'shredding' in typography)
-        gray_f = gray_g.astype(np.float32) / 255.0
-        
-        # PRO-PRESS CLAMP: If area is nearly solid black (ink > 88%), force to 100% solid
-        # This keeps Armani-style logos solid even in halftone mode.
-        gray_f[gray_f < 0.12] = 0.0
-        
-        # Highlight Clamp: Ignore stray dots in very light areas
-        gray_f[gray_f > 0.97] = 1.0
-        
-        # Threshold: ink where pixel < screen matrix threshold
-        ink_float = 1.0 - gray_f
-        screen_f  = screen_matrix.astype(np.float32) / 255.0
-        
-        # Invert so ink=0 (black), background=255 (white/transparent)
-        bitmap    = (ink_float >= screen_f).astype(np.uint8) * 255
-        bitmap    = cv2.bitwise_not(bitmap)  # 255->0 (ink), 0->255 (bg)
+        # For large images at high DPI, use chunked processing to save memory
+        h, w = gray_g.shape
+        total_pixels = h * w
+        max_pixels_per_chunk = 4 * 1024 * 1024  # ~4M pixels per chunk (~16MB for float32)
+
+        if total_pixels > max_pixels_per_chunk:
+            # Process in chunks
+            logger.info(f"[RasterHalftone] Large image {w}x{h}, using chunked processing")
+            bitmap = self._generate_chunked(gray_g, cfg)
+        else:
+            # Standard processing for smaller images
+            bitmap = self._generate_standard(gray_g, cfg)
 
         coverage = 100 * np.mean(bitmap == 0)
         logger.info(
@@ -136,6 +128,67 @@ class RasterHalftoneEngine:
                 source_dpi=cfg.source_dpi
             )
             return RasterHalftoneEngine(cfg_retry).generate(grayscale)
+
+        return bitmap
+
+    # ─── Processing Methods ───────────────────────────────────────────────────
+
+    def _generate_standard(self, gray_g: np.ndarray, cfg: RasterHalftoneConfig) -> np.ndarray:
+        """Standard processing for smaller images (fits in memory)."""
+        # Build threshold matrix
+        screen_matrix = self._build_screen_matrix(gray_g.shape, cfg.dpi, cfg.lpi,
+                                                   cfg.angle, cfg.dot_fn)
+        return self._apply_threshold(gray_g, screen_matrix)
+
+    def _generate_chunked(self, gray_g: np.ndarray, cfg: RasterHalftoneConfig) -> np.ndarray:
+        """Chunked processing for large images to save memory."""
+        h, w = gray_g.shape
+        chunk_height = max(1, (4 * 1024 * 1024) // w)  # ~4M pixels per chunk
+
+        # Ensure chunk height accounts for dot pattern periodicity
+        dot_spacing = cfg.dpi / cfg.lpi
+        chunk_height = max(chunk_height, int(dot_spacing * 4))  # At least 4 cells
+
+        bitmap = np.zeros((h, w), dtype=np.uint8)
+
+        for y_start in range(0, h, chunk_height):
+            y_end = min(y_start + chunk_height, h)
+            # Small overlap to prevent seams
+            overlap = int(dot_spacing * 2) if y_start > 0 else 0
+            y_chunk_start = max(0, y_start - overlap)
+            y_chunk_end = min(h, y_end + overlap) if y_end < h else y_end
+
+            # Process chunk
+            chunk = gray_g[y_chunk_start:y_chunk_end, :]
+            screen_matrix = self._build_screen_matrix(chunk.shape, cfg.dpi, cfg.lpi,
+                                                       cfg.angle, cfg.dot_fn)
+            chunk_bitmap = self._apply_threshold(chunk, screen_matrix)
+
+            # Copy back (excluding overlap)
+            copy_start = overlap if y_start > 0 else 0
+            copy_end = copy_start + (y_end - y_start)
+            bitmap[y_start:y_end, :] = chunk_bitmap[copy_start:copy_end, :]
+
+        return bitmap
+
+    def _apply_threshold(self, gray_g: np.ndarray, screen_matrix: np.ndarray) -> np.ndarray:
+        """Apply halftone thresholding to grayscale image."""
+        # Intensity clamping: Task A-14 Fix (Prevent 'shredding' in typography)
+        gray_f = gray_g.astype(np.float32) / 255.0
+
+        # PRO-PRESS CLAMP: If area is nearly solid black (ink > 88%), force to 100% solid
+        gray_f[gray_f < 0.12] = 0.0
+
+        # Highlight Clamp: Ignore stray dots in very light areas
+        gray_f[gray_f > 0.97] = 1.0
+
+        # Threshold: ink where pixel < screen matrix threshold
+        ink_float = 1.0 - gray_f
+        screen_f = screen_matrix.astype(np.float32) / 255.0
+
+        # Invert so ink=0 (black), background=255 (white/transparent)
+        bitmap = (ink_float >= screen_f).astype(np.uint8) * 255
+        bitmap = cv2.bitwise_not(bitmap)  # 255->0 (ink), 0->255 (bg)
 
         return bitmap
 
@@ -159,11 +212,12 @@ class RasterHalftoneEngine:
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
 
-        # Build coordinate grid using float64 to prevent precision drift at high DPI (4800+)
+        # Build coordinate grid using float32 for memory efficiency at high DPI (4800+)
+        # float32 provides sufficient precision and uses half the memory of float64
         cx, cy = w / 2.0, h / 2.0
-        xs = np.arange(w, dtype=np.float64) - cx
-        ys = np.arange(h, dtype=np.float64) - cy
-        XX, YY = np.meshgrid(xs, ys)
+        xs = np.arange(w, dtype=np.float32) - cx
+        ys = np.arange(h, dtype=np.float32) - cy
+        XX, YY = np.meshgrid(xs, ys, copy=False)
 
         # Rotate coordinates with safe offset to fix 'vertical aliasing' artifacts
         # Adding 1e-7 ensures our periodic signal doesn't jitter on exact floating point boundaries

@@ -303,27 +303,27 @@ def export_vector_pdf(
     mask_dpi: Optional[int] = None,
 ) -> Path:
     """
-    تصدير كل الأفلام في PDF واحد متعدد الصفحات بجودة vector حقيقية.
-    
-    كل صفحة تحتوي على:
-      - اسم الفيلم + اللون (hex)
-      - علامات التسجيل
-      - الفيلم نفسه كـ vector paths (Bezier curves)
-      - شريط المعلومات في الأسفل
-    
+    Export all films as multi-page PDF with true vector quality.
+
+    Each page contains:
+      - Film name + color (hex)
+      - Registration marks
+      - Film as vector paths (Bezier curves)
+      - Info bar at bottom
+
     Args:
-        masks: قائمة binary masks (numpy arrays)
-        colors: قائمة ألوان RGB
-        color_names: أسماء الألوان
-        output_path: مسار حفظ الـ PDF
-        dpi: دقة الإخراج
-        smooth_factor: مقدار تنعيم الحواف (0.0-0.5)
-        corner_threshold: عتبة للحفاظ على الزوايا الحادة (درجات)
-        min_contour_area: أصغر contour يُرسم (pixels²)
+        masks: List of binary masks (numpy arrays)
+        colors: List of RGB colors
+        color_names: Color names
+        output_path: Path to save PDF
+        dpi: Output resolution
+        smooth_factor: Edge smoothing amount (0.0-0.5)
+        corner_threshold: Threshold to preserve sharp corners (degrees)
+        min_contour_area: Smallest contour to draw (pixels²)
         page_size: 'A4', 'A3', 'LETTER'
-    
+
     Returns:
-        Path للملف المحفوظ
+        Path to saved file
     """
     if not REPORTLAB_AVAILABLE:
         raise ImportError("reportlab required: pip install reportlab")
@@ -493,7 +493,7 @@ def export_vector_pdf(
             adjusted_smooth = min(0.45, smooth_factor * scale_boost)
             # FIX: [1a] Raise cap for text_logo when high scale
             if image_class == 'text_logo':
-                # رفع الـ cap من 0.25 لـ 0.35 عند scale > 4
+                # Raise cap from 0.25 to 0.35 when scale > 4
                 max_smooth = 0.35 if scale_factor > 4.0 else 0.25
                 adjusted_smooth = min(adjusted_smooth, max_smooth)
             logger.info(f"[VectorExporter] Scale-aware smoothing: {smooth_factor} → {adjusted_smooth:.3f} "

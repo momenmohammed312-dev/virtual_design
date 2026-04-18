@@ -1,5 +1,5 @@
 // license_activation_controller.dart — License Activation Control
-// Virtual Design Silk Screen Studio — Phase 7
+// Virtual Designer � Screen Printing Studio — Phase 7
 
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';

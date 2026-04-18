@@ -1,6 +1,6 @@
 // lib/domain/repositories/project_repository.dart
 
-import '../entities/print_project.dart';
+import 'package:virtual_design/domain/entities/print_project.dart';
 
 /// Repository interface for project management
 abstract class ProjectRepository {

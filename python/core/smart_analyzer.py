@@ -8,10 +8,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 class ImageClass(Enum):
-    TEXT_LOGO   = "text_logo"    # نص أو لوجو — حواف حادة، ألوان قليلة
-    ARTWORK      = "artwork"     # رسمة / illustration — ألوان محدودة، تفاصيل متوسطة  
-    PHOTO        = "photo"       # صورة فوتوغرافية — gradients، ألوان كثيرة
-    LOW_QUALITY  = "low_quality" # صورة مضروبة — noise عالي، دقة منخفضة
+    TEXT_LOGO   = "text_logo"    # Text or logo - sharp edges, few colors
+    ARTWORK      = "artwork"     # Illustration - limited colors, medium details
+    PHOTO        = "photo"       # Photographic image - gradients, many colors
+    LOW_QUALITY  = "low_quality" # Low quality image - high noise, low resolution
 
 @dataclass
 class SmartResult:
@@ -287,16 +287,16 @@ class SmartAnalyzer:
         base = {"use_potrace_style": False, "use_halftone": False, "lpi": 55, "num_colors": 0}
         
         if cls == ImageClass.TEXT_LOGO:
-            # تم التعديل: رفع الـ smoothing لـ 0.25 والـ corner لـ 95
-            # ده هيخلي اللوجوهات زي نايكي تطلع "كيرفات" مش خطخطوط مكسرة
+            # Modified: Increased smoothing to 0.25 and corner to 95
+            # This makes logos like Nike have curves not jagged lines
             return {**base, "smoothing_factor": 0.25, "corner_threshold": 95.0, "global_threshold": 160, "use_potrace_style": True}
-            
+
         if cls == ImageClass.ARTWORK:
-            # تنعيم متوسط للرسومات
+            # Medium smoothing for illustrations
             return {**base, "smoothing_factor": 0.35, "corner_threshold": 110.0, "global_threshold": 180}
-            
+
         if cls == ImageClass.PHOTO:
-            # تنعيم عالي للصور الفوتوغرافية عشان الهالف تون
+            # High smoothing for photos for halftone
             return {**base, "smoothing_factor": 0.45, "corner_threshold": 140.0, "global_threshold": 200, "use_halftone": True}
         
         return {**base, "smoothing_factor": 0.20, "corner_threshold": 120.0, "global_threshold": 200}

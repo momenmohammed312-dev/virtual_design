@@ -3,11 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
-import 'app/routes/app_pages.dart';
-import 'app/routes/app_routes.dart';
-import 'app/themes/app_theme.dart';
-import 'app/bindings/initial_binding.dart';
-import 'l10n/app_localizations.dart';
+import 'package:virtual_design/app/routes/app_pages.dart';
+import 'package:virtual_design/app/routes/app_routes.dart';
+import 'package:virtual_design/app/themes/app_theme.dart';
+import 'package:virtual_design/app/bindings/initial_binding.dart';
+import 'package:virtual_design/l10n/app_localizations.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,7 +24,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Virtual Design - Silk Screen Studio',
+      title: 'Virtual Designer',
       theme: AppTheme.lightTheme,
       initialRoute: AppRoutes.splash,
       getPages: AppPages.routes,

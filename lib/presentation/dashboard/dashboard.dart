@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../core/utils/responsive.dart';
-import '../dashboard/dashboard_controller.dart';
-import '../../domain/entities/print_project.dart';
+import 'package:virtual_design/core/utils/responsive.dart';
+import 'package:virtual_design/presentation/dashboard/dashboard_controller.dart';
+import 'package:virtual_design/domain/entities/print_project.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -83,7 +83,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _buildTopBar(),
                   Expanded(
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 24, vertical: 20),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -91,14 +92,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           const SizedBox(height: 32),
                           const Text(
                             'Quick Actions',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 16),
                           _buildQuickActions(),
                           const SizedBox(height: 32),
                           const Text(
                             'Recent Projects',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 16),
                           _buildProjectsGrid(),
@@ -136,20 +139,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const Spacer(),
-          SizedBox(
-            width: context.isMobile ? 150 : 300,
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search projects...',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
+          Flexible(
+            child: SizedBox(
+              width: context.isMobile ? 150 : 300,
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search projects...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFFF0F2F5),
                 ),
-                filled: true,
-                fillColor: const Color(0xFFF0F2F5),
               ),
             ),
           ),
@@ -169,9 +174,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       // Adaptive grid layout: 1 column on small mobile, 2 on tablet, 4 on desktop
-      int crossAxisCount = context.width < 600 ? 1 : (context.width < 1000 ? 2 : 4);
-      double aspectRatio = context.width < 600 ? 3.0 : 1.6;
-      
+      int crossAxisCount =
+          context.screenWidth < 600 ? 2 : (context.screenWidth < 1000 ? 2 : 4);
+      double aspectRatio = context.screenWidth < 600 ? 2.0 : 1.6;
+
       return GridView.count(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
@@ -180,10 +186,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         crossAxisSpacing: 12,
         childAspectRatio: aspectRatio,
         children: [
-          _statCard('Total Jobs', controller.totalProjects.value.toString(), Icons.print_outlined, Colors.blue),
-          _statCard('Pending', controller.pendingCount.toString(), Icons.pending_actions_outlined, Colors.orange),
-          _statCard('Complete', controller.totalFilms.value.toString(), Icons.check_circle_outline, Colors.green),
-          _statCard('Storage', controller.storageUsed.value, Icons.storage_outlined, Colors.purple),
+          _statCard('Total Jobs', controller.totalProjects.value.toString(),
+              Icons.print_outlined, Colors.blue),
+          _statCard('Pending', controller.pendingCount.toString(),
+              Icons.pending_actions_outlined, Colors.orange),
+          _statCard('Complete', controller.totalFilms.value.toString(),
+              Icons.check_circle_outline, Colors.green),
+          _statCard('Storage', controller.storageUsed.value,
+              Icons.storage_outlined, Colors.purple),
         ],
       );
     });
@@ -193,15 +203,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return clickableContainer(
       isClickable: false,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(height: 8),
-            Text(title, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-            Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Icon(icon, color: color, size: 22),
+            const SizedBox(height: 6),
+            Text(title,
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+                overflow: TextOverflow.ellipsis),
+            Text(value,
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis),
           ],
         ),
       ),
@@ -215,7 +231,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       children: [
         _actionButton('New Project', Icons.add, () => Get.toNamed('/upload')),
         _actionButton('Import URL', Icons.link, () {
-           // Show URL dialog
+          _showImportUrlDialog();
         }),
       ],
     );
@@ -238,7 +254,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildProjectsGrid() {
     return Obx(() {
       if (controller.recentProjects.isEmpty) {
-        return const Center(child: Padding(
+        return const Center(
+            child: Padding(
           padding: EdgeInsets.all(40),
           child: Text('No projects found'),
         ));
@@ -253,7 +270,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           childAspectRatio: 0.8,
         ),
         itemCount: controller.recentProjects.length,
-        itemBuilder: (context, index) => _buildRecentProjectCard(controller.recentProjects[index]),
+        itemBuilder: (context, index) =>
+            _buildRecentProjectCard(controller.recentProjects[index]),
       );
     });
   }
@@ -269,7 +287,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               width: double.infinity,
               decoration: BoxDecoration(
                 color: const Color(0xFFF0F2F5),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(12)),
               ),
               child: const Icon(Icons.image, color: Colors.grey, size: 40),
             ),
@@ -279,9 +298,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(project.name, style: const TextStyle(fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(project.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 4),
-                Text('Status: ${project.status.name}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                Text('Status: ${project.status.name}',
+                    style:
+                        const TextStyle(fontSize: 12, color: Colors.black54)),
               ],
             ),
           ),
@@ -301,9 +325,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const Divider(height: 1),
           const SizedBox(height: 20),
           _sideButton(Icons.dashboard_rounded, 'Dashboard', () {}),
-          _sideButton(Icons.folder_rounded, 'My Projects', () {}),
-          _sideButton(Icons.settings_rounded, 'Settings', () {}),
+          _sideButton(
+              Icons.folder_rounded, 'My Projects', () => Get.toNamed('/files')),
+          _sideButton(Icons.settings_rounded, 'Settings',
+              () => Get.toNamed('/settings')),
           const Spacer(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Text('MO2 CAPITAL',
+                style: TextStyle(
+                    color: Colors.grey.shade400,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.5)),
+          ),
           _buildProfile(),
         ],
       ),
@@ -317,11 +352,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
         children: [
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: primaryBlue, borderRadius: BorderRadius.circular(8)),
-            child: const Icon(Icons.auto_awesome, color: Colors.white, size: 24),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFF1564A5), Color(0xFF0E3182)]),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child:
+                const Icon(Icons.print_rounded, color: Colors.white, size: 24),
           ),
           const SizedBox(width: 12),
-          Text('VIRTUAL', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: sidebarBlue)),
+          Expanded(
+            child: Text('Virtual Designer',
+                style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: sidebarBlue)),
+          ),
         ],
       ),
     );
@@ -332,9 +378,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
       padding: const EdgeInsets.all(16),
       child: Row(
         children: [
-          const CircleAvatar(backgroundColor: Color(0xFFEEEEEE), child: Icon(Icons.person, color: Colors.black54)),
+          const CircleAvatar(
+            backgroundColor: Color(0xFFE3F2FD),
+            child: Icon(Icons.admin_panel_settings,
+                color: Color(0xFF1564A5), size: 22),
+          ),
           const SizedBox(width: 12),
-          const Text('Admin User', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Admin',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                Text('admin@virtualdesigner.app',
+                    style: TextStyle(fontSize: 11, color: Colors.grey)),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -348,6 +409,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
         leading: Icon(icon, color: Colors.black54),
         title: Text(title, style: const TextStyle(color: Colors.black87)),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  void _showImportUrlDialog() {
+    final urlController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.link, color: Color(0xFF1564A5)),
+            SizedBox(width: 10),
+            Text('Import from URL'),
+          ],
+        ),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Enter the URL of the image you want to import for processing.',
+                style: TextStyle(fontSize: 13, color: Colors.black54),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: urlController,
+                decoration: InputDecoration(
+                  hintText: 'https://example.com/design.png',
+                  prefixIcon: const Icon(Icons.language, size: 20),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFFF5F7FB),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final url = urlController.text.trim();
+              if (url.isNotEmpty) {
+                Navigator.of(ctx).pop();
+                // Navigate to upload page with the URL
+                Get.toNamed(
+                  '/upload',
+                  arguments: {'importUrl': url},
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryBlue,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Import'),
+          ),
+        ],
       ),
     );
   }

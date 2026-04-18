@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../app/providers/settings_provider.dart';
+import 'package:virtual_design/app/providers/settings_provider.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -53,16 +53,12 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                         ),
                         const SizedBox(height: 30),
-
                         _buildGeneralSection(),
                         const SizedBox(height: 30),
-
                         _buildProcessingDefaultsSection(),
                         const SizedBox(height: 30),
-
                         _buildStorageSection(),
                         const SizedBox(height: 30),
-
                         _buildAboutSection(),
                       ],
                     ),
@@ -173,7 +169,8 @@ class _SettingsPageState extends State<SettingsPage> {
           borderRadius: BorderRadius.circular(8),
         ),
         child: ListTile(
-          leading: Icon(icon, color: isActive ? primaryBlue : Colors.grey, size: 20),
+          leading:
+              Icon(icon, color: isActive ? primaryBlue : Colors.grey, size: 20),
           title: Text(
             text,
             style: TextStyle(
@@ -259,7 +256,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   color: const Color(0xFFE3F2FD),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.tune, color: Color(0xFF1976D2), size: 20),
+                child:
+                    const Icon(Icons.tune, color: Color(0xFF1976D2), size: 20),
               ),
               const SizedBox(width: 12),
               const Text(
@@ -269,13 +267,17 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
           const SizedBox(height: 25),
-          _buildSwitchOption('Dark Mode', darkMode, (val) => settingsProvider.setDarkMode(val)),
+          _buildSwitchOption('Dark Mode', darkMode,
+              (val) => settingsProvider.setDarkMode(val)),
           const Divider(),
-          _buildSwitchOption('Notifications', notifications, (val) => setState(() => notifications = val)),
+          _buildSwitchOption('Notifications', notifications,
+              (val) => setState(() => notifications = val)),
           const Divider(),
-          _buildSwitchOption('Auto Save', autoSave, (val) => setState(() => autoSave = val)),
+          _buildSwitchOption(
+              'Auto Save', autoSave, (val) => setState(() => autoSave = val)),
           const Divider(),
-          _buildSwitchOption('High Quality Preview', highQualityPreview, (val) => settingsProvider.setHighQualityPreview(val)),
+          _buildSwitchOption('High Quality Preview', highQualityPreview,
+              (val) => settingsProvider.setHighQualityPreview(val)),
         ],
       ),
     );
@@ -300,7 +302,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   color: const Color(0xFFDCFCE7),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.settings_outlined, color: Color(0xFF16A34A), size: 20),
+                child: const Icon(Icons.settings_outlined,
+                    color: Color(0xFF16A34A), size: 20),
               ),
               const SizedBox(width: 12),
               const Text(
@@ -310,11 +313,20 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
           const SizedBox(height: 25),
-          _buildDropdownOption('Output Format', outputFormat, ['PNG', 'PDF', 'SVG', 'ZIP'], (val) => setState(() => outputFormat = val)),
+          _buildDropdownOption(
+              'Output Format',
+              outputFormat,
+              ['PNG', 'PDF', 'SVG', 'ZIP'],
+              (val) => setState(() => outputFormat = val)),
           const Divider(),
-          _buildDropdownOption('DPI', dpi, ['150', '300', '450', '600'], (val) => setState(() => dpi = val)),
+          _buildDropdownOption('DPI', dpi, ['150', '300', '450', '600'],
+              (val) => setState(() => dpi = val)),
           const Divider(),
-          _buildDropdownOption('Language', language, ['English', 'Spanish', 'French', 'German'], (val) => settingsProvider.setLanguage(val)),
+          _buildDropdownOption(
+              'Language',
+              language,
+              ['English', 'Spanish', 'French', 'German'],
+              (val) => settingsProvider.setLanguage(val)),
         ],
       ),
     );
@@ -339,7 +351,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   color: const Color(0xFFFEF3C7),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.storage, color: Color(0xFFF59E0B), size: 20),
+                child: const Icon(Icons.storage,
+                    color: Color(0xFFF59E0B), size: 20),
               ),
               const SizedBox(width: 12),
               const Text(
@@ -352,7 +365,8 @@ class _SettingsPageState extends State<SettingsPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Output Directory', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              const Text('Output Directory',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               Text(
                 '/Documents/silk_screen_output',
                 style: TextStyle(fontSize: 13, color: Colors.grey[600]),
@@ -409,7 +423,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   color: const Color(0xFFF3E8FF),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.info_outline, color: Color(0xFF9333EA), size: 20),
+                child: const Icon(Icons.info_outline,
+                    color: Color(0xFF9333EA), size: 20),
               ),
               const SizedBox(width: 12),
               const Text(
@@ -419,32 +434,40 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
           const SizedBox(height: 25),
-          const Text('App Version', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          const Text('App Version',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          const Text('Virtual Designer v1.1.0', style: TextStyle(fontSize: 13, color: Colors.grey)),
+          const Text('Virtual Designer v1.1.0',
+              style: TextStyle(fontSize: 13, color: Colors.grey)),
           const SizedBox(height: 20),
-          const Text('Developer', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          const Text('Developer',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           Obx(() => Text(
                 developerName,
                 style: const TextStyle(fontSize: 13, color: Colors.grey),
               )),
           const SizedBox(height: 20),
-          const Text('License', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          const Text('License',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          const Text('Commercial License', style: TextStyle(fontSize: 13, color: Colors.grey)),
+          const Text('Commercial License',
+              style: TextStyle(fontSize: 13, color: Colors.grey)),
         ],
       ),
     );
   }
 
-  Widget _buildSwitchOption(String title, bool value, Function(bool) onChanged) {
+  Widget _buildSwitchOption(
+      String title, bool value, Function(bool) onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
           Switch(
             value: value,
             onChanged: onChanged,
@@ -455,13 +478,16 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildDropdownOption(String title, String value, List<String> options, Function(String) onChanged) {
+  Widget _buildDropdownOption(String title, String value, List<String> options,
+      Function(String) onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 15),
@@ -495,7 +521,8 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Clear Cache'),
-        content: const Text('Are you sure you want to clear the cache? This action cannot be undone.'),
+        content: const Text(
+            'Are you sure you want to clear the cache? This action cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Get.back(),
@@ -524,7 +551,8 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Reset All Settings'),
-        content: const Text('Are you sure you want to reset all settings to their default values?'),
+        content: const Text(
+            'Are you sure you want to reset all settings to their default values?'),
         actions: [
           TextButton(
             onPressed: () => Get.back(),

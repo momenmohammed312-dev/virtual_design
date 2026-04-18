@@ -19,10 +19,10 @@ class AppColors {
 }
 
 class AppText {
-  static const String appName = 'Virtual Design';
-  static const String appSubtitle = 'Silk Screen Studio';
-  static const String developer = 'MO2';
-  static const String version = 'v1.0.0';
+  static const String appName = 'Virtual Designer';
+  static const String appSubtitle = 'Screen Printing Studio';
+  static const String developer = 'MO2 CAPITAL';
+  static const String version = 'v1.1.0';
 }
 
 class AppDimens {
@@ -33,7 +33,7 @@ class AppDimens {
 }
 
 class AppConstants {
-  static const String appTitle = 'Virtual Design – Silk Screen Studio';
+  static const String appTitle = 'Virtual Designer – Screen Printing Studio';
 
   static final ThemeData lightTheme = ThemeData(
     useMaterial3: true,

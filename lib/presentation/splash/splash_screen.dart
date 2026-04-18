@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:get/get.dart';
-import '../../core/python_bridge/python_config.dart';
-import '../../core/utils/image_processor.dart';
+import 'package:virtual_design/core/python_bridge/python_config.dart';
+import 'package:virtual_design/core/utils/image_processor.dart';
 import 'dart:io';
 import 'package:virtual_design/core/constants/app_constants.dart';
 
@@ -46,26 +46,42 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   void _setupAnimations() {
-    _logoController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200));
-    _logoScale = Tween<double>(begin: 0.3, end: 1.0).animate(CurvedAnimation(parent: _logoController, curve: Curves.elasticOut));
-    _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: _logoController, curve: const Interval(0.0, 0.5, curve: Curves.easeIn)));
-    _logoSlide = Tween<Offset>(begin: const Offset(0, -0.3), end: Offset.zero).animate(CurvedAnimation(parent: _logoController, curve: Curves.easeOutBack));
+    _logoController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1200));
+    _logoScale = Tween<double>(begin: 0.3, end: 1.0).animate(
+        CurvedAnimation(parent: _logoController, curve: Curves.elasticOut));
+    _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
+        parent: _logoController,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeIn)));
+    _logoSlide = Tween<Offset>(begin: const Offset(0, -0.3), end: Offset.zero)
+        .animate(CurvedAnimation(
+            parent: _logoController, curve: Curves.easeOutBack));
 
-    _textController = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
-    _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: _textController, curve: Curves.easeIn));
-    _textSlide = Tween<Offset>(begin: const Offset(0, 0.2), end: Offset.zero).animate(CurvedAnimation(parent: _textController, curve: Curves.easeOutCubic));
+    _textController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 800));
+    _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(parent: _textController, curve: Curves.easeIn));
+    _textSlide = Tween<Offset>(begin: const Offset(0, 0.2), end: Offset.zero)
+        .animate(CurvedAnimation(
+            parent: _textController, curve: Curves.easeOutCubic));
 
-    _progressController = AnimationController(vsync: this, duration: const Duration(milliseconds: 2800));
-    _progressValue = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: _progressController, curve: Curves.easeInOut));
+    _progressController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 2800));
+    _progressValue = Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(parent: _progressController, curve: Curves.easeInOut));
 
-    _pulseController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500));
+    _pulseController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1500));
     // HIGH #1 FIX: Start repeating after first frame to avoid layout errors
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _pulseController.repeat(reverse: true);
     });
-    _pulseScale = Tween<double>(begin: 1.0, end: 1.08).animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
+    _pulseScale = Tween<double>(begin: 1.0, end: 1.08).animate(
+        CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
 
-    _devOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(parent: _textController, curve: const Interval(0.5, 1.0, curve: Curves.easeIn)));
+    _devOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
+        parent: _textController,
+        curve: const Interval(0.5, 1.0, curve: Curves.easeIn)));
   }
 
   void _startSequence() async {
@@ -102,10 +118,11 @@ class _SplashScreenState extends State<SplashScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(initResult.error ?? 'Required Python packages are missing or Python is not installed.'),
+                Text(initResult.error ??
+                    'Required Python packages are missing or Python is not installed.'),
                 const SizedBox(height: 12),
-                Text('Detected Path: ${initResult.pythonPath ?? "None"}', 
-                     style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                Text('Detected Path: ${initResult.pythonPath ?? "None"}',
+                    style: const TextStyle(fontSize: 11, color: Colors.grey)),
               ],
             ),
             actions: [
@@ -198,7 +215,10 @@ class _SplashScreenState extends State<SplashScreen>
               height: 300,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: RadialGradient(colors: [AppColors.primaryBlue.withAlpha((0.15 * 255).round()), Colors.transparent]),
+                gradient: RadialGradient(colors: [
+                  AppColors.primaryBlue.withAlpha((0.15 * 255).round()),
+                  Colors.transparent
+                ]),
               ),
             ),
           ),
@@ -212,7 +232,10 @@ class _SplashScreenState extends State<SplashScreen>
           height: 350,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: RadialGradient(colors: [AppColors.darkBlue.withAlpha((0.2 * 255).round()), Colors.transparent]),
+            gradient: RadialGradient(colors: [
+              AppColors.darkBlue.withAlpha((0.2 * 255).round()),
+              Colors.transparent
+            ]),
           ),
         ),
       ),
@@ -224,7 +247,10 @@ class _SplashScreenState extends State<SplashScreen>
             height: 200 * _pulseScale.value,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: RadialGradient(colors: [AppColors.accentBlue.withAlpha((0.05 * 255).round()), Colors.transparent]),
+              gradient: RadialGradient(colors: [
+                AppColors.accentBlue.withAlpha((0.05 * 255).round()),
+                Colors.transparent
+              ]),
             ),
           ),
         ),
@@ -250,21 +276,27 @@ class _SplashScreenState extends State<SplashScreen>
                   height: 130,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF1564A5), Color(0xFF0E3182)]),
+                    gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF1564A5), Color(0xFF0E3182)]),
                     boxShadow: [
                       BoxShadow(
-                        color: AppColors.primaryBlue.withAlpha((0.5 * 255).round()),
+                        color: AppColors.primaryBlue
+                            .withAlpha((0.5 * 255).round()),
                         blurRadius: 30,
                         spreadRadius: 5,
                       ),
                       BoxShadow(
-                        color: AppColors.accentBlue.withAlpha((0.2 * 255).round()),
+                        color:
+                            AppColors.accentBlue.withAlpha((0.2 * 255).round()),
                         blurRadius: 60,
                         spreadRadius: 10,
                       ),
                     ],
                   ),
-                  child: const Icon(Icons.print_rounded, color: Colors.white, size: 65),
+                  child: const Icon(Icons.print_rounded,
+                      color: Colors.white, size: 65),
                 ),
               ),
             ),
@@ -283,18 +315,32 @@ class _SplashScreenState extends State<SplashScreen>
           position: _textSlide,
           child: Column(children: [
             ShaderMask(
-              shaderCallback: (bounds) => const LinearGradient(colors: [Colors.white, Color(0xFF90CAF9)]).createShader(bounds),
-              child: const Text('Virtual Design', style: TextStyle(fontSize: 38, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 1.5)),
+              shaderCallback: (bounds) => const LinearGradient(
+                      colors: [Colors.white, Color(0xFF90CAF9)])
+                  .createShader(bounds),
+              child: const Text('Virtual Designer',
+                  style: TextStyle(
+                      fontSize: 38,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      letterSpacing: 1.5)),
             ),
             const SizedBox(height: 6),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
               decoration: BoxDecoration(
-                border: Border.all(color: AppColors.primaryBlue.withAlpha((0.6 * 255).round()), width: 1),
+                border: Border.all(
+                    color: AppColors.primaryBlue.withAlpha((0.6 * 255).round()),
+                    width: 1),
                 borderRadius: BorderRadius.circular(20),
                 color: AppColors.primaryBlue.withAlpha((0.1 * 255).round()),
               ),
-              child: const Text('SILK SCREEN STUDIO', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF90CAF9), letterSpacing: 4)),
+              child: const Text('SCREEN PRINTING STUDIO',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF90CAF9),
+                      letterSpacing: 4)),
             ),
           ]),
         ),
@@ -307,7 +353,13 @@ class _SplashScreenState extends State<SplashScreen>
       animation: _textController,
       builder: (_, __) => FadeTransition(
         opacity: _textOpacity,
-        child: const Text('Professional Color Separation for Screen Printing', style: TextStyle(fontSize: 14, color: Color(0xFF78909C), fontWeight: FontWeight.w400, letterSpacing: 0.5), textAlign: TextAlign.center),
+        child: const Text('Professional Color Separation for Screen Printing',
+            style: TextStyle(
+                fontSize: 14,
+                color: Color(0xFF78909C),
+                fontWeight: FontWeight.w400,
+                letterSpacing: 0.5),
+            textAlign: TextAlign.center),
       ),
     );
   }
@@ -321,11 +373,23 @@ class _SplashScreenState extends State<SplashScreen>
           Container(
             height: 4,
             width: 280,
-            decoration: BoxDecoration(color: Colors.white.withAlpha((0.1 * 255).round()), borderRadius: BorderRadius.circular(2)),
+            decoration: BoxDecoration(
+                color: Colors.white.withAlpha((0.1 * 255).round()),
+                borderRadius: BorderRadius.circular(2)),
             child: FractionallySizedBox(
               alignment: Alignment.centerLeft,
               widthFactor: _progressValue.value,
-              child: Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(2), gradient: const LinearGradient(colors: [Color(0xFF2196F3), Color(0xFF1564A5)]), boxShadow: [BoxShadow(color: AppColors.accentBlue.withAlpha((0.5 * 255).round()), blurRadius: 8)])),
+              child: Container(
+                  decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(2),
+                      gradient: const LinearGradient(
+                          colors: [Color(0xFF2196F3), Color(0xFF1564A5)]),
+                      boxShadow: [
+                    BoxShadow(
+                        color:
+                            AppColors.accentBlue.withAlpha((0.5 * 255).round()),
+                        blurRadius: 8)
+                  ])),
             ),
           ),
         ]),
@@ -334,7 +398,14 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Widget _buildLoadingText() {
-    return Obx(() => AnimatedSwitcher(duration: const Duration(milliseconds: 300), child: Text(_loadingText.value, key: ValueKey(_loadingText.value), style: const TextStyle(fontSize: 13, color: Color(0xFF546E7A), fontWeight: FontWeight.w400))));
+    return Obx(() => AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        child: Text(_loadingText.value,
+            key: ValueKey(_loadingText.value),
+            style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF546E7A),
+                fontWeight: FontWeight.w400))));
   }
 
   Widget _buildDeveloperCredit() {
@@ -348,22 +419,85 @@ class _SplashScreenState extends State<SplashScreen>
           opacity: _devOpacity,
           child: Column(children: [
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Container(width: 40, height: 1, color: Colors.white.withAlpha((0.1 * 255).round())),
+              Container(
+                  width: 40,
+                  height: 1,
+                  color: Colors.white.withAlpha((0.1 * 255).round())),
               const SizedBox(width: 12),
-              Text('Developed by', style: TextStyle(fontSize: 11, color: Colors.white.withAlpha((0.3 * 255).round()), letterSpacing: 1)),
+              Text('Developed by',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withAlpha((0.3 * 255).round()),
+                      letterSpacing: 1)),
               const SizedBox(width: 12),
-              Container(width: 40, height: 1, color: Colors.white.withAlpha((0.1 * 255).round())),
+              Container(
+                  width: 40,
+                  height: 1,
+                  color: Colors.white.withAlpha((0.1 * 255).round())),
             ]),
             const SizedBox(height: 10),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7), decoration: BoxDecoration(gradient: LinearGradient(colors: [AppColors.primaryBlue.withAlpha((0.3 * 255).round()), AppColors.darkBlue.withAlpha((0.3 * 255).round())]), borderRadius: BorderRadius.circular(8), border: Border.all(color: AppColors.primaryBlue.withAlpha((0.4 * 255).round()), width: 1)), child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(width: 24, height: 24, decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [Color(0xFF4587F9), Color(0xFF1564A5)])), child: const Center(child: Text('M', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900)))),
-                const SizedBox(width: 8),
-                RichText(text: TextSpan(children: [const TextSpan(text: 'MO', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 1)), TextSpan(text: '2', style: TextStyle(color: AppColors.accentBlue, fontSize: 18, fontWeight: FontWeight.w900))])),
-              ])),
+              Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [
+                        AppColors.primaryBlue.withAlpha((0.3 * 255).round()),
+                        AppColors.darkBlue.withAlpha((0.3 * 255).round())
+                      ]),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: AppColors.primaryBlue
+                              .withAlpha((0.4 * 255).round()),
+                          width: 1)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Container(
+                        width: 24,
+                        height: 24,
+                        decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(colors: [
+                              Color(0xFF4587F9),
+                              Color(0xFF1564A5)
+                            ])),
+                        child: const Center(
+                            child: Text('M',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900)))),
+                    const SizedBox(width: 8),
+                    RichText(
+                        text: TextSpan(children: [
+                      const TextSpan(
+                          text: 'MO',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1)),
+                      TextSpan(
+                          text: '2',
+                          style: TextStyle(
+                              color: AppColors.accentBlue,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900)),
+                      const TextSpan(
+                          text: ' CAPITAL',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 1.5))
+                    ])),
+                  ])),
             ]),
             const SizedBox(height: 8),
-            Text('Version 1.0.0', style: TextStyle(fontSize: 10, color: Colors.white.withAlpha((0.2 * 255).round()), letterSpacing: 1)),
+            Text('Version 1.1.0',
+                style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.white.withAlpha((0.2 * 255).round()),
+                    letterSpacing: 1)),
           ]),
         ),
       ),

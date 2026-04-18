@@ -1,479 +1,265 @@
-// python_processor.dart — Fixed Dart↔Python Bridge
-// Virtual Design Silk Screen Studio
-//
-// FATAL #1 FIX: يستدعي main.py بدل registration_marks.py
-// FATAL #3 FIX: يقرأ OUTPUT_DIR: من stdout + path quoting/escaping
-// FATAL #4 FIX: يستخدم Process.start() لـ real-time progress streaming
-// HIGH #1 FIX:  يستخدم PythonConfig لاكتشاف أمر Python تلقائياً
-// HIGH #2 FIX:  يرفض المعالجة لو Python غير متاح
+// lib/core/python_bridge/python_processor.dart
+// Senior-grade Python Bridge with full error handling and progress reporting.
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
-import 'package:flutter/foundation.dart';
+import 'dart:math' as math;
 
-import 'process_result.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+
 import 'python_config.dart';
-import '../../domain/entities/processing_settings.dart';
+import 'process_result.dart';
 
 class PythonProcessor {
   final PythonConfig config;
+  final List<Process> _activeProcesses = [];
 
   PythonProcessor({required this.config});
 
-  /// معالجة صورة عبر Python pipeline الكامل (9 steps)
-  ///
-  /// [imagePath]   مسار الصورة الأصلية
-  /// [settings]    إعدادات الطباعة
-  /// [outputDir]   مجلد الـ output اختياري (إذا فارغ، يُنشأ تلقائياً)
-  /// [onProgress]  callback لتحديث شريط التقدم (0.0 → 1.0, message)
-  ///
-  /// Returns [ProcessResult] يحتوي على:
-  ///   - success: نجاح أم فشل
-  ///   - outputDirectory: مسار مجلد الـ output (غير null لو نجح)
-  ///   - errorMessage: رسالة الخطأ (لو فشل)
   Future<ProcessResult> processImage({
     required String imagePath,
-    required ProcessingSettings settings,
+    required Map<String, dynamic> settings,
     String? outputDir,
     void Function(double progress, String message)? onProgress,
+    Duration timeout = const Duration(minutes: 30),
   }) async {
-    // HIGH #2: Guard — refuse processing if Python is unavailable or not initialized
+    // Guard: refuse processing if Python is unavailable or not initialized
     if (!config.isInitialized) {
       return ProcessResult.failure(
-        'BRIDGE_NOT_INITIALIZED:The Python bridge has not been initialized. '
-        'Please call initialize() before processing.',
-      );
+          errorMessage:
+              'BRIDGE_NOT_INITIALIZED: The Python bridge has not been initialized. '
+              'Please call initialize() before processing.');
     }
     if (!config.isPythonAvailable) {
       return ProcessResult.failure(
-        'PYTHON_NOT_FOUND:Python is not available. '
-        'Please install Python 3.8+ from python.org and add it to PATH.',
+        errorMessage: 'PYTHON_NOT_FOUND: Python is not available. '
+            'Please install Python 3.8+ from python.org and add it to PATH.',
       );
     }
 
-    // التحقق من الصورة
+    // Verify image exists
     if (!File(imagePath).existsSync()) {
-      return ProcessResult.failure('Image file not found: $imagePath');
+      return ProcessResult.failure(
+          errorMessage: 'Image file not found: $imagePath');
     }
 
-    // إذا لم يتم تحديد مجلد output، أنشئ واحد تلقائياً
-    String finalOutputDir = outputDir ?? '';
-    if (finalOutputDir.isEmpty) {
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final appDir = await getApplicationDocumentsDirectory();
-      finalOutputDir = '${appDir.path}/silk_output_$timestamp';
-    }
+    // Auto-create output directory if not specified
+    final finalOutputDir = outputDir ?? await _generateOutputDir();
+    await Directory(finalOutputDir).create(recursive: true);
 
-    // بناء قائمة الـ arguments
-    final args = _buildArgs(imagePath, finalOutputDir, settings);
-
-    // مسار مجلد python scripts
+    // Get scripts directory from config
     final scriptsDir = await config.getPythonScriptsDir();
-    final pythonCommand = await config.resolvePythonCommand();
-
-    // Log details for debugging
-    debugPrint('[PythonProcessor] Python: $pythonCommand');
-    debugPrint('[PythonProcessor] Scripts dir: $scriptsDir');
-    debugPrint('[PythonProcessor] Input: $imagePath');
-    debugPrint('[PythonProcessor] Output: $finalOutputDir');
-    debugPrint('[PythonProcessor] Args: $args');
 
     // Verify scripts directory exists
     if (!await Directory(scriptsDir).exists()) {
       return ProcessResult.failure(
-        'SCRIPTS_DIR_NOT_FOUND:Python scripts directory not found: $scriptsDir\n'
-        'Please verify the installation.',
+        errorMessage:
+            'SCRIPTS_DIR_NOT_FOUND: Python scripts directory not found: $scriptsDir\n'
+            'Please verify the installation.',
       );
     }
 
-    // بدء العملية مع بيئة محسّنة (بدون buffering)
+    final mainScript = p.join(scriptsDir, 'main.py');
+
+    // Build arguments
+    final args = _buildArgs(
+      imagePath: imagePath,
+      outputDir: finalOutputDir,
+      settings: settings,
+    );
+
+    // Launch Python process
     Process process;
     try {
+      final pythonCmd = await config.resolvePythonCommand();
       process = await Process.start(
-        pythonCommand,
-        args,
-        runInShell: false,
+        pythonCmd,
+        [mainScript, ...args],
         workingDirectory: scriptsDir,
         environment: {
-          ...Platform.environment,
-          'PYTHONUNBUFFERED': '1', // قراءة stdout فوراً
+          'PYTHONPATH': scriptsDir,
         },
       );
+      _activeProcesses.add(process);
     } on ProcessException catch (e) {
       return ProcessResult.failure(
-        'Failed to start Python process: ${e.message}',
+        errorMessage: 'Failed to start Python process: ${e.message}',
       );
     } catch (e) {
-      return ProcessResult.failure('Cannot launch Python: $e');
+      return ProcessResult.failure(errorMessage: 'Cannot launch Python: $e');
     }
 
-    // قراءة stdout سطراً بسطر — real-time progress
-    String outputDirectory = '';
+    // Read stdout line by line - real-time progress
+    final stdoutBuffer = StringBuffer();
     final stderrBuffer = StringBuffer();
-
     final stdoutCompleter = Completer<void>();
     final stderrCompleter = Completer<void>();
 
-    final progressRegex = RegExp(r'^PROGRESS:(0\.\d+|1\.0+):(.+)$');
-
-    // RegExp for robust progress parsing (handles Windows paths with colons)
     process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
       (line) {
-        // New IPC fine-grained progress format: PROGRESS:<0.0-1.0>:message
-        if (line.startsWith('PROGRESS:')) {
-          if (onProgress != null) {
-            final match = progressRegex.firstMatch(line);
-            if (match != null) {
-              final val = double.tryParse(match.group(1)!) ?? 0.0;
-              final msg = match.group(2)!.trim();
-              onProgress(val.clamp(0.0, 1.0), msg);
-            }
-          }
-          return;
-        }
-        // FATAL #3 FIX: استخراج مسار output
-        if (line.startsWith('OUTPUT_DIR:')) {
-          outputDirectory = line.substring('OUTPUT_DIR:'.length).trim();
-          return;
-        }
-
-        // Detect Dependency Errors early
-        if (line.startsWith('FATAL:DEPENDENCY_MISSING:')) {
-          final parts = line.split(':');
-          final pkg = parts.length > 2 ? parts[2] : 'unknown';
-          stderrBuffer.writeln(
-              'Missing Python requirement: $pkg. Please run the setup script or pip install $pkg.');
-          debugPrint('[PythonProcessor] FOUND FATAL ERROR: $line');
-          return;
-        }
-
-        // Print all other output to console for debugging
-        debugPrint('[PythonPipe] $line');
-
-        // FATAL #4 FIX: تحديث progress من "Step X/9: ..."
-        final stepMatch = RegExp(
-          r'Step (\d+)/(\d+):\s*(.*)',
-        ).firstMatch(line);
-        if (stepMatch != null && onProgress != null) {
-          final current = int.parse(stepMatch.group(1)!);
-          final total = int.parse(stepMatch.group(2)!);
-          final stepName = stepMatch.group(3) ?? '';
-          onProgress(current / total, 'Step $current/$total: $stepName');
-        }
+        stdoutBuffer.writeln(line);
+        _parseProgress(line, onProgress);
       },
-      onDone: () {
-        if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
-      },
-      onError: (_) {
-        if (!stdoutCompleter.isCompleted) stdoutCompleter.complete();
-      },
+      onDone: stdoutCompleter.complete,
+      onError: (_) => stdoutCompleter.complete(),
     );
 
-    process.stderr.transform(utf8.decoder).listen(
-      (chunk) {
-        stderrBuffer.write(chunk);
-        debugPrint('[PythonErr] $chunk');
+    process.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(
+      (line) {
+        stderrBuffer.writeln(line);
       },
-      onDone: () {
-        if (!stderrCompleter.isCompleted) stderrCompleter.complete();
-      },
-      onError: (_) {
-        if (!stderrCompleter.isCompleted) stderrCompleter.complete();
-      },
+      onDone: stderrCompleter.complete,
+      onError: (_) => stderrCompleter.complete(),
     );
 
-    // BUG-09 FIX: Process timeout — 5 minutes max
-    const timeout = Duration(minutes: 5);
+    // Wait for process with timeout
     int exitCode;
     try {
-      exitCode = await process.exitCode.timeout(
-        timeout,
-        onTimeout: () {
-          debugPrint(
-              '[PythonProcessor] TIMEOUT after ${timeout.inMinutes}min — killing process');
-          process.kill();
-          return -99;
-        },
-      );
-    } catch (e) {
+      exitCode = await process.exitCode.timeout(timeout);
+    } on TimeoutException catch (e) {
       process.kill();
       await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
-      return ProcessResult.failure('Process timeout: $e');
+      return ProcessResult.failure(errorMessage: 'Process timeout: $e');
     }
     await Future.wait([stdoutCompleter.future, stderrCompleter.future]);
 
     if (exitCode == -99) {
       return ProcessResult.failure(
-        'TIMEOUT:Processing took too long (>${timeout.inMinutes} min).',
+        errorMessage:
+            'TIMEOUT:Processing took too long (>${timeout.inMinutes} min).',
       );
     }
 
-    debugPrint('[PythonProcessor] Exit code: $exitCode');
-    debugPrint('[PythonProcessor] Output dir from IPC: $outputDirectory');
+    _activeProcesses.remove(process);
 
+    // Success: parse output and return
     if (exitCode == 0) {
-      // Fallback: لو OUTPUT_DIR مجاش، استخدم الـ finalOutputDir اللي بنيناه
+      final outputDirectory =
+          _parseOutputDirectory(stdoutBuffer.toString()) ?? finalOutputDir;
       final resolvedDir =
           outputDirectory.isNotEmpty ? outputDirectory : finalOutputDir;
       if (onProgress != null) onProgress(1.0, 'Processing complete!');
-      return ProcessResult.success(outputDirectory: resolvedDir);
+      return ProcessResult.success(outputPath: resolvedDir);
     }
 
     // Process failed - parse and return the actual error
     final errorMessage = _parseError(exitCode, stderrBuffer.toString());
-    return ProcessResult.failure(errorMessage);
+    return ProcessResult.failure(errorMessage: errorMessage);
   }
 
-  /// بناء arguments لـ main.py
-  /// FATAL #3 FIX: paths are quoted to handle spaces/special chars on Windows
-  List<String> _buildArgs(
-    String imagePath,
-    String outputDir,
-    ProcessingSettings settings,
-  ) {
+  /// Build arguments for main.py
+  List<String> _buildArgs({
+    required String imagePath,
+    required String outputDir,
+    required Map<String, dynamic> settings,
+  }) {
     final args = <String>[
-      'main.py',
       '--input',
-      _safePath(imagePath),
+      imagePath,
       '--output',
-      _safePath(outputDir),
-      '--dpi',
-      settings.dpi.toInt().toString(),
-      '--detail-level',
-      settings.detailLevel.name,
-      '--clean',
-      '--validate-strokes',
-      '--min-stroke',
-      settings.strokeWidthMm.toString(),
+      outputDir,
     ];
 
-    // Color count: if 0 (auto), send --auto-colors flag so Python activates auto-detect.
-    if (settings.colorCount == 0) {
-      args.add('--auto-colors');
-      args.addAll(
-          ['--colors', '0']); // Python reads 0 as "use SmartAnalyzer result"
-    } else {
-      // Allow 1 color if explicitly requested
-      final safeColorCount = settings.colorCount < 1 ? 1 : settings.colorCount;
-      args.addAll(['--colors', safeColorCount.toString()]);
-    }
-
-    // Halftone Settings - only add --halftone if explicitly set to halftone finish OR forced via override
-    if (settings.printFinish == PrintFinish.halftone ||
-        settings.forceHalftone) {
-      args.add('--halftone');
-      if (settings.halftoneSettings != null) {
-        args.add('--lpi');
-        args.add(settings.halftoneSettings!.lpi.toString());
-        args.add('--dot-shape');
-        args.add(settings.halftoneSettings!.dotShape);
+    // Add settings
+    settings.forEach((key, value) {
+      if (value != null) {
+        final argName = '--${key.replaceAllMapped(
+          RegExp(r'[A-Z]'),
+          (match) => '-${match.group(0)!.toLowerCase()}',
+        )}';
+        args.add(argName);
+        if (value is! bool) {
+          // Convert values to string, but handle doubles that are whole numbers
+          // to pass them as integers to Python (e.g., 4800.0 -> "4800")
+          String strValue;
+          if (value is double) {
+            if (value == value.roundToDouble()) {
+              // It's a whole number, pass as int
+              strValue = value.toInt().toString();
+            } else {
+              strValue = value.toString();
+            }
+          } else {
+            strValue = value.toString();
+          }
+          args.add(strValue);
+        }
       }
-    } else {
-      // Skip halftone for non-halftone finishes
-      args.add('--skip-halftone');
-    }
-
-    // Always send mesh count for LPI clamping (Task 2/3)
-    args.addAll(['--mesh-count', settings.meshCount.toString()]);
-
-    // Professional Features — all enabled by default as automatic
-    args.addAll(['--pantone-matching', settings.pantoneMatching.name]);
-    // Underbase: disabled by default حتى لو المستخدم اختار automatic
-    // لأنه بيضيف فيلم زيادة مش محسوب في عدد الألوان المطلوب
-    args.addAll(['--underbase-mode', 'disabled']);
-    args.addAll(['--trapping-mode', settings.trappingMode.name]);
-    args.addAll(['--overprint-mode', settings.overprintMode.name]);
-    args.addAll(['--gradient-mesh-mode', settings.gradientMeshMode.name]);
-    args.addAll(['--typography-mode', settings.typographyMode.name]);
-    args.addAll(['--mesh-preview-mode', settings.meshPreviewMode.name]);
-
-    // Advanced Tuning (Phase 8 Senior Optimizations)
-    // Pass through globalThreshold; Python will auto-adjust based on --image-type
-    int effectiveThreshold = settings.globalThreshold.toInt();
-    if (settings.adaptiveThreshold) {
-      effectiveThreshold = -1;
-    }
-
-    args.addAll(['--global-threshold', effectiveThreshold.toString()]);
-    args.addAll(['--smoothing-factor', settings.smoothingFactor.toString()]);
-    args.addAll(['--corner-threshold', settings.cornerThreshold.toString()]);
-    args.addAll(['--noise-removal', settings.noiseRemoval.toString()]);
-    if (settings.autoCrop) {
-      args.add('--auto-crop');
-    }
-    if (settings.adaptiveThreshold) {
-      args.add('--adaptive-threshold');
-    }
-
-    // Image Processing Mode (Simple, Mixed, Complex, Auto)
-    args.addAll(['--image-type', settings.imageType.name]);
-
-    // Page size from paper dimensions (Task 3.1 FIX)
-    final pageSize =
-        _determinePageSize(settings.paperWidthCm, settings.paperHeightCm);
-    args.addAll(['--page-size', pageSize]);
-
-    if (settings.filmLabel.isNotEmpty) {
-      args.addAll(['--film-label', settings.filmLabel]);
-    }
-
-    // Scaling & Physical Sizing (Phase 2 Upgrade)
-    args.addAll(['--target-width-mm', settings.targetWidthMm.toString()]);
-    args.addAll(['--source-dpi', settings.sourceDpi.toString()]);
-    args.addAll(['--scale-mode', settings.scaleMode]);
-    args.addAll(['--custom-scale-percent', settings.customScalePercent.toString()]);
+    });
 
     return args;
   }
 
-  /// Determine page size from paper dimensions (Task 3.1 FIX)
-  String _determinePageSize(double widthCm, double heightCm) {
-    // A4: 21.0 x 29.7 cm
-    // A3: 29.7 x 42.0 cm
-    // Letter: 21.6 x 27.9 cm (approx)
-    const a4Width = 21.0;
-    const a4Height = 29.7;
-    const a3Width = 29.7;
-    const a3Height = 42.0;
-    const letterWidth = 21.6;
-    const letterHeight = 27.9;
+  /// Parse progress updates from Python stdout
+  void _parseProgress(String line, void Function(double, String)? onProgress) {
+    if (onProgress == null) return;
 
-    // Check with tolerance
-    const tolerance = 1.0;
-
-    if ((widthCm - a4Width).abs() < tolerance &&
-        (heightCm - a4Height).abs() < tolerance) {
-      return 'A4';
+    // Look for progress indicators like: "PROGRESS:0.5:Processing step 3/6"
+    final progressRegex = RegExp(r'PROGRESS:(\d+\.?\d*):(.*)');
+    final match = progressRegex.firstMatch(line);
+    if (match != null) {
+      final progress = double.tryParse(match.group(1)!) ?? 0.0;
+      final message = match.group(2) ?? 'Processing...';
+      onProgress(progress.clamp(0.0, 1.0), message);
     }
-    if ((widthCm - a3Width).abs() < tolerance &&
-        (heightCm - a3Height).abs() < tolerance) {
-      return 'A3';
-    }
-    if ((widthCm - letterWidth).abs() < tolerance &&
-        (heightCm - letterHeight).abs() < tolerance) {
-      return 'LETTER';
-    }
-
-    // Default to A4 if no match
-    return 'A4';
   }
 
-  /// Parse error from exit code and stderr output
+  /// Parse output directory from Python stdout
+  String? _parseOutputDirectory(String stdout) {
+    // Look for output directory indicator like: "OUTPUT_DIR:/path/to/output"
+    final regex = RegExp(r'OUTPUT_DIR:(.+)');
+    final match = regex.firstMatch(stdout);
+    return match?.group(1)?.trim();
+  }
+
+  /// Parse error message from exit code and stderr
   String _parseError(int exitCode, String stderr) {
-    switch (exitCode) {
-      case 5:
-        return 'PDF Generation Failed: One or more PDF files were requested but could not be produced. Check Python console for details. Stderr: $stderr';
-      case 4:
-        return 'Missing PDF Dependency: reportlab. Please install it using "pip install reportlab" elsewhere or run the configuration setup. Stderr: $stderr';
-      case 2:
-        return 'File not found error: $stderr';
-      case 3:
-        return 'Invalid input error: $stderr';
-      case 1:
-      default:
-        return 'Processing failed (exit code $exitCode): $stderr';
-    }
-  }
-
-  /// Make path safe for Windows command line.
-  /// NOTE: Process.start() with runInShell=false passes args as a list,
-  /// so the OS handles spaces in paths natively. Do NOT wrap in quotes —
-  /// they would become literal quote characters inside the path string.
-  String _safePath(String path) {
-    if (Platform.isWindows) {
-      // Normalise to forward slashes for Python's os.path compatibility
-      return path.replaceAll('\\', '/');
-    }
-    return path;
-  }
-
-  /// AI Auto-Fix: Re-analyze preview and adjust parameters
-  /// Returns adjusted settings or null if failed
-  Future<Map<String, dynamic>?> runAutoFix({
-    required String originalImage,
-    required String previewImage,
-    int iteration = 1,
-    Map<String, dynamic>? prevParams,
-  }) async {
-    if (!config.isInitialized || !config.isPythonAvailable) {
-      debugPrint('[PythonProcessor] Auto-Fix failed: Python not available');
-      return null;
-    }
-
-    final scriptsDir = await config.getPythonScriptsDir();
-    final pythonCommand = await config.resolvePythonCommand();
-
-    final args = [
-      'auto_fix.py',
-      '--original',
-      _safePath(originalImage),
-      '--preview',
-      _safePath(previewImage),
-      '--iteration',
-      iteration.toString(),
-      if (prevParams != null) ...['--prev-params', jsonEncode(prevParams)],
-    ];
-
-    try {
-      final process = await Process.start(
-        pythonCommand,
-        args,
-        workingDirectory: scriptsDir,
-        environment: {
-          ...Platform.environment,
-          'PYTHONUNBUFFERED': '1',
-        },
-      );
-
-      final stdoutBuffer = StringBuffer();
-      final stderrBuffer = StringBuffer();
-
-      // 🔥 FIX: Properly await both stdout and stderr streams before checking exit code
-      final stdoutFuture =
-          process.stdout.transform(utf8.decoder).forEach(stdoutBuffer.write);
-      final stderrFuture =
-          process.stderr.transform(utf8.decoder).forEach(stderrBuffer.write);
-
-      // Wait for exit code
-      final exitCode = await process.exitCode.timeout(
-        const Duration(seconds: 120),
-        onTimeout: () {
-          process.kill();
-          return -99;
-        },
-      );
-
-      // 🔥 FIX: Wait for streams to complete
-      await Future.wait([stdoutFuture, stderrFuture]);
-
-      if (exitCode == 0) {
-        final output = stdoutBuffer.toString();
-        debugPrint('[PythonProcessor] Auto-Fix stdout: $output');
-        // Parse JSON response
-        final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(output);
-        if (jsonMatch != null) {
-          final json = jsonDecode(jsonMatch.group(0)!);
-          debugPrint('[PythonProcessor] Auto-Fix result: $json');
-          return json as Map<String, dynamic>;
+    if (stderr.isNotEmpty) {
+      // Extract the most relevant error line
+      final lines =
+          stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+      if (lines.isNotEmpty) {
+        // Prefer lines with "Error:" or "Exception:"
+        final errorLines = lines
+            .where((l) =>
+                l.contains('Error:') ||
+                l.contains('Exception:') ||
+                l.contains('Traceback'))
+            .toList();
+        if (errorLines.isNotEmpty) {
+          return errorLines.first.trim();
         }
+        return lines.last.trim();
       }
-
-      debugPrint(
-          '[PythonProcessor] Auto-Fix failed (exit=$exitCode): ${stderrBuffer.toString()}');
-      return null;
-    } catch (e) {
-      debugPrint('[PythonProcessor] Auto-Fix error: $e');
-      return null;
     }
+    return 'Processing failed with exit code $exitCode';
   }
 
-  /// AI Auto-Fix with user prompt: Re-analyze with custom instructions
-  /// Returns adjusted settings or null if failed
+  /// Generate a unique output directory
+  Future<String> _generateOutputDir() async {
+    final tempDir = await getTemporaryDirectory();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final random = math.Random().nextInt(10000);
+    return p.join(tempDir.path, 'virtual_design_output_${timestamp}_$random');
+  }
+
+  /// Cancel all active processes
+  void cancelAll() {
+    for (final process in _activeProcesses) {
+      process.kill();
+    }
+    _activeProcesses.clear();
+  }
+
+  /// Run AI Auto-Fix with prompt for user-guided adjustments
   Future<Map<String, dynamic>?> runAutoFixWithPrompt({
     required String originalImage,
     required String previewImage,
@@ -481,77 +267,105 @@ class PythonProcessor {
     int iteration = 1,
     Map<String, dynamic>? prevParams,
   }) async {
-    if (!config.isInitialized || !config.isPythonAvailable) {
-      debugPrint(
-          '[PythonProcessor] Auto-Fix with prompt failed: Python not available');
-      return null;
+    // Extract only actual parameters from prevParams (not the full result object)
+    Map<String, dynamic>? cleanPrevParams;
+    if (prevParams != null) {
+      // If prevParams contains 'adjusted_params', extract only those values
+      if (prevParams.containsKey('adjusted_params') &&
+          prevParams['adjusted_params'] is Map) {
+        final adjusted = prevParams['adjusted_params'] as Map<String, dynamic>;
+        cleanPrevParams = {
+          'smoothing_factor': adjusted['smoothing_factor'],
+          'corner_threshold': adjusted['corner_threshold'],
+          'simplification_epsilon': adjusted['simplification_epsilon'],
+          'use_halftone': adjusted['use_halftone'],
+          'lpi': adjusted['lpi'],
+        }..removeWhere((key, value) => value == null);
+      } else {
+        // Already clean params
+        cleanPrevParams = prevParams;
+      }
     }
 
     final scriptsDir = await config.getPythonScriptsDir();
-    final pythonCommand = await config.resolvePythonCommand();
+    final autoFixScript = p.join(scriptsDir, 'auto_fix.py');
 
-    final args = [
-      'auto_fix.py',
+    // Build arguments
+    final args = <String>[
       '--original',
-      _safePath(originalImage),
+      originalImage,
       '--preview',
-      _safePath(previewImage),
+      previewImage,
       '--prompt',
       prompt,
       '--iteration',
       iteration.toString(),
-      if (prevParams != null) ...['--prev-params', jsonEncode(prevParams)],
     ];
 
+    if (cleanPrevParams != null && cleanPrevParams.isNotEmpty) {
+      args.addAll(['--prev-params', jsonEncode(cleanPrevParams)]);
+    }
+
     try {
+      final pythonCmd = await config.resolvePythonCommand();
       final process = await Process.start(
-        pythonCommand,
-        args,
+        pythonCmd,
+        [autoFixScript, ...args],
         workingDirectory: scriptsDir,
-        environment: {
-          ...Platform.environment,
-          'PYTHONUNBUFFERED': '1',
-        },
+        environment: {'PYTHONPATH': scriptsDir},
       );
 
       final stdoutBuffer = StringBuffer();
       final stderrBuffer = StringBuffer();
 
-      // 🔥 FIX: Properly await both stdout and stderr streams before checking exit code
-      final stdoutFuture =
-          process.stdout.transform(utf8.decoder).forEach(stdoutBuffer.write);
-      final stderrFuture =
-          process.stderr.transform(utf8.decoder).forEach(stderrBuffer.write);
+      await process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) => stdoutBuffer.writeln(line))
+          .asFuture();
 
-      // Wait for exit code
-      final exitCode = await process.exitCode.timeout(
-        const Duration(seconds: 120),
-        onTimeout: () {
-          process.kill();
-          return -99;
-        },
-      );
+      await process.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) => stderrBuffer.writeln(line))
+          .asFuture();
 
-      // 🔥 FIX: Wait for streams to complete
-      await Future.wait([stdoutFuture, stderrFuture]);
+      final exitCode = await process.exitCode;
 
       if (exitCode == 0) {
-        final output = stdoutBuffer.toString();
-        debugPrint('[PythonProcessor] Auto-Fix stdout: $output');
-        final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(output);
-        if (jsonMatch != null) {
-          final json = jsonDecode(jsonMatch.group(0)!);
-          debugPrint('[PythonProcessor] Auto-Fix with prompt result: $json');
-          return json as Map<String, dynamic>;
+        final output = stdoutBuffer.toString().trim();
+        // Find the last JSON line
+        final lines =
+            output.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        for (final line in lines.reversed) {
+          try {
+            final result = jsonDecode(line.trim()) as Map<String, dynamic>;
+            return result;
+          } catch (_) {
+            continue;
+          }
         }
       }
 
-      debugPrint(
-          '[PythonProcessor] Auto-Fix with prompt failed (exit=$exitCode): ${stderrBuffer.toString()}');
       return null;
     } catch (e) {
-      debugPrint('[PythonProcessor] Auto-Fix with prompt error: $e');
       return null;
     }
+  }
+
+  /// Run standard AI Auto-Fix without prompt
+  Future<Map<String, dynamic>?> runAutoFix({
+    required String originalImage,
+    required String previewImage,
+    int iteration = 1,
+    Map<String, dynamic>? prevParams,
+  }) async {
+    return runAutoFixWithPrompt(
+      originalImage: originalImage,
+      previewImage: previewImage,
+      prompt: '',
+      iteration: iteration,
+      prevParams: prevParams,
+    );
   }
 }

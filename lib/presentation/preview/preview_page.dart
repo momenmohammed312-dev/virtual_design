@@ -85,53 +85,59 @@ class PreviewPage extends StatelessWidget {
               children: [
                 _buildTopBar(),
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(30),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildProgressSteps(),
-                        const SizedBox(height: 30),
-                        const Text(
-                          'Print Preview',
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'Review your color separations and films before exporting.',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Color(0xFF6B7280),
-                          ),
-                        ),
-                        const SizedBox(height: 30),
-                        Expanded(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Main Preview Area
-                              Expanded(
-                                flex: 7,
-                                child: _buildPreviewArea(controller),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isNarrow = constraints.maxWidth < 1200;
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.all(30),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildProgressSteps(),
+                            const SizedBox(height: 30),
+                            const Text(
+                              'Print Preview',
+                              style: TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black,
                               ),
-                              const SizedBox(width: 20),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Review your color separations and films before exporting.',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Color(0xFF6B7280),
+                              ),
+                            ),
+                            const SizedBox(height: 30),
+                            SizedBox(
+                              height: 500,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Main Preview Area
+                                  Expanded(
+                                    flex: 7,
+                                    child: _buildPreviewArea(controller),
+                                  ),
+                                  const SizedBox(width: 20),
 
-                              // Sidebar with Layers Panel only (Bug 1: Removed Fine-Tune tab)
-                              SizedBox(
-                                width: 320,
-                                child: _buildRightPanel(controller),
+                                  // Sidebar with Layers Panel only (Bug 1: Removed Fine-Tune tab)
+                                  SizedBox(
+                                    width: 260,
+                                    child: _buildRightPanel(controller),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(height: 20),
+                            _buildBottomActions(controller, isNarrow),
+                          ],
                         ),
-                        const SizedBox(height: 20),
-                        _buildBottomActions(controller),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -251,8 +257,8 @@ class PreviewPage extends StatelessWidget {
                           children: [
                             Container(
                               constraints: const BoxConstraints(
-                                maxWidth: 500,
-                                maxHeight: 500,
+                                maxWidth: 600,
+                                maxHeight: 450,
                               ),
                               decoration: BoxDecoration(
                                 color: Colors
@@ -647,7 +653,7 @@ class PreviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildBottomActions(PreviewController controller) {
+  Widget _buildBottomActions(PreviewController controller, bool isNarrow) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -655,65 +661,123 @@ class PreviewPage extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: Row(
-        children: [
-          OutlinedButton.icon(
-            onPressed: controller.goBackToSetup,
-            icon: const Icon(Icons.arrow_back, size: 18),
-            label: const Text('Back to Setup'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.grey,
-              side: const BorderSide(color: Color(0xFFE5E7EB)),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+      child: isNarrow
+          ? Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: controller.goBackToSetup,
+                  icon: const Icon(Icons.arrow_back, size: 18),
+                  label: const Text('Back'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey,
+                    side: const BorderSide(color: Color(0xFFE5E7EB)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 15, vertical: 12),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => _showAIFixDialog(controller),
+                  icon: const Icon(Icons.auto_fix_high, size: 18),
+                  label: const Text('AI Fix'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.deepPurple,
+                    side: const BorderSide(color: Colors.deepPurple),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 15, vertical: 12),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: controller.exportAll,
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Save PDF'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: primaryBlue,
+                    side: const BorderSide(color: primaryBlue),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 15, vertical: 12),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: controller.sendToPrint,
+                  icon: const Icon(Icons.print, size: 18),
+                  label: const Text('Print'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 15, vertical: 12),
+                  ),
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: controller.goBackToSetup,
+                  icon: const Icon(Icons.arrow_back, size: 18),
+                  label: const Text('Back to Setup'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey,
+                    side: const BorderSide(color: Color(0xFFE5E7EB)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 15),
+                  ),
+                ),
+                const Spacer(),
+                OutlinedButton.icon(
+                  onPressed: () => _showAIFixDialog(controller),
+                  icon: const Icon(Icons.auto_fix_high, size: 18),
+                  label: const Text('AI Fix'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.deepPurple,
+                    side: const BorderSide(color: Colors.deepPurple),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 15),
+                  ),
+                ),
+                const SizedBox(width: 15),
+                OutlinedButton.icon(
+                  onPressed: controller.exportAll,
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Save Combined PDF'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: primaryBlue,
+                    side: const BorderSide(color: primaryBlue),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 15),
+                  ),
+                ),
+                const SizedBox(width: 15),
+                ElevatedButton.icon(
+                  onPressed: controller.sendToPrint,
+                  icon: const Icon(Icons.print, size: 18),
+                  label: const Text('Send to Print'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryBlue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 30, vertical: 15),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const Spacer(),
-          OutlinedButton.icon(
-            onPressed: () => _showAIFixDialog(controller),
-            icon: const Icon(Icons.auto_fix_high, size: 18),
-            label: const Text('AI Fix'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.deepPurple,
-              side: const BorderSide(color: Colors.deepPurple),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-            ),
-          ),
-          const SizedBox(width: 15),
-          OutlinedButton.icon(
-            onPressed: controller.exportAll,
-            icon: const Icon(Icons.download, size: 18),
-            label: const Text('Save Combined PDF'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: primaryBlue,
-              side: const BorderSide(color: primaryBlue),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-            ),
-          ),
-          const SizedBox(width: 15),
-          ElevatedButton.icon(
-            onPressed: controller.sendToPrint,
-            icon: const Icon(Icons.print, size: 18),
-            label: const Text('Send to Print'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryBlue,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
   Widget _buildProgressSteps() {
-    return Row(
-      children: [
-        _buildStep(1, 'Upload File', true, false),
-        _buildProgressLine(true),
-        _buildStep(2, 'System Setup', true, false),
-        _buildProgressLine(true),
-        _buildStep(3, 'Print Preview', false, true),
-      ],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildStep(1, 'Upload File', true, false),
+          _buildProgressLine(true),
+          _buildStep(2, 'System Setup', true, false),
+          _buildProgressLine(true),
+          _buildStep(3, 'Print Preview', false, true),
+        ],
+      ),
     );
   }
 
@@ -758,12 +822,11 @@ class PreviewPage extends StatelessWidget {
   }
 
   Widget _buildProgressLine(bool isComplete) {
-    return Expanded(
-      child: Container(
-        height: 2,
-        margin: const EdgeInsets.only(bottom: 30),
-        color: isComplete ? Colors.green : const Color(0xFFE5E7EB),
-      ),
+    return Container(
+      width: 100,
+      height: 2,
+      margin: const EdgeInsets.only(bottom: 30),
+      color: isComplete ? Colors.green : const Color(0xFFE5E7EB),
     );
   }
 
@@ -801,7 +864,7 @@ class PreviewPage extends StatelessWidget {
             child: SizedBox(
               height: 35,
               width: 35,
-              child: Icon(Icons.print_outlined, color: Colors.white, size: 20),
+              child: Icon(Icons.print_rounded, color: Colors.white, size: 20),
             ),
           ),
           SizedBox(width: 10),
@@ -810,7 +873,7 @@ class PreviewPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Virtua Designer',
+                'Virtual Designer',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ],
@@ -823,23 +886,40 @@ class PreviewPage extends StatelessWidget {
   Widget _buildProfile() {
     return Padding(
       padding: const EdgeInsets.all(15),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: const Color(0xFFFFE4E1),
-            child: const Text(
-              'JD',
-              style: TextStyle(
-                color: Color(0xFFFF6B6B),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text('MO2 CAPITAL',
+                style: TextStyle(
+                    color: Colors.grey.shade400,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.5)),
           ),
-          const SizedBox(width: 10),
-          const Text(
-            'Jane Doe',
-            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: const Color(0xFFE3F2FD),
+                child: const Icon(Icons.admin_panel_settings,
+                    color: Color(0xFF1564A5), size: 22),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Admin',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 14)),
+                    Text('admin@virtualdesigner.app',
+                        style: TextStyle(fontSize: 11, color: Colors.grey)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -891,9 +971,12 @@ class PreviewPage extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Text(
-            'Print Preview',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          const Expanded(
+            child: Text(
+              'Print Preview',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
           ),
           const Spacer(),
           IconButton(
@@ -1027,7 +1110,6 @@ class PreviewPage extends StatelessWidget {
       ),
     );
   }
-
 
   Widget _buildTuningSlider({
     required String label,

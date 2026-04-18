@@ -3,14 +3,14 @@
 import 'dart:io';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
-import '../../domain/repositories/project_repository.dart';
-import '../../domain/entities/print_project.dart';
+import 'package:virtual_design/domain/repositories/project_repository.dart';
+import 'package:virtual_design/domain/entities/print_project.dart';
 
 class DashboardController extends GetxController {
   final ProjectRepository _projectRepository;
 
   DashboardController({required ProjectRepository projectRepository})
-    : _projectRepository = projectRepository;
+      : _projectRepository = projectRepository;
 
   // ── State ──────────────────────────────────────────────
   final RxInt totalProjects = 0.obs;
@@ -39,7 +39,9 @@ class DashboardController extends GetxController {
       totalProjects.value = projects.length;
 
       // Count completed projects as "films"
-      int films = projects.where((p) => p.status.toString() == 'ProjectStatus.completed').length;
+      int films = projects
+          .where((p) => p.status.toString() == 'ProjectStatus.completed')
+          .length;
       totalFilms.value = films;
 
       // Get recent projects (last 5)
@@ -94,7 +96,9 @@ class DashboardController extends GetxController {
   // ═══════════════════════════════════════════════════════
 
   int get pendingCount {
-    return recentProjects.where((p) => p.status.toString() != 'ProjectStatus.completed').length;
+    return recentProjects
+        .where((p) => p.status.toString() != 'ProjectStatus.completed')
+        .length;
   }
 
   // ═══════════════════════════════════════════════════════

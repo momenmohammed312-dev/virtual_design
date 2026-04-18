@@ -6,8 +6,7 @@ part of 'processing_settings_model.dart';
 // TypeAdapterGenerator
 // **************************************************************************
 
-class ProcessingSettingsModelAdapter
-    extends TypeAdapter<ProcessingSettingsModel> {
+class ProcessingSettingsModelAdapter extends TypeAdapter<ProcessingSettingsModel> {
   @override
   final int typeId = 0;
 

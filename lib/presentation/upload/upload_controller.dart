@@ -8,8 +8,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import '../../core/permissions/permission_service.dart';
-import '../../core/utils/image_processor.dart';
+import 'package:virtual_design/core/permissions/permission_service.dart';
+import 'package:virtual_design/core/utils/image_processor.dart';
 
 class UploadController extends GetxController {
   final PermissionService permissionService = Get.find<PermissionService>();
@@ -19,6 +19,23 @@ class UploadController extends GetxController {
   final RxBool isUrlDownloading = false.obs;
   final RxDouble urlDownloadProgress = 0.0.obs;
   final RxString urlDownloadStatus = ''.obs;
+
+  @override
+  void onInit() {
+    super.onInit();
+    // Handle importUrl from arguments (when coming from Dashboard Import URL)
+    final args = Get.arguments;
+    if (args is Map && args.containsKey('importUrl')) {
+      final url = args['importUrl'] as String?;
+      if (url != null && url.isNotEmpty) {
+        urlInput.value = url;
+        // Auto-import after a short delay to let the UI settle
+        Future.delayed(const Duration(milliseconds: 300), () {
+          importFromUrl(url);
+        });
+      }
+    }
+  }
 
   Future<void> pickImage() async {
     // Check permissions first
@@ -143,8 +160,16 @@ class UploadController extends GetxController {
         // Try from URL path first
         final seg = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : '';
         final inferred = p.extension(seg).toLowerCase();
-        const validExts = ['.png', '.jpg', '.jpeg', '.webp', '.bmp',
-                           '.tiff', '.tif', '.gif'];
+        const validExts = [
+          '.png',
+          '.jpg',
+          '.jpeg',
+          '.webp',
+          '.bmp',
+          '.tiff',
+          '.tif',
+          '.gif'
+        ];
         if (validExts.contains(inferred)) {
           ext = inferred;
         } else {

@@ -15,6 +15,19 @@ class _UploadPageState extends State<UploadPage> {
   final TextEditingController _urlController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // Check if importUrl was passed and set it in the text field
+    final args = Get.arguments;
+    if (args is Map && args.containsKey('importUrl')) {
+      final url = args['importUrl'] as String?;
+      if (url != null && url.isNotEmpty) {
+        _urlController.text = url;
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _urlController.dispose();
     super.dispose();
