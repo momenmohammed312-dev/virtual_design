@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
+import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -104,6 +106,9 @@ class PythonProcessor {
       (line) {
         stdoutBuffer.writeln(line);
         _parseProgress(line, onProgress);
+        // LOG: Show all Python stdout in Flutter logs
+        Get.log('[Python] $line');
+        debugPrint('[Python] $line');
       },
       onDone: stdoutCompleter.complete,
       onError: (_) => stdoutCompleter.complete(),
@@ -115,6 +120,9 @@ class PythonProcessor {
         .listen(
       (line) {
         stderrBuffer.writeln(line);
+        // LOG: Show Python stderr in Flutter logs for debugging
+        Get.log('[Python:stderr] $line');
+        debugPrint('[Python:stderr] $line');
       },
       onDone: stderrCompleter.complete,
       onError: (_) => stderrCompleter.complete(),
@@ -151,7 +159,15 @@ class PythonProcessor {
     }
 
     // Process failed - parse and return the actual error
-    final errorMessage = _parseError(exitCode, stderrBuffer.toString());
+    final fullStderr = stderrBuffer.toString();
+    final errorMessage = _parseError(exitCode, fullStderr);
+
+    // Log full stderr for debugging
+    print('❌ PYTHON PROCESS FAILED (exit code $exitCode)');
+    print('Full stderr:\n$fullStderr');
+    Get.log('❌ PYTHON PROCESS FAILED (exit code $exitCode)');
+    Get.log('Full stderr:\n$fullStderr');
+
     return ProcessResult.failure(errorMessage: errorMessage);
   }
 
@@ -227,12 +243,24 @@ class PythonProcessor {
       final lines =
           stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
       if (lines.isNotEmpty) {
+        // Find Traceback index
+        int tracebackIndex = -1;
+        for (int i = 0; i < lines.length; i++) {
+          if (lines[i].contains('Traceback')) {
+            tracebackIndex = i;
+            break;
+          }
+        }
+
+        // If we found Traceback, capture all lines from there to the end
+        if (tracebackIndex >= 0) {
+          final tracebackLines = lines.skip(tracebackIndex).take(15).toList();
+          return tracebackLines.join('\n');
+        }
+
         // Prefer lines with "Error:" or "Exception:"
         final errorLines = lines
-            .where((l) =>
-                l.contains('Error:') ||
-                l.contains('Exception:') ||
-                l.contains('Traceback'))
+            .where((l) => l.contains('Error:') || l.contains('Exception:'))
             .toList();
         if (errorLines.isNotEmpty) {
           return errorLines.first.trim();

@@ -386,49 +386,96 @@ def export_vector_pdf(
     
     # 🎯 NEW: Physical Sizing & Scaling Engine
     # Standardize on 'mm' as the internal unit of truth
-    
+
     # 1. Determine Source Size in MM
     # We use source_dpi to understand how many mm the pixels represent
     source_dpi = getattr(args, 'source_dpi', dpi) or dpi
-    
+
     first_mask = masks[0] if masks else None
     if first_mask is not None:
         first_h, first_w = first_mask.shape[:2]
-        src_w_mm = first_w / source_dpi * 25.4
-        src_h_mm = first_h / source_dpi * 25.4
-        logger.info(f"[VectorExporter] Source Artwork: {first_w}x{first_h}px @ {source_dpi} DPI = {src_w_mm:.1f}mm x {src_h_mm:.1f}mm")
-        
+        # FIX: Use original dimensions if image was downscaled during separation
+        original_dims = getattr(args, 'original_dimensions', None)
+        if original_dims:
+            orig_w = original_dims.get('width', first_w)
+            orig_h = original_dims.get('height', first_h)
+            # Calculate scale ratio between original and current mask size
+            scale_ratio_w = orig_w / first_w if first_w > 0 else 1.0
+            scale_ratio_h = orig_h / first_h if first_h > 0 else 1.0
+            # Adjust source_dpi to account for the scaling
+            effective_dpi = source_dpi * ((scale_ratio_w + scale_ratio_h) / 2)
+            src_w_mm = orig_w / effective_dpi * 25.4
+            src_h_mm = orig_h / effective_dpi * 25.4
+            logger.info(f"[VectorExporter] Source Artwork (ORIGINAL): {orig_w}x{orig_h}px @ {effective_dpi:.0f} DPI = {src_w_mm:.1f}mm x {src_h_mm:.1f}mm")
+            logger.info(f"[VectorExporter] Mask size: {first_w}x{first_h}, Scale ratio: {scale_ratio_w:.2f}x")
+        else:
+            src_w_mm = first_w / source_dpi * 25.4
+            src_h_mm = first_h / source_dpi * 25.4
+            logger.info(f"[VectorExporter] Source Artwork: {first_w}x{first_h}px @ {source_dpi} DPI = {src_w_mm:.1f}mm x {src_h_mm:.1f}mm")
+
         # 2. Identify Scaling Mode
         scale_mode = getattr(args, 'scale_mode', 'fit_to_page')
         target_width_mm = getattr(args, 'target_width_mm', 0)
         
-        # 3. Compute Final Scale Factor (relative to source mm)
+        # Calculate printable area in mm
+        printable_w_mm = (page_w - 2 * margin_pt) * 25.4 / 72.0
+        printable_h_mm = (page_h - 2 * margin_pt) * 25.4 / 72.0
+        paper_w_mm = page_w * 25.4 / 72.0
+        paper_h_mm = page_h * 25.4 / 72.0
+
+        # 3. Compute Final Scale Factor based on mode
         if target_width_mm > 0:
+            # User specified exact target width
             scale_factor = target_width_mm / src_w_mm
+            logger.info(f"[VectorExporter] Scale mode: specific_width ({target_width_mm}mm target)")
+            
         elif scale_mode == 'actual_size':
             scale_factor = 1.0
+            logger.info(f"[VectorExporter] Scale mode: actual_size (no scaling)")
+            
         elif scale_mode == 'custom_scale':
             scale_factor = getattr(args, 'custom_scale_percent', 100.0) / 100.0
-        else: # fit_to_page
-            printable_w_mm = (page_w - 2 * margin_pt) * 25.4 / 72.0
-            printable_h_mm = (page_h - 2 * margin_pt) * 25.4 / 72.0
-            scale_factor = min(printable_w_mm / src_w_mm, printable_h_mm / src_h_mm)
+            logger.info(f"[VectorExporter] Scale mode: custom_scale ({scale_factor:.2f}x)")
             
-            # Capping: Don't blow up tiny logos unless explicit
-            if 'scale_mode' not in getattr(args, 'overrides', []):
-                if scale_factor > 2.0: scale_factor = 2.0
+        elif scale_mode == 'fit_to_paper_width':
+            # Scale to fit full paper width (with margins)
+            scale_factor = printable_w_mm / src_w_mm
+            logger.info(f"[VectorExporter] Scale mode: fit_to_paper_width (paper={paper_w_mm:.1f}mm, printable={printable_w_mm:.1f}mm)")
+            
+        elif scale_mode == 'fit_to_paper_height':
+            # Scale to fit full paper height (with margins)
+            scale_factor = printable_h_mm / src_h_mm
+            logger.info(f"[VectorExporter] Scale mode: fit_to_paper_height (paper={paper_h_mm:.1f}mm, printable={printable_h_mm:.1f}mm)")
+            
+        elif scale_mode == 'fill_paper':
+            # Scale to completely fill paper (may crop if aspect ratio differs)
+            scale_factor = max(printable_w_mm / src_w_mm, printable_h_mm / src_h_mm)
+            logger.info(f"[VectorExporter] Scale mode: fill_paper (aggressive upscale)")
+            
+        else:  # fit_to_page (default)
+            # Fit within printable area while preserving aspect ratio
+            scale_factor = min(printable_w_mm / src_w_mm, printable_h_mm / src_h_mm)
+            logger.info(f"[VectorExporter] Scale mode: fit_to_page (conservative fit)")
+            
+            # Only cap at 2.0x for fit_to_page auto-mode, not for paper-based modes
+            if 'scale_mode' not in getattr(args, 'overrides', []) and scale_mode == 'fit_to_page':
+                if scale_factor > 2.0:
+                    logger.info(f"[VectorExporter] Capping scale from {scale_factor:.2f}x to 2.0x (fit_to_page default)")
+                    scale_factor = 2.0
 
         final_w_mm = src_w_mm * scale_factor
         final_h_mm = src_h_mm * scale_factor
         logger.info(f"[VectorExporter] Final Print Size: {final_w_mm:.1f}mm x {final_h_mm:.1f}mm (Scale: {scale_factor:.2f}x)")
+        logger.info(f"[VectorExporter] Paper Size: {paper_w_mm:.1f}mm x {paper_h_mm:.1f}mm, Printable: {printable_w_mm:.1f}mm x {printable_h_mm:.1f}mm")
     else:
         scale_factor = 1.0
 
-    def px_to_pt(px: float) -> float:
-        return px / source_dpi * 72.0
-    
     def px_to_mm(px: float) -> float:
         return px / source_dpi * 25.4
+    
+    def px_to_pt(px: float) -> float:
+        """Convert pixels to points (1 inch = 72 points = source_dpi pixels)"""
+        return px * 72.0 / source_dpi
 
     if (corner_threshold or 0.0) > 150.0:
         logger.info(f"[VectorExporter] Applying Hard-Corner Logic (Threshold: {corner_threshold:.1f})")

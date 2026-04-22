@@ -66,10 +66,20 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
       'page-width': settings.paperWidthCm * 10, // Python: --page-width (mm)
       'page-height': settings.paperHeightCm * 10, // Python: --page-height (mm)
       'page-size': 'CUSTOM', // Python: --page-size (always custom for now)
-
-      // Halftone flag
-      'halftone': settings.forceHalftone, // Python: --halftone
+      
+      // Mobile AI Hints
+      'image-class-hint': settings.imageClassHint,
+      'ai-confidence': settings.aiConfidence,
+      'pre-mask': settings.preMaskPath,
     };
+
+    // ⚠️ HALFTONE MODE ENFORCEMENT: User's UI choice must be explicit
+    // Python needs to know if user explicitly chose halftone OR solid
+    if (settings.printFinish == PrintFinish.halftone ||
+        settings.forceHalftone) {
+      // User explicitly wants halftone
+      settingsMap['halftone'] = true;
+    }
 
     // Add halftone settings if present
     if (settings.halftoneSettings != null) {
@@ -77,13 +87,20 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
       settingsMap['dot-shape'] =
           settings.halftoneSettings!.dotShape; // Python: --dot-shape
       // Python doesn't use angle directly, it's handled in halftone generation
+
+      // Per-layer dot sizes
+      if (settings.dotSizeMultipliers != null && settings.dotSizeMultipliers!.isNotEmpty) {
+        settingsMap['dot-sizes'] = settings.dotSizeMultipliers!
+            .map((v) => v.toStringAsFixed(2))
+            .join(',');
+      } else {
+        settingsMap['dot-size'] = settings.halftoneSettings?.dotSizeMultiplier ?? 1.0;
+      }
     }
 
     // Filter out null values and false booleans (for flags)
-    // NOTE: Keep halftone flag even if false to distinguish intent
     settingsMap.removeWhere((key, value) {
       if (value == null) return true;
-      // Keep halftone flag always (both true and false have meaning)
       if (key == 'halftone') return false;
       if (value is bool && !value) return true; // Remove false flags
       if (value is String && value.isEmpty) return true;
@@ -132,6 +149,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
                 'lpi': settings.halftoneSettings!.lpi,
                 'dotShape': settings.halftoneSettings!.dotShape,
                 'angle': settings.halftoneSettings!.angle,
+                'dotSizeMultiplier': settings.halftoneSettings!.dotSizeMultiplier,
               }
             : null,
         // Advanced tuning (were missing before — caused silent reset on next launch)
@@ -192,6 +210,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
                 lpi: (halftoneData['lpi'] as num).toInt(),
                 dotShape: halftoneData['dotShape'] as String,
                 angle: (halftoneData['angle'] as num?)?.toDouble() ?? 45.0,
+                dotSizeMultiplier: (halftoneData['dotSizeMultiplier'] as num?)?.toDouble() ?? 1.0,
               )
             : null,
         // Advanced tuning

@@ -43,6 +43,8 @@ class RasterHalftoneConfig:
     # FIX A-04: Explicit source DPI for scaling decisions.
     # None = unknown (do NOT auto-upsample); set to actual source DPI when known.
     source_dpi: Optional[int] = None
+    # Greyscale output for preview (dots are greyscale 0-255, not binary)
+    greyscale_output: bool = False  # True = greyscale dots, False = binary (for films)
 
 
 # ─── Engine ──────────────────────────────────────────────────────────────────
@@ -111,9 +113,17 @@ class RasterHalftoneEngine:
             # Standard processing for smaller images
             bitmap = self._generate_standard(gray_g, cfg)
 
-        coverage = 100 * np.mean(bitmap == 0)
+        # Calculate coverage (ink percentage)
+        if cfg.greyscale_output:
+            # For greyscale: estimate coverage from pixel values (255 = white, 0 = black)
+            coverage = 100 * np.mean((255 - bitmap) / 255.0)
+        else:
+            # For binary: count black pixels
+            coverage = 100 * np.mean(bitmap == 0)
+        
+        output_type = "GREYSCALE" if cfg.greyscale_output else "BINARY"
         logger.info(
-            f"[RasterHalftone] lpi={cfg.lpi} dpi={cfg.dpi} "
+            f"[RasterHalftone] {output_type} lpi={cfg.lpi} dpi={cfg.dpi} "
             f"angle={cfg.angle}° fn={cfg.dot_fn} "
             f"coverage={coverage:.1f}%"
         )
@@ -125,7 +135,8 @@ class RasterHalftoneEngine:
                 lpi=cfg.lpi, dpi=cfg.dpi, angle=cfg.angle, dot_fn=cfg.dot_fn,
                 gamma=max(0.8, cfg.gamma - 0.4), oversample=cfg.oversample,
                 threshold=cfg.threshold,
-                source_dpi=cfg.source_dpi
+                source_dpi=cfg.source_dpi,
+                greyscale_output=cfg.greyscale_output
             )
             return RasterHalftoneEngine(cfg_retry).generate(grayscale)
 
@@ -135,10 +146,10 @@ class RasterHalftoneEngine:
 
     def _generate_standard(self, gray_g: np.ndarray, cfg: RasterHalftoneConfig) -> np.ndarray:
         """Standard processing for smaller images (fits in memory)."""
-        # Build threshold matrix
+        # Build threshold matrix (kept for API compatibility)
         screen_matrix = self._build_screen_matrix(gray_g.shape, cfg.dpi, cfg.lpi,
                                                    cfg.angle, cfg.dot_fn)
-        return self._apply_threshold(gray_g, screen_matrix)
+        return self._apply_threshold(gray_g, screen_matrix, cfg.greyscale_output, cfg)
 
     def _generate_chunked(self, gray_g: np.ndarray, cfg: RasterHalftoneConfig) -> np.ndarray:
         """Chunked processing for large images to save memory."""
@@ -162,7 +173,7 @@ class RasterHalftoneEngine:
             chunk = gray_g[y_chunk_start:y_chunk_end, :]
             screen_matrix = self._build_screen_matrix(chunk.shape, cfg.dpi, cfg.lpi,
                                                        cfg.angle, cfg.dot_fn)
-            chunk_bitmap = self._apply_threshold(chunk, screen_matrix)
+            chunk_bitmap = self._apply_threshold(chunk, screen_matrix, cfg.greyscale_output, cfg)
 
             # Copy back (excluding overlap)
             copy_start = overlap if y_start > 0 else 0
@@ -171,26 +182,143 @@ class RasterHalftoneEngine:
 
         return bitmap
 
-    def _apply_threshold(self, gray_g: np.ndarray, screen_matrix: np.ndarray) -> np.ndarray:
-        """Apply halftone thresholding to grayscale image."""
-        # Intensity clamping: Task A-14 Fix (Prevent 'shredding' in typography)
+    def _apply_threshold(self, gray_g: np.ndarray, screen_matrix: np.ndarray, greyscale_output: bool = False, cfg: 'RasterHalftoneConfig' = None) -> np.ndarray:
+        """Apply AM clustered dot halftone screening.
+        
+        This implements proper AM screening where dots are placed on a regular grid
+        and grow from the center based on local intensity (like the reference image).
+        
+        Args:
+            gray_g: Grayscale image (uint8)
+            screen_matrix: Threshold matrix (kept for API compatibility)
+            greyscale_output: If True, return greyscale dots (0-255) for preview.
+                            If False, return binary (0/255) for films.
+            cfg: Config object with lpi, dpi, angle for proper grid calculation
+        """
+        h, w = gray_g.shape[:2]
+        
+        # Intensity clamping
         gray_f = gray_g.astype(np.float32) / 255.0
-
-        # PRO-PRESS CLAMP: If area is nearly solid black (ink > 88%), force to 100% solid
-        gray_f[gray_f < 0.12] = 0.0
-
-        # Highlight Clamp: Ignore stray dots in very light areas
-        gray_f[gray_f > 0.97] = 1.0
-
-        # Threshold: ink where pixel < screen matrix threshold
-        ink_float = 1.0 - gray_f
-        screen_f = screen_matrix.astype(np.float32) / 255.0
-
-        # Invert so ink=0 (black), background=255 (white/transparent)
-        bitmap = (ink_float >= screen_f).astype(np.uint8) * 255
-        bitmap = cv2.bitwise_not(bitmap)  # 255->0 (ink), 0->255 (bg)
-
-        return bitmap
+        gray_f[gray_f < 0.12] = 0.0  # Force solid black
+        gray_f[gray_f > 0.97] = 1.0  # Force white
+        
+        # Get screening parameters
+        if cfg is None:
+            cfg = self.cfg
+        
+        lpi = cfg.lpi
+        dpi = cfg.dpi
+        angle = cfg.angle
+        
+        # Calculate dot spacing (pixels per halftone cell)
+        dot_spacing = dpi / lpi
+        
+        # Create output image (white background)
+        if greyscale_output:
+            result = np.full((h, w), 255, dtype=np.uint8)
+        else:
+            result = np.full((h, w), 255, dtype=np.uint8)
+        
+        # Calculate rotation
+        angle_rad = math.radians(angle)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        
+        # Generate grid of dot centers
+        # Determine grid bounds (cover entire image plus margin for rotation)
+        diag = math.sqrt(w*w + h*h)
+        max_dots = int(math.ceil(diag / dot_spacing)) + 2
+        
+        center_x, center_y = w / 2.0, h / 2.0
+        
+        for gy in range(-max_dots, max_dots + 1):
+            for gx in range(-max_dots, max_dots + 1):
+                # Calculate dot center position (rotated grid)
+                # Base position on unrotated grid
+                bx = gx * dot_spacing
+                by = gy * dot_spacing
+                
+                # Rotate
+                dx = bx * cos_a - by * sin_a
+                dy = bx * sin_a + by * cos_a
+                
+                # Translate to image center
+                cx = int(center_x + dx)
+                cy = int(center_y + dy)
+                
+                # Skip if outside image bounds
+                if cx < 0 or cx >= w or cy < 0 or cy >= h:
+                    continue
+                
+                # Sample intensity at dot center
+                intensity = gray_f[cy, cx]
+                ink = 1.0 - intensity  # Ink amount (0-1)
+                
+                # Apply gamma correction to ink
+                if cfg.gamma != 1.0:
+                    ink = math.pow(ink, 1.0 / cfg.gamma)
+                
+                # Calculate dot radius based on ink amount
+                # At 0% ink: radius = 0 (no dot)
+                # At 100% ink: radius = dot_spacing/2 (full cell)
+                max_radius = dot_spacing * 0.5
+                radius = max_radius * math.sqrt(ink)  # Square root for better tone curve
+                
+                if radius < 0.5:
+                    continue  # Too small to draw
+                
+                # Draw the dot
+                if greyscale_output:
+                    # GREYSCALE: Anti-aliased dot with intensity based on size
+                    dot_intensity = int(255 * (1.0 - ink))  # Darker for more ink
+                    self._draw_aa_dot(result, cx, cy, radius, dot_intensity)
+                else:
+                    # BINARY: Hard dot (black)
+                    self._draw_hard_dot(result, cx, cy, radius)
+        
+        return result
+    
+    def _draw_hard_dot(self, img: np.ndarray, cx: int, cy: int, radius: float):
+        """Draw a hard (binary) dot."""
+        h, w = img.shape
+        r_int = int(radius + 1)
+        
+        # Clip to image bounds
+        x1 = max(0, cx - r_int)
+        y1 = max(0, cy - r_int)
+        x2 = min(w, cx + r_int + 1)
+        y2 = min(h, cy + r_int + 1)
+        
+        if x1 >= x2 or y1 >= y2:
+            return
+        
+        # Draw filled circle
+        cv2.circle(img, (cx, cy), int(radius), 0, -1)
+    
+    def _draw_aa_dot(self, img: np.ndarray, cx: int, cy: int, radius: float, intensity: int):
+        """Draw an anti-aliased (greyscale) dot."""
+        h, w = img.shape
+        r_int = int(radius + 2)
+        
+        # Clip to image bounds
+        x1 = max(0, cx - r_int)
+        y1 = max(0, cy - r_int)
+        x2 = min(w, cx + r_int + 1)
+        y2 = min(h, cy + r_int + 1)
+        
+        if x1 >= x2 or y1 >= y2:
+            return
+        
+        # Create temporary mask for this dot
+        temp = np.full((y2 - y1, x2 - x1), 255, dtype=np.uint8)
+        local_cx = cx - x1
+        local_cy = cy - y1
+        
+        # Draw anti-aliased circle
+        cv2.circle(temp, (local_cx, local_cy), int(radius), intensity, -1, cv2.LINE_AA)
+        
+        # Blend with existing content (keep darker value)
+        img[y1:y2, x1:x2] = np.minimum(img[y1:y2, x1:x2], temp)
 
     # ─── Screen Matrix ────────────────────────────────────────────────────────
 

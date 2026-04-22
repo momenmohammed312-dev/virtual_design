@@ -72,6 +72,9 @@ class PreviewController extends GetxController {
   final Rx<Color> tshirtColor = Colors.white.obs;
   final RxBool showTshirtSimulation = false.obs;
 
+  // Per-layer dot sizes
+  final RxList<double> dotSizeMultipliers = <double>[].obs;
+
   // Processing state for regeneration
   final RxBool isRegenerating = false.obs;
   final RxDouble progress = 0.0.obs;
@@ -100,41 +103,38 @@ class PreviewController extends GetxController {
           smoothingFactor.value = settings.smoothingFactor;
           cornerThreshold.value = settings.cornerThreshold;
           noiseRemoval.value = settings.noiseRemoval;
+          forceHalftone.value = settings.forceHalftone;
+          adaptiveThreshold.value = settings.adaptiveThreshold;
           filmLabel.value = settings.filmLabel;
           currentDpi.value = settings.dpi;
-          adaptiveThreshold.value = settings.adaptiveThreshold;
-          // BUG 4 FIX: Sync paper dimensions from initial settings
+          
+          // Paper sizes
           paperWidthCm.value = settings.paperWidthCm;
           paperHeightCm.value = settings.paperHeightCm;
-        }
 
-        final printType = args['printType'];
-        if (printType is PrintType) {
-          selectedPrintType.value = printType;
+          // Initialize dot multipliers
+          if (settings.dotSizeMultipliers != null) {
+            dotSizeMultipliers.value = List<double>.from(settings.dotSizeMultipliers!);
+          }
         }
       }
-      _loadFilmsAndInfo();
-    } else {
-      isLoading.value = false;
     }
-
-    // Listen to zoom changes
-    transformationController.addListener(() {
-      zoomLevel.value = transformationController.value.getMaxScaleOnAxis();
-    });
-
-    // BUG 1 FIX: Removed all debounce calls for Fine-Tune sliders
-    // The Fine-Tune tab has been removed from the UI to prevent
-    // unwanted Python re-processing on every slider interaction.
-    // State variables are preserved for use by AI Fix and regenerateFilms().
-
     filmLabelController = TextEditingController(text: filmLabel.value);
     filmLabelController.addListener(() {
       filmLabel.value = filmLabelController.text;
     });
 
-    // BUG 1 FIX: Removed debounce(filmLabel) - no auto-trigger regeneration
+    transformationController.addListener(() {
+      zoomLevel.value = transformationController.value.getMaxScaleOnAxis();
+    });
+
+    _loadFilmsAndInfo();
   }
+
+  // BUG 1 FIX: Removed all debounce calls for Fine-Tune sliders
+  // The Fine-Tune tab has been removed from the UI to prevent
+  // unwanted Python re-processing on every slider interaction.
+  // State variables are preserved for use by AI Fix and regenerateFilms().
 
   @override
   void onClose() {
@@ -197,6 +197,7 @@ class PreviewController extends GetxController {
         halftoneSettings: initialSettings.value!.halftoneSettings,
         paperWidthCm: paperWidthCm.value,
         paperHeightCm: paperHeightCm.value,
+        dotSizeMultipliers: dotSizeMultipliers.isEmpty ? null : dotSizeMultipliers.toList(),
       );
 
       Get.log(
@@ -483,27 +484,60 @@ class PreviewController extends GetxController {
         progress.value = 0.7;
         progressMessage.value = 'Applying AI adjustments...';
 
+        final Map<String, dynamic> changes = {};
+        final Map<String, dynamic> oldParams = {
+          'smoothing_factor': smoothingFactor.value,
+          'corner_threshold': cornerThreshold.value,
+          'global_threshold': globalThreshold.value,
+        };
+
         if (result['smoothing_factor'] != null) {
+          changes['smoothing_factor'] = result['smoothing_factor'];
           smoothingFactor.value =
               (result['smoothing_factor'] as num).toDouble();
         }
         if (result['corner_threshold'] != null) {
+          changes['corner_threshold'] = result['corner_threshold'];
           cornerThreshold.value =
               (result['corner_threshold'] as num).toDouble();
         }
         if (result['global_threshold'] != null) {
+          changes['global_threshold'] = result['global_threshold'];
           globalThreshold.value =
               (result['global_threshold'] as num).toDouble();
         }
+        if (result['dot_sizes'] != null) {
+          changes['dot_sizes'] = result['dot_sizes'];
+          final list = (result['dot_sizes'] as List).map((v) => (v as num).toDouble()).toList();
+          dotSizeMultipliers.value = list;
+        }
+        if (result['lpi'] != null) {
+           changes['lpi'] = result['lpi'];
+           // Update in initialSettings if needed for regeneration
+           if (initialSettings.value?.halftoneSettings != null) {
+             initialSettings.value = initialSettings.value!.copyWith(
+               halftoneSettings: initialSettings.value!.halftoneSettings!.copyWith(
+                 lpi: (result['lpi'] as num).toInt(),
+               ),
+             );
+           }
+        }
+
+        print('[AI_AUTOFIX] Applied changes: $changes');
+        Get.log('[AI_AUTOFIX] Applied changes: $changes');
 
         _lastAutoFixParams = result; // Store for next iteration
         final reason = result['adjustment_reason'] ?? 'AI adjustments applied';
-        Get.snackbar(
-          'AI Fix Applied',
-          reason,
-          backgroundColor: Colors.green.withValues(alpha: 0.1),
-          colorText: Colors.green,
-          duration: const Duration(seconds: 3),
+        
+        // Show diff in dialog
+        String diffText = "Reason: $reason\n\nChanges:\n";
+        changes.forEach((key, val) {
+           diffText += "$key: ${oldParams[key]} -> $val\n";
+        });
+        
+        Get.defaultDialog(
+          title: "AI Autofix Diff",
+          middleText: diffText,
         );
 
         progress.value = 0.9;

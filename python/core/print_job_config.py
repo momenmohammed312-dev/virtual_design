@@ -31,29 +31,36 @@ class PrintJobConfig:
         'uv_curable': {0.0: 0.0, 0.25: 0.18, 0.5: 0.38, 0.75: 0.62, 1.0: 1.0},
     })
     
-    # Standard Mesh-to-LPI limit table (Rule of Thumb: LPI <= Mesh / 3 or 3.5)
-    # Using conservative LPI limits to prevent dot bridge failure/ink flooding.
+    # Standard Mesh-to-LPI limit table (Industry Standard: LPI = Mesh / 4.5)
+    # Conservative limits prevent dot bridge failure and ink flooding.
+    # Formula: mesh_count / 4.5 for safe, printable results
     MESH_LPI_TABLE: Dict[int, int] = field(default_factory=lambda: {
-        86: 33,   # Course mesh (Athletic/Block designs)
-        110: 42,  # Standard mesh (Simple logos)
-        160: 55,  # Medium-fine (General halftone)
-        200: 65,  # Fine (Detailed halftone)
-        230: 75,  # Very fine (High detail)
-        280: 85,  # Super fine
-        305: 95,  # Process fine
-        355: 110  # Ultra fine
+        86: 19,   # Course mesh (Athletic/Block designs)
+        110: 24,  # Standard mesh (Simple logos)
+        160: 35,  # Medium-fine (General halftone)
+        200: 44,  # Fine (Detailed halftone)
+        230: 51,  # Very fine (High detail)
+        280: 62,  # Super fine
+        305: 68,  # Process fine
+        355: 79   # Ultra fine (mesh/4.5 = 79 LPI)
     })
 
     # ── Single-source LPI ceiling constants (FIX: unified with router_utils) ─
-    # Industry standard: mesh/3.5 is the hard ceiling for halftone LPI.
-    # Below this ratio, dots begin to bridge threads and cause ink flooding.
+    # Industry standard: mesh/4.5 is the SAFE middle ground for halftone LPI.
+    # Industry range: mesh/4.0 (aggressive) to mesh/5.0 (conservative)
+    # Below mesh/4.0 ratio, dots begin to bridge threads and cause ink flooding.
     # DPI-based ceiling: need ≥4 pixels per dot for ≥16 tone levels.
-    # Re-tuned for Professional High-Density output. 
-    # mesh/2.2 allows for ultra-fine dots (e.g. 150-160 LPI on 355 mesh).
-    MESH_RATIO_DIVISOR: float = 2.2   # mesh / 2.2  → aggressive detail ceiling
-    DPI_RATIO_DIVISOR:  float = 4.0   # dpi  / 4.0  → hard DPI  ceiling
+    # 
+    # Reference table for common meshes:
+    #   Mesh 110 → LPI 22-28
+    #   Mesh 160 → LPI 32-40  
+    #   Mesh 230 → LPI 46-58
+    #   Mesh 305 → LPI 61-76
+    #   Mesh 355 → LPI 71-89
+    MESH_RATIO_DIVISOR: float = 4.5   # mesh / 4.5  → safe industry standard
+    DPI_RATIO_DIVISOR:  float = 4.0   # dpi  / 4.0  → hard DPI ceiling
     LPI_ABSOLUTE_MIN:   int   = 25    
-    LPI_ABSOLUTE_MAX:   int   = 400   # Allow ultra-fine halftone for high-end systems
+    LPI_ABSOLUTE_MAX:   int   = 150   # Conservative max for screen printing
 
     def max_safe_lpi(self, output_dpi: Optional[int] = None) -> int:
         """

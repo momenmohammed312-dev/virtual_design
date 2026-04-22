@@ -21,7 +21,7 @@ class AppColors {
 class AppText {
   static const String appName = 'Virtual Designer';
   static const String appSubtitle = 'Screen Printing Studio';
-  static const String developer = 'MO2 CAPITAL';
+  static const String developer = 'M02';
   static const String version = 'v1.1.0';
 }
 
@@ -55,4 +55,3 @@ class AppConstants {
     ),
   );
 }
-

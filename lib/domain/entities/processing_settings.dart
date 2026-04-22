@@ -5,6 +5,8 @@
 // MED #3 FIX: Switch activeThumbColor deprecated - not related to this file
 //             (Fix is in setup_page.dart)
 
+import 'package:virtual_design/core/enums/app_enums.dart';
+
 // --- Enums -------------------------------------------------------------------
 
 enum PrintFinish { solid, halftone }
@@ -37,24 +39,33 @@ class HalftoneSettings {
   final int lpi;
   final String dotShape;
   final double angle;
+  final double dotSizeMultiplier;
 
   const HalftoneSettings({
     this.lpi = 85,
     this.dotShape = 'round',
     this.angle = 45.0,
+    this.dotSizeMultiplier = 1.0,
   });
 
-  HalftoneSettings copyWith({int? lpi, String? dotShape, double? angle}) =>
+  HalftoneSettings copyWith({
+    int? lpi,
+    String? dotShape,
+    double? angle,
+    double? dotSizeMultiplier,
+  }) =>
       HalftoneSettings(
         lpi: lpi ?? this.lpi,
         dotShape: dotShape ?? this.dotShape,
         angle: angle ?? this.angle,
+        dotSizeMultiplier: dotSizeMultiplier ?? this.dotSizeMultiplier,
       );
 
   Map<String, dynamic> toJson() => {
         'lpi': lpi,
         'dotShape': dotShape,
         'angle': angle,
+        'dotSizeMultiplier': dotSizeMultiplier,
       };
 
   factory HalftoneSettings.fromJson(Map<String, dynamic> json) =>
@@ -62,6 +73,7 @@ class HalftoneSettings {
         lpi: (json['lpi'] as int?) ?? 85,
         dotShape: (json['dotShape'] as String?) ?? 'round',
         angle: (json['angle'] as num?)?.toDouble() ?? 45.0,
+        dotSizeMultiplier: (json['dotSizeMultiplier'] as num?)?.toDouble() ?? 1.0,
       );
 }
 
@@ -100,6 +112,13 @@ class ProcessingSettings {
   final int sourceDpi;
   final String scaleMode;
   final double customScalePercent;
+  final List<double>? dotSizeMultipliers;
+  final DotShape? overrideDotShape;
+  
+  // Mobile AI Hints
+  final String? imageClassHint;
+  final double? aiConfidence;
+  final String? preMaskPath;
 
   const ProcessingSettings({
     this.colorCount = 2,
@@ -134,6 +153,11 @@ class ProcessingSettings {
     this.sourceDpi = 300,
     this.scaleMode = 'fit_to_page',
     this.customScalePercent = 100.0,
+    this.dotSizeMultipliers,
+    this.overrideDotShape,
+    this.imageClassHint,
+    this.aiConfidence,
+    this.preMaskPath,
   });
 
   static const List<int> standardMeshCounts = [
@@ -199,6 +223,7 @@ class ProcessingSettings {
     int? sourceDpi,
     String? scaleMode,
     double? customScalePercent,
+    List<double>? dotSizeMultipliers,
   }) =>
       ProcessingSettings(
         colorCount: colorCount ?? this.colorCount,
@@ -233,6 +258,7 @@ class ProcessingSettings {
         sourceDpi: sourceDpi ?? this.sourceDpi,
         scaleMode: scaleMode ?? this.scaleMode,
         customScalePercent: customScalePercent ?? this.customScalePercent,
+        dotSizeMultipliers: dotSizeMultipliers ?? this.dotSizeMultipliers,
       );
 
   /// Validates settings and returns list of error messages if any

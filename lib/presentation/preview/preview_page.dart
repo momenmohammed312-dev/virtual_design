@@ -891,7 +891,7 @@ class PreviewPage extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: Text('MO2 CAPITAL',
+            child: Text('M02',
                 style: TextStyle(
                     color: Colors.grey.shade400,
                     fontSize: 9,
@@ -1047,23 +1047,31 @@ class PreviewPage extends StatelessWidget {
   }
 
   Widget _buildFilmDetails(PreviewController controller, int index) {
+    String detailText = '';
     if (controller.colorInfo.length > index) {
       final colorData = controller.colorInfo[index];
       final coverage = colorData['percentage'] ?? 0.0;
       final hex = colorData['hex'] ?? '';
-
-      return Text(
-        '$hex • $coverage% coverage',
-        style: const TextStyle(
-          fontSize: 12,
-          color: Color(0xFF6B7280),
-        ),
-      );
+      detailText = '$hex • $coverage% coverage';
+    } else {
+      detailText = 'Generic Film Layer';
     }
 
-    return const Text(
-      'Generic Film Layer',
-      style: TextStyle(
+    // Add dot size info if available
+    if (controller.dotSizeMultipliers.length > index) {
+      final mult = controller.dotSizeMultipliers[index];
+      String label = 'Normal';
+      if (mult <= 0.6) label = 'Very Fine';
+      else if (mult <= 0.8) label = 'Fine';
+      else if (mult >= 1.4) label = 'Very Bold';
+      else if (mult >= 1.2) label = 'Bold';
+      
+      detailText += ' • $label (${mult.toStringAsFixed(1)}x)';
+    }
+
+    return Text(
+      detailText,
+      style: const TextStyle(
         fontSize: 12,
         color: Color(0xFF6B7280),
       ),

@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:virtual_design/domain/entities/processing_settings.dart' as ps;
 import 'package:virtual_design/domain/repositories/processing_repository.dart';
 import 'package:virtual_design/core/utils/sound_manager.dart';
+import 'package:virtual_design/core/mobile_ai/mobile_ai_service.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
@@ -52,8 +53,28 @@ class SetupController extends GetxController {
 
   // Halftone settings
   final RxBool isHalftone = false.obs;
-  final RxInt lpiValue = 85.obs; // Default 85 for finer dots
+  // DYNAMIC LPI: Computed from DPI and Mesh (not stored, calculated on-the-fly)
+  // Formula: LPI = min(DPI/2, Mesh/4.5) with safety limits 35-150
+  int get lpiValue {
+    final dpi = printQuality.value;
+    final mesh = meshCount;
+    // Ideal LPI from DPI (2:1 ratio for quality halftone)
+    final lpiFromDpi = dpi / 2.0;
+    // Max safe LPI from mesh (conservative 4.5 factor)
+    final maxLpiFromMesh = mesh / 4.5;
+    // Optimal is the lower of the two
+    final optimalLpi =
+        lpiFromDpi < maxLpiFromMesh ? lpiFromDpi : maxLpiFromMesh;
+    // Clamp to safe range
+    if (optimalLpi < 35) return 35;
+    if (optimalLpi > 150) return 150;
+    return optimalLpi.round();
+  }
+
   final RxString selectedDotShape = 'round'.obs;
+  final RxDouble dotSizeMultiplier = 1.0.obs;
+  // Per-layer dot sizes
+  final RxList<double> dotSizeMultipliers = <double>[].obs;
 
   // Edge enhancement & color correction
   final RxBool edgeEnhancement = false.obs;
@@ -78,17 +99,22 @@ class SetupController extends GetxController {
 
   // ─── Computed ────────────────────────────────────────────────────────────
 
-  /// Auto-calculate mesh count based on LPI (higher LPI = higher mesh needed)
+  /// Auto-calculate mesh count based on DPI only (not LPI - prevents circular dependency)
+  /// Higher DPI needs higher mesh count for quality halftone
+  /// EXTENDED: Support up to 4800 DPI for photo/engraving applications
   int get meshCount {
-    final lpi = lpiValue.value;
-    // Formula: Mesh ≈ LPI × 4.5 (for safety margin)
-    if (lpi < 45) return 110;
-    if (lpi < 55) return 160;
-    if (lpi < 70) return 200;
-    if (lpi < 85) return 230;
-    if (lpi < 105) return 280;
-    if (lpi < 130) return 305;
-    return 355;
+    final dpi = printQuality.value;
+    // Select appropriate mesh based on DPI
+    // For screen printing: realistic max is 355 (for 900-1200 DPI)
+    // For photo/engraving: we return 355 but LPI formula handles the rest
+    if (dpi <= 400) return 110; // Low res, basic mesh
+    if (dpi <= 500) return 160; // Standard
+    if (dpi <= 600) return 196; // Good quality
+    if (dpi <= 800) return 230; // High quality
+    if (dpi <= 1000) return 280; // Very high quality
+    // Beyond 1200 DPI is for photo/engraving - mesh stays at max
+    // LPI will be limited by mesh/4.5 formula
+    return 355; // Maximum mesh count
   }
 
   // ─── Lifecycle ───────────────────────────────────────────────────────────
@@ -145,8 +171,10 @@ class SetupController extends GetxController {
       selectedImageType.value = settings.imageType;
       smoothingSlider.value = settings.smoothingSlider;
       if (settings.halftoneSettings != null) {
-        lpiValue.value = settings.halftoneSettings!.lpi;
+        // LPI is now computed dynamically from DPI and Mesh
+        // selectedDotShape is still loaded from settings
         selectedDotShape.value = settings.halftoneSettings!.dotShape;
+        dotSizeMultiplier.value = settings.halftoneSettings!.dotSizeMultiplier;
       }
     }
   }
@@ -164,7 +192,7 @@ class SetupController extends GetxController {
     paperHeightCm.value = 29.7;
     printQuality.value = 300.0;
     isHalftone.value = false;
-    lpiValue.value = 85;
+    // lpiValue is now computed dynamically (no longer stored)
     selectedDotShape.value = 'round';
     edgeEnhancement.value = false;
     colorCorrection.value = false;
@@ -201,7 +229,7 @@ class SetupController extends GetxController {
     Get.log('selectedFinish: ${selectedFinish.value}');
     Get.log('DPI: ${printQuality.value}');
     Get.log(
-      'Halftone: ${isHalftone.value}, LPI: ${lpiValue.value}, DotShape: ${selectedDotShape.value}',
+      'Halftone: ${isHalftone.value}, LPI: $lpiValue (dynamic), DotShape: ${selectedDotShape.value}',
     );
 
     if (imagePath.value.isEmpty) {
@@ -221,16 +249,21 @@ class SetupController extends GetxController {
 
     isProcessing.value = true;
     progress.value = 0.0;
-    progressMessage.value = 'Starting...';
+    progressMessage.value = 'Starting AI Analysis...';
 
     try {
+      // 1. Mobile-side AI classification
+      final aiService = MobileAIService();
+      final aiAnalysis = await aiService.analyze(imagePath.value);
+      progressMessage.value = 'AI Analysis complete.';
       // Build halftone settings ONLY if finish is halftone
       final bool effectivelyHalftone =
           selectedFinish.value == ps.PrintFinish.halftone;
       final halftone = effectivelyHalftone
           ? ps.HalftoneSettings(
-              lpi: lpiValue.value,
+              lpi: lpiValue, // Dynamic LPI from DPI and Mesh
               dotShape: selectedDotShape.value,
+              dotSizeMultiplier: dotSizeMultiplier.value,
             )
           : null;
 
@@ -262,6 +295,10 @@ class SetupController extends GetxController {
         sourceDpi: sourceDpi.value,
         scaleMode: scaleMode.value,
         customScalePercent: customScalePercent.value,
+        dotSizeMultipliers: dotSizeMultipliers.isEmpty ? null : dotSizeMultipliers.toList(),
+        imageClassHint: aiAnalysis.imageClass,
+        aiConfidence: aiAnalysis.confidence,
+        preMaskPath: aiAnalysis.maskPath,
       );
 
       Get.log(
@@ -287,6 +324,10 @@ class SetupController extends GetxController {
       await _repository.saveSettings(settings);
 
       Get.log('🔄 Starting image processing...');
+      Get.log(
+          '📊 HALFTONE SETTINGS: isHalftone=${isHalftone.value}, LPI=$lpiValue, Mesh=$meshCount, DotShape=${selectedDotShape.value}');
+      Get.log(
+          '📊 DPI: ${printQuality.value}, Detail: ${selectedDetail.value}, Colors: ${selectedColors.value}');
       final outputDirVal = outputDir.value.isNotEmpty ? outputDir.value : null;
 
       final result = await _repository.processImage(

@@ -5,6 +5,46 @@ import 'package:get/get.dart';
 import 'package:virtual_design/core/enums/app_enums.dart';
 import 'package:virtual_design/domain/entities/processing_settings.dart' as ps;
 import 'package:virtual_design/presentation/setup/setup_controller.dart';
+import 'package:virtual_design/presentation/setup/widgets/per_layer_dot_size_widget.dart';
+
+// Re-export DetailLevel from processing_settings for consistency
+typedef DetailLevel = ps.DetailLevel;
+
+// Extension to provide display names for ps.DetailLevel
+extension DetailLevelExtension on ps.DetailLevel {
+  String get displayName {
+    switch (this) {
+      case ps.DetailLevel.high:
+        return 'High';
+      case ps.DetailLevel.medium:
+        return 'Medium';
+      case ps.DetailLevel.low:
+        return 'Low';
+    }
+  }
+
+  double get threshold {
+    switch (this) {
+      case ps.DetailLevel.high:
+        return 0.1;
+      case ps.DetailLevel.medium:
+        return 0.3;
+      case ps.DetailLevel.low:
+        return 0.5;
+    }
+  }
+
+  double get simplificationFactor {
+    switch (this) {
+      case ps.DetailLevel.high:
+        return 0.5;
+      case ps.DetailLevel.medium:
+        return 1.0;
+      case ps.DetailLevel.low:
+        return 2.0;
+    }
+  }
+}
 
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
@@ -21,12 +61,29 @@ class _SetupPageState extends State<SetupPage> {
   // State variables
   PrintType selectedPrintType = PrintType.screenPrinting;
   int selectedColorCount = 0;
-  DetailLevel selectedDetailLevel = DetailLevel.medium;
+  ps.DetailLevel selectedDetailLevel = ps.DetailLevel.medium;
 
   // Halftone settings
   bool showHalftoneSettings = false;
-  int lpi = 85;
   DotShape selectedDotShape = DotShape.round;
+
+  // DYNAMIC LPI: Calculated from DPI and Mesh (not user selectable)
+  // Formula: LPI = min(DPI/2, Mesh/4.5) with safety limits 35-150
+  int get lpi {
+    final dpi = printQuality;
+    final mesh = meshCount;
+    // Ideal LPI from DPI (2:1 ratio for quality halftone)
+    final lpiFromDpi = dpi / 2.0;
+    // Max safe LPI from mesh (conservative 4.5 factor)
+    final maxLpiFromMesh = mesh / 4.5;
+    // Optimal is the lower of the two (bottleneck principle)
+    final optimalLpi =
+        lpiFromDpi < maxLpiFromMesh ? lpiFromDpi : maxLpiFromMesh;
+    // Clamp to safe range
+    if (optimalLpi < 35) return 35;
+    if (optimalLpi > 150) return 150;
+    return optimalLpi.round();
+  }
 
   bool isCustomPaper = false;
   double customPaperWidthCm = 21.0;
@@ -50,14 +107,18 @@ class _SetupPageState extends State<SetupPage> {
   bool adaptiveThreshold = false;
   bool responsiveMode = false;
 
+  // Mesh count based on DPI only (prevents circular dependency with LPI)
+  // Supports up to 4800 DPI for photo/engraving applications
   int get meshCount {
-    if (lpi < 45) return 110;
-    if (lpi < 55) return 160;
-    if (lpi < 70) return 200;
-    if (lpi < 85) return 230;
-    if (lpi < 105) return 280;
-    if (lpi < 130) return 305;
-    return 355;
+    final dpi = printQuality;
+    // Select mesh based on DPI range (not calculated from LPI)
+    if (dpi <= 400) return 110; // Low res
+    if (dpi <= 500) return 160; // Standard
+    if (dpi <= 600) return 196; // Good quality
+    if (dpi <= 800) return 230; // High quality
+    if (dpi <= 1000) return 280; // Very high quality
+    // Beyond 1200 DPI is for photo/engraving
+    return 355; // Maximum mesh count
   }
 
   int get strokeWidthInPixels {
@@ -71,18 +132,9 @@ class _SetupPageState extends State<SetupPage> {
     super.initState();
     final controller = Get.find<SetupController>();
     selectedColorCount = controller.selectedColors.value;
-    switch (controller.selectedDetail.value) {
-      case ps.DetailLevel.high:
-        selectedDetailLevel = DetailLevel.high;
-        break;
-      case ps.DetailLevel.medium:
-        selectedDetailLevel = DetailLevel.medium;
-        break;
-      case ps.DetailLevel.low:
-        selectedDetailLevel = DetailLevel.low;
-        break;
-    }
-    lpi = controller.lpiValue.value;
+    // Direct assignment - both are now the same type (ps.DetailLevel)
+    selectedDetailLevel = controller.selectedDetail.value;
+    // lpi is now computed dynamically from DPI and mesh
     strokeWidth = controller.strokeWidth.value;
     printQuality = controller.printQuality.value;
     autoUpscale = controller.autoUpscale.value;
@@ -315,7 +367,7 @@ class _SetupPageState extends State<SetupPage> {
                 const Text('v1.1.0',
                     style: TextStyle(color: Colors.white24, fontSize: 10)),
                 const SizedBox(height: 8),
-                Text('MO2 CAPITAL',
+                Text('M02',
                     style: TextStyle(
                         color: Colors.white.withAlpha(80),
                         fontSize: 9,
@@ -736,20 +788,66 @@ class _SetupPageState extends State<SetupPage> {
           const Text('Halftone Parameters',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 15),
-          Row(
-            children: [
-              const Text('LPI'),
-              Expanded(
-                  child: Slider(
-                      value: lpi.toDouble(),
-                      min: 65,
-                      max: 150,
-                      divisions: 85,
-                      activeColor: primaryBlue,
-                      onChanged: (v) => setState(() => lpi = v.toInt()))),
-              Text('$lpi'),
-            ],
+          // DYNAMIC LPI DISPLAY (Read-only - calculated from DPI & Mesh)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F4FD),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: primaryBlue.withAlpha(100)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.auto_fix_high, size: 16, color: primaryBlue),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Auto LPI: $lpi lines/inch',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: primaryBlue,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Mesh: $meshCount | DPI: ${printQuality.toInt()} | Ratio: ${(printQuality / lpi).toStringAsFixed(1)}:1',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Formula: min(DPI÷2, Mesh÷4.5)',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey[500],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
           ),
+          const SizedBox(height: 15),
+          Obx(() {
+            final controller = Get.find<SetupController>();
+            final colorsCount = controller.selectedColors.value;
+            return PerLayerDotSizeWidget(
+              colorCount: colorsCount,
+              baseLpi: lpi,
+              onChanged: (multipliers) {
+                controller.dotSizeMultipliers.value = multipliers;
+                if (multipliers.isNotEmpty) {
+                  controller.dotSizeMultiplier.value = multipliers.first;
+                }
+              },
+            );
+          }),
           const SizedBox(height: 15),
           Row(
             children: DotShape.values.map((shape) {
@@ -779,15 +877,23 @@ class _SetupPageState extends State<SetupPage> {
   Widget _buildDPISlider() {
     String qualityLabel = 'Standard';
     Color qualityColor = Colors.grey;
+    // EXTENDED RANGE: Up to 4800 for special cases
+    // Note: Realistic screen printing is 300-1200, but allow higher for photo/engraving
     if (printQuality >= 4800) {
-      qualityLabel = 'MAX QUALITY (Extreme)';
-      qualityColor = Colors.deepOrange;
+      qualityLabel = 'ULTRA HI-RES (Photo/Engraving)';
+      qualityColor = Colors.red;
     } else if (printQuality >= 2400) {
-      qualityLabel = 'Ultra Resolution';
-      qualityColor = Colors.purple;
+      qualityLabel = 'MAX QUALITY (Photo Printing)';
+      qualityColor = Colors.deepOrange;
     } else if (printQuality >= 1200) {
-      qualityLabel = 'High Fidelity';
+      qualityLabel = 'High-End Halftone';
+      qualityColor = Colors.purple;
+    } else if (printQuality >= 600) {
+      qualityLabel = 'Fine Detail (Recommended)';
       qualityColor = primaryBlue;
+    } else if (printQuality >= 450) {
+      qualityLabel = 'Professional';
+      qualityColor = Colors.green;
     }
 
     return Column(
@@ -817,6 +923,29 @@ class _SetupPageState extends State<SetupPage> {
           ],
         ),
         const SizedBox(height: 10),
+        // Warning for extreme DPI
+        if (printQuality > 1200)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.orange.withAlpha(30),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: Colors.orange),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'DPI > 1200 is for photo/engraving only. Screen printing works best at 300-900 DPI.',
+                    style: TextStyle(fontSize: 11, color: Colors.orange[800]),
+                  ),
+                ),
+              ],
+            ),
+          ),
         Slider(
           value: printQuality.clamp(300, 4800),
           min: 300,
@@ -836,12 +965,19 @@ class _SetupPageState extends State<SetupPage> {
           children: [
             const Text('300',
                 style: TextStyle(fontSize: 10, color: Colors.grey)),
+            const Text('600',
+                style: TextStyle(fontSize: 10, color: Colors.grey)),
+            const Text('900',
+                style: TextStyle(fontSize: 10, color: Colors.grey)),
             const Text('1200',
                 style: TextStyle(fontSize: 10, color: Colors.grey)),
             const Text('2400',
                 style: TextStyle(fontSize: 10, color: Colors.grey)),
             const Text('4800',
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
+                style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.bold)),
           ],
         ),
       ],

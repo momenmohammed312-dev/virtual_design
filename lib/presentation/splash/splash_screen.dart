@@ -483,7 +483,7 @@ class _SplashScreenState extends State<SplashScreen>
                               fontSize: 18,
                               fontWeight: FontWeight.w900)),
                       const TextSpan(
-                          text: ' CAPITAL',
+                          text: '',
                           style: TextStyle(
                               color: Colors.white,
                               fontSize: 14,

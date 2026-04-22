@@ -37,6 +37,7 @@ except ImportError:
 try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import A4
+    from reportlab.lib.colors import Color, black
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
@@ -230,6 +231,14 @@ class Exporter:
             
             # Clean up temp
             temp_img.unlink()
+            
+            # Add footer branding
+            c.setFont("Helvetica", 9)
+            c.setFillColorRGB(0, 0, 0)
+            # Left: Color name
+            c.drawString(30, 30, name.upper())
+            # Right: Brand
+            c.drawRightString(width - 30, 30, "Developed by MO2")
             
             print(f"   ✅ Page {idx+1}: {name}")
         

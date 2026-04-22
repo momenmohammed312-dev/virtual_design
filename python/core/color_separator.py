@@ -236,6 +236,30 @@ class ColorSeparator:
             cluster_data, num_colors, best_compactness, best_labels, best_centers, criteria
         )
 
+        # FIX: Downscale image BEFORE building label map to preserve edge quality
+        # Memory safety: Process large images at reduced resolution
+        max_safe_pixels = 2_000_000  # ~2MP limit
+        original_h, original_w = h, w
+        if total_pixels > max_safe_pixels:
+            scale = np.sqrt(max_safe_pixels / total_pixels)
+            new_h, new_w = int(h * scale), int(w * scale)
+            logger.warning(f"[ColorSeparator] Image too large ({h}x{w}={total_pixels}px), downscaling to {new_h}x{new_w} BEFORE separation for memory safety")
+            # Resize image data BEFORE building label map
+            image_small = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            # Re-extract foreground data at smaller size
+            if use_lab:
+                lab_small = cv2.cvtColor(image_small, cv2.COLOR_BGR2LAB)
+                full_data = lab_small.reshape((-1, 3)).astype(np.float32)
+            else:
+                full_data = image_small.reshape((-1, 3)).astype(np.float32)
+            # Resize masks
+            bg_mask = cv2.resize(bg_mask.astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_NEAREST).astype(bool)
+            fg_mask = cv2.resize(fg_mask.astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_NEAREST).astype(bool)
+            h, w = new_h, new_w
+            total_pixels = h * w
+            fg_pixel_count = int(np.sum(fg_mask))
+            logger.info(f"[ColorSeparator] Resized to {h}x{w}, fg_pixels={fg_pixel_count}")
+
         # Build full label map: assign every pixel to nearest center
         if using_fg_only:
             # T01 FIX: Replace np.tile() with broadcasting to eliminate ~400MB peak RAM
@@ -256,13 +280,16 @@ class ColorSeparator:
                 # Fallback for extremely large images: chunk-wise assignment
                 logger.warning("[ColorSeparator] T01: MemoryError in broadcast, falling back to chunked")
                 centers_f = np.clip(best_centers, 0, 255).astype(np.float32)
-                chunk = 10000
-                for start in range(0, total_pixels, chunk):
-                    end = min(start + chunk, total_pixels)
-                    diff = full_data[start:end] - centers_f[:, np.newaxis, :]
-                    label_map_flat[start:end] = np.argmin(
-                        np.sum(diff.transpose(1, 0, 2) ** 2, axis=2), axis=0
-                    )
+                chunk_size = 5000  # Smaller chunks to avoid memory issues
+                for start in range(0, total_pixels, chunk_size):
+                    end = min(start + chunk_size, total_pixels)
+                    chunk_data = full_data[start:end]  # (N, 3)
+                    # CORRECT BROADCASTING: (N,1,3) - (1,K,3) -> (N,K,3)
+                    diff = chunk_data[:, np.newaxis, :] - centers_f[np.newaxis, :, :]
+                    dist = np.sum(diff ** 2, axis=2)  # (N, K)
+                    labels = np.argmin(dist, axis=1)  # (N,)
+                    label_map_flat[start:end] = labels
+                    logger.debug(f"[ColorSeparator] T01: Processed chunk {start}-{end}/{total_pixels}")
                 label_map_flat = label_map_flat.reshape(h, w)
             label_map = label_map_flat
             # Mark background pixels as -1 (excluded from color layers)
@@ -286,6 +313,11 @@ class ColorSeparator:
                         label_map_flat[:] = 0
             label_map = label_map_flat.reshape(h, w)
             # No background removal in solid mode — bg_mask is all False anyway
+
+        # Store original dimensions for mask generation (upscale back if needed)
+        label_map_resized = (h != original_h or w != original_w)
+        if label_map_resized:
+            logger.info(f"[ColorSeparator] Label map at {h}x{w}, original was {original_h}x{original_w}")
 
         # Enforce minimum cluster coverage (<0.1% ink -> reassign to nearest cluster)
         valid_pixels = np.sum(label_map >= 0)
@@ -362,13 +394,90 @@ class ColorSeparator:
             logger.debug(f"  Color {i}: BGR={info['center_bgr']}, brightness={info['brightness']:.1f}, "
                          f"coverage={info['percentage']:.1f}%")
 
-        # Build 'colors' (RGB tuples) and 'color_names' expected by the rest of the pipeline
-        colors_rgb = []
-        color_names = []
-        for i, center in enumerate(sorted_centers):
+        # 🔥 FIX: Exclude near-white background colors from results
+        # Background colors (brightness > 235 or very close to white) should NOT be separate films
+        background_brightness_threshold = 235  # Pixels brighter than this are considered background
+        min_color_coverage_pct = 1.0  # Minimum 1% coverage to be a valid color
+        
+        logger.info(f"[ColorSeparator] 🔍 Background exclusion check: threshold={background_brightness_threshold}, min_coverage={min_color_coverage_pct}%")
+        
+        valid_colors = []
+        valid_centers = []
+        valid_labels = []
+        
+        logger.info(f"[ColorSeparator] 🔍 Checking {len(color_info)} colors for background exclusion:")
+        for i, (center, info) in enumerate(zip(sorted_centers, color_info)):
             bgr = np.clip(center, 0, 255).astype(np.uint8)
+            brightness = info['brightness']
+            coverage_pct = info['percentage']
+            
+            # Debug: log every color being checked
+            logger.warning(f"[ColorSeparator] 🔍 Color {i}: BGR={bgr.tolist()}, brightness={brightness:.1f}, coverage={coverage_pct:.2f}%")
+            
+            # Skip colors that are:
+            # 1. Too bright (background-like) OR
+            # 2. Have too little coverage (< 1%)
+            is_background_like = brightness > background_brightness_threshold
+            is_too_small = coverage_pct < min_color_coverage_pct
+            
+            if is_background_like:
+                logger.warning(f"[ColorSeparator] ❌ EXCLUDING color {i}: brightness={brightness:.1f} > {background_brightness_threshold} (BACKGROUND-LIKE)")
+                continue
+            if is_too_small:
+                logger.warning(f"[ColorSeparator] ❌ EXCLUDING color {i}: coverage={coverage_pct:.2f}% < {min_color_coverage_pct}% (TOO SMALL)")
+                continue
+            
+            logger.warning(f"[ColorSeparator] ✅ KEEPING color {i}: brightness={brightness:.1f}, coverage={coverage_pct:.2f}%")
+                
             rgb_pixel = cv2.cvtColor(np.array([[bgr]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
-            colors_rgb.append(tuple(int(x) for x in rgb_pixel))
+            valid_colors.append(tuple(int(x) for x in rgb_pixel))
+            valid_centers.append(center)
+            valid_labels.append(i)
+        
+        # Rebuild with only valid colors
+        num_colors = len(valid_colors)
+        colors_rgb = valid_colors
+        sorted_centers = np.array(valid_centers) if valid_centers else np.array([])
+        
+        # Rebuild color_info with only valid colors
+        color_info = [info for i, info in enumerate(color_info) 
+                     if i in valid_labels]
+        
+        logger.info(f"[ColorSeparator] After background exclusion: {num_colors} valid colors (excluded {len(sorted_indices) - num_colors})")
+        
+        # 🔥 FIX: Remap label_map to exclude removed colors
+        # Old labels that were removed should become background (-1)
+        if num_colors > 0 and len(valid_labels) < len(sorted_indices):
+            # Create remapping: old_label -> new_label or -1 if excluded
+            old_to_new = {}
+            for new_idx, old_idx in enumerate(valid_labels):
+                old_to_new[old_idx] = new_idx
+            
+            # Apply remapping to label_map
+            # Pixels with excluded labels become -1 (background)
+            remapped = np.full_like(sorted_label_map, -1)
+            for old_idx, new_idx in old_to_new.items():
+                remapped[sorted_label_map == old_idx] = new_idx
+            sorted_label_map = remapped
+            
+            logger.info(f"[ColorSeparator] Label map remapped: {len(old_to_new)} valid labels, rest set to background")
+        elif num_colors == 0:
+            # All colors were background - keep only foreground mask
+            logger.warning("[ColorSeparator] All colors were background-like! Keeping original image as single layer.")
+            sorted_label_map = np.full_like(sorted_label_map, 0)  # Single color layer
+            num_colors = 1
+            # Use average color of non-background pixels
+            if np.any(fg_mask):
+                avg_color = np.mean(image[fg_mask], axis=0)
+                colors_rgb = [tuple(int(x) for x in cv2.cvtColor(np.array([[avg_color]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0])]
+                sorted_centers = np.array([avg_color])
+            else:
+                colors_rgb = [(128, 128, 128)]  # Gray fallback
+                sorted_centers = np.array([[128, 128, 128]], dtype=np.float32)
+        
+        # Build 'color_names' expected by the rest of the pipeline
+        color_names = []
+        for i in range(num_colors):
             color_names.append(f"color_{i+1:02d}")
 
         # FIX GROUP 8.2: Use singleton PantoneLibrary instead of instantiating
@@ -402,6 +511,8 @@ class ColorSeparator:
             'fg_mask': fg_mask,
             'bg_stats': bg_stats,
             'image': None,
+            # NEW: Store original dimensions for proper scaling in export
+            'original_dimensions': {'width': original_w, 'height': original_h},
         }
 
     def _calculate_brightness(self, centers: np.ndarray, use_lab: bool) -> np.ndarray:

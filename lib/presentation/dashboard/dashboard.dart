@@ -332,7 +332,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const Spacer(),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text('MO2 CAPITAL',
+            child: Text('M02',
                 style: TextStyle(
                     color: Colors.grey.shade400,
                     fontSize: 9,
@@ -358,7 +358,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               borderRadius: BorderRadius.circular(8),
             ),
             child:
-                const Icon(Icons.print_rounded, color: Colors.white, size: 24),
+                const Icon(Icons.auto_awesome, color: Colors.white, size: 24),
           ),
           const SizedBox(width: 12),
           Expanded(

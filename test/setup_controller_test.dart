@@ -22,9 +22,9 @@ class MockProcessingRepository implements ProcessingRepository {
   Future<ProcessResult> processImage({required String imagePath, required ProcessingSettings settings, String? outputDir, void Function(double, String)? onProgress}) async {
     lastSettingsCaught = settings;
     if (shouldSucceed) {
-      return ProcessResult.success(outputDirectory: outputDir ?? this.outputDir ?? '/tmp/output');
+      return ProcessResult.success(outputPath: outputDir ?? this.outputDir ?? '/tmp/output');
     } else {
-      return ProcessResult.failure('Mock failure');
+      return ProcessResult.failure(errorMessage: 'Mock failure');
     }
   }
 

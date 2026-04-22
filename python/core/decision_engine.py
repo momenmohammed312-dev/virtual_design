@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from enum import Enum
 
 from core.smart_analyzer import SmartAnalyzer, ImageClass
+from core.router_utils import safe_float, safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class PipelineDecision:
     confidence: float = 0.0
     reasoning: List[str] = field(default_factory=list)
     explicit_user_overrides: set = field(default_factory=set)
+    is_locked: bool = False  # Prevents low-prio overrides (e.g. from MobileHints)
 
 class DecisionOracle:
     """
@@ -64,104 +66,172 @@ class DecisionOracle:
 
     def solve(self, image: np.ndarray, args: Any, ai_module: Any, ppm_module: Any) -> PipelineDecision:
         """
-        Synthesizes the final execution plan by merging AI brilliance with user authority.
+        Unified decision logic with strict priority and safety guardrails.
+        PRIORITY: 
+        1. User Explicit Override (UI selection)
+        2. Fast Classifier (Confidence >= 0.9)
+        3. AI Vision Bridge
+        4. SmartAnalyzer (Heuristic fallback)
         """
         params_to_track = [
             'dpi', 'lpi', 'colors', 'halftone', 'smoothing_factor', 
             'corner_threshold', 'upscale_factor', 'denoise_strength',
             'contour_min_area', 'simplification_epsilon', 'page_size',
-            'page_width', 'page_height', 'margin_pt', 'image_type'
+            'page_width', 'page_height', 'margin_pt', 'image_type',
+            'dot_size', 'dot_sizes'
         ]
 
-        # 1. INITIALIZATION: Identify Explicit User Intent
-        # We compare args with defaults (hardcoded or extracted)
         defaults = {
             'dpi': 300, 'lpi': 85, 'colors': 0, 'halftone': False, 
             'smoothing_factor': 0.25, 'image_type': 'auto',
-            'corner_threshold': -1.0, 'upscale_factor': 1.0,
+            'corner_threshold': 120.0, 'upscale_factor': 1.0,
             'denoise_strength': 3, 'contour_min_area': 50,
-            'simplification_epsilon': 1.2, 'page_size': 'A4'
+            'simplification_epsilon': 1.2, 'page_size': 'A4',
+            'dot_size': 1.0, 'dot_sizes': None
         }
 
+        # 1. INITIALIZATION & TYPE SANITIZATION
         for p in params_to_track:
             val = getattr(args, p, None)
+            
+            # CRITICAL FIX: Direct parameter casting to prevent TypeError: '>' not supported between str and float
+            if p in ['smoothing_factor', 'corner_threshold', 'upscale_factor', 'simplification_epsilon', 'dot_size', 'margin_pt', 'page_width', 'page_height']:
+                val = safe_float(val, defaults.get(p))
+            elif p in ['dpi', 'lpi', 'colors', 'contour_min_area', 'denoise_strength']:
+                val = safe_int(val, defaults.get(p))
+
             if val is not None:
                 is_default = (val == defaults.get(p))
                 source = DecisionSource.USER_DEFAULT if is_default else DecisionSource.USER_EXPLICIT
-                self.update_param(p, val, source, "Initial Input Analysis")
-                if p == 'halftone':
-                    logger.info(f"[DecisionEngine] Loaded halftone={val} from args (source={source})")
+                self.update_param(p, val, source, "Input Setup")
+                if source == DecisionSource.USER_EXPLICIT:
+                    self.decision.explicit_user_overrides.add(p)
 
-        # Special Case: --skip-halftone flag is always EXPLICIT
-        if getattr(args, 'skip_halftone', False):
-            self.update_param('halftone', False, DecisionSource.USER_EXPLICIT, "User forced --skip-halftone")
+        # 2. PRIORITY-BASED CLASSIFICATION
+        is_class_locked = False
+        final_class = "artwork"
+        
+        # A. USER OVERRIDE (Tier 1)
+        user_choice = self.decision.parameters.get('image_type', 'auto')
+        if user_choice != 'auto':
+            final_class = user_choice
+            is_class_locked = True
+            self.decision.is_locked = True
+            logger.info(f"[DecisionEngine] Class LOCKED by User: {final_class}")
 
-        # Special Case: --halftone flag is always EXPLICIT user intent
-        halftone_flag = getattr(args, 'halftone', False)
-        logger.info(f"[DecisionEngine] args.halftone = {halftone_flag} (type: {type(halftone_flag)})")
-        if halftone_flag:
-            self.update_param('halftone', True, DecisionSource.USER_EXPLICIT, "User explicitly requested halftone")
-            logger.info("[DecisionEngine] Set halftone to True with USER_EXPLICIT")
-
-        # 2. HEURISTICS: Smart Analyzer (proper image classification)
-        if self.decision.parameters.get('image_type') == 'auto':
-            analyzer = SmartAnalyzer()
-            dpi = self.decision.parameters.get('dpi', 300)
-            smart_result = analyzer.analyze(image, dpi=dpi)
-            detected_class = smart_result.image_class.value
-            self.update_param('image_class', detected_class, DecisionSource.HEURISTIC, 
-                            f"SmartAnalyzer classification with confidence {smart_result.confidence:.0%}")
-            logger.info(f"[DecisionEngine] SmartAnalyzer detected: {detected_class} ({smart_result.confidence:.0%} confidence)")
-        else:
-            self.decision.image_class = self.decision.parameters.get('image_type', 'artwork')
-
-        # INTENT PRESERVATION (Phase 2.5): Upgrade image_class BEFORE AI if user wants halftone
-        halftone_val = self.decision.parameters.get('halftone')
-        user_wants_halftone = bool(halftone_val) and 'halftone' in self.decision.explicit_user_overrides
-        logger.info(f"[DecisionEngine] user_wants_halftone={user_wants_halftone}, image_class={self.decision.image_class}, halftone_val={halftone_val}, overrides={self.decision.explicit_user_overrides}")
-        if user_wants_halftone and self.decision.image_class == 'text_logo':
-            self.decision.reasoning.append("User forced halftone on Logo: Pre-upgrading to artwork_halftone pipeline")
-            self.decision.image_class = 'artwork'  # Upgrade to artwork BEFORE AI runs
-            self.decision.parameters['image_class'] = 'artwork'  # Sync to parameters
-            self.decision.explicit_user_overrides.add('image_class')  # Mark as override
-            logger.info("[DecisionEngine] UPGRADED: text_logo -> artwork for halftone")
-        elif user_wants_halftone:
-            logger.info(f"[DecisionEngine] User wants halftone but image_class is {self.decision.image_class} (not text_logo), no upgrade needed")
-
-        # 3. AI VISION: The Brain Module
-        # We only let AI override if the parameter is NOT an explicit user override
-        if self.decision.parameters.get('image_type') == 'auto':
+        # B. AI VISION & FAST CLASSIFIER (Tier 2)
+        if not is_class_locked:
+            logger.info("[DecisionEngine] 🧠 AI VISION: Analyzing...")
             ai_result = ai_module.analyze_image(image)
             if ai_result:
                 ai_class = ai_result.get('image_class')
-                if ai_class:
-                    # If user wants halftone, NEVER let AI change image_class (always keep artwork)
-                    if user_wants_halftone:
-                        if ai_class != 'artwork':
-                            self.decision.reasoning.append(f"AI suggested {ai_class} but user forced halftone - forcing artwork")
-                        # Keep/force artwork regardless of AI suggestion
-                        self.decision.image_class = 'artwork'
-                        self.decision.confidence = 1.0  # High confidence because user forced it
-                    else:
-                        self.decision.image_class = ai_class
-                        self.decision.confidence = ai_result.get('confidence', 0.8)
-
+                ai_conf = ai_result.get('confidence', 0.0)
+                
+                # Lock if confidence is high or from fast classifier
+                if ai_conf >= 0.9:
+                    final_class = ai_class
+                    is_class_locked = True
+                    self.decision.is_locked = True
+                    logger.info(f"[DecisionEngine] Class LOCKED by high-conf AI: {final_class} ({ai_conf:.2%})")
+                elif ai_conf > 0.6:
+                    final_class = ai_class
+                
+                # Propagate AI parameters if not user-set
                 for p, val in ai_result.items():
-                    if p in params_to_track:
-                        if p not in self.decision.explicit_user_overrides:
-                            self.update_param(p, val, DecisionSource.AI, ai_result.get('reason', 'AI Optimization'))
-                        else:
-                            self.decision.reasoning.append(f"AI suggested {p}={val} but respect User explicit setting")
+                    if p in params_to_track and p not in self.decision.explicit_user_overrides:
+                        # Sanitize AI internal types
+                        if p in ['smoothing_factor', 'corner_threshold', 'upscale_factor', 'simplification_epsilon']:
+                            val = safe_float(val)
+                        self.update_param(p, val, DecisionSource.AI, "AI Optimization")
 
-        # 4. PHYSICAL SAFETY: Levels 0 (The Guardian)
-        # These rules override EVERYBODY (User & AI)
-        max_safe_lpi = ppm_module.get_max_safe_lpi()
-        current_lpi = self.decision.parameters.get('lpi', 0)
+        # C. SMART ANALYZER (Tier 3 - Fallback)
+        if not is_class_locked:
+            analyzer = SmartAnalyzer()
+            dpi = self.decision.parameters.get('dpi', 300)
+            smart_result = analyzer.analyze(image, dpi=dpi)
+            if self.decision.image_class == 'artwork' or self.decision.confidence < 0.4:
+                final_class = smart_result.image_class.value
+                self.decision.confidence = smart_result.confidence
+                logger.info(f"[DecisionEngine] Heuristic fallback: {final_class}")
+
+        self.decision.image_class = final_class
+        
+        # 3. SAFETY & LOGIC VALIDATION
+        
+        # HALFTONE VS LOGO SAFETY
+        is_halftone = bool(self.decision.parameters.get('halftone', False))
+        user_forced_halftone = 'halftone' in self.decision.explicit_user_overrides
+        
+        if self.decision.image_class == 'text_logo' and is_halftone:
+            if not user_forced_halftone:
+                logger.info("[DecisionEngine] 🛡️ AUTO-DISABLE: Halftone disabled for text_logo class.")
+                self.update_param('halftone', False, DecisionSource.HEURISTIC, "Logos should be solid for clean edges")
+                is_halftone = False
+            else:
+                logger.warning("[DecisionEngine] ⚠️ Warning: User forced halftone on logo. Routing to artwork pipeline.")
+                self.decision.image_class = 'artwork' # Upgrade for halftone support
+
+        # AUTO-SMOOTHING
+        smooth = self.decision.parameters.get('smoothing_factor', 0.25)
+        if smooth < 0: # Handle -1.0 sentinel
+            if self.decision.image_class == 'text_logo': smooth = 0.05
+            elif self.decision.image_class == 'photo': smooth = 0.65
+            else: smooth = 0.35
+            self.update_param('smoothing_factor', smooth, DecisionSource.HEURISTIC, "Class-based auto-smoothing")
+
+        # 4. PHYSICAL CONSTRAINTS & LPI/DPI MAPPING
+        mesh = safe_int(getattr(ppm_module, 'mesh_count', 160), 160)
+        max_safe_lpi = int(mesh / 4.5)
+        current_lpi = self.decision.parameters.get('lpi', 45)
+        
         if current_lpi > max_safe_lpi:
-            self.update_param('lpi', max_safe_lpi, DecisionSource.PHYS_CONSTRAINT, 
-                             f"Physical Limit: Mesh {ppm_module.mesh_count} cannot hold {current_lpi} LPI")
+            logger.warning(f"[DecisionEngine] LPI {current_lpi} clamped to {max_safe_lpi} for mesh {mesh}")
+            self.update_param('lpi', max_safe_lpi, DecisionSource.PHYS_CONSTRAINT, f"Mesh {mesh} limit")
+            current_lpi = max_safe_lpi
+
+        # IDEAL DPI
+        if is_halftone:
+            ideal_dpi = current_lpi * 16
+            max_dpi = current_lpi * 20
+            current_dpi = self.decision.parameters.get('dpi', 300)
+            
+            if current_dpi > max_dpi:
+                self.update_param('dpi', max_dpi, DecisionSource.PHYS_CONSTRAINT, f"Clamped to LPI*20 for detail limits")
+            elif current_dpi < ideal_dpi and 'dpi' not in self.decision.explicit_user_overrides:
+                self.update_param('dpi', ideal_dpi, DecisionSource.PHYS_CONSTRAINT, f"Auto-optimized for LPI {current_lpi}")
+
+        # Feedback metadata for UI
+        self.decision.parameters['_final_lpi'] = self.decision.parameters.get('lpi')
+        self.decision.parameters['_final_dpi'] = self.decision.parameters.get('dpi')
+        self.decision.parameters['_mesh_limit'] = max_safe_lpi
 
         return self.decision
+
+    def _get_image_stats(self, image: np.ndarray) -> Dict:
+        if image is None: return {'is_binary': False}
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
+        total = max(1, gray.size)
+        dark_ratio = hist[:30].sum() / total
+        light_ratio = hist[225:].sum() / total
+        return {'is_binary': (dark_ratio + light_ratio) > 0.9}
+
+    def get_summary_dict(self) -> Dict:
+        return {
+            "image_class": self.decision.image_class,
+            "confidence": self.decision.confidence,
+            "best_params": self.decision.parameters,
+            "overrides": list(self.decision.explicit_user_overrides),
+            "reasoning": self.decision.reasoning,
+            "trace": [
+                {
+                    "param": a.parameter, 
+                    "value": a.value, 
+                    "source": a.source.value, 
+                    "reason": a.reason
+                } for a in self.decision.audit_trail
+            ]
+        }
 
     def _get_image_stats(self, image: np.ndarray) -> Dict:
         if image is None: return {'is_binary': False}

@@ -20,8 +20,10 @@ class PhysicalPrintModel:
     Validates and calculates physical constraints for screen printing.
     """
     # Industry standard mesh-to-LPI ceilings
-    # Formula: mesh_count / 2.5 (safe) to mesh_count / 2.0 (aggressive)
-    MESH_TO_LPI_RATIO = 2.5 
+    # Formula: mesh_count / 4.5 (safe middle ground)
+    # Industry range: mesh / 4.0 (aggressive) to mesh / 5.0 (conservative)
+    # Reference: 355 mesh → 79 LPI (355/4.5)
+    MESH_TO_LPI_RATIO = 4.5 
 
     def __init__(self, mesh_count: int = 280):
         self.mesh_count = mesh_count

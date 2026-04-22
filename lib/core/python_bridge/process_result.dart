@@ -52,7 +52,7 @@ class ProcessResult {
     return files.isNotEmpty;
   }
 
-  get outputDirectory => null;
+  get outputDirectory => outputPath;
 
   /// Get list of film files (PNG/PDF) from the output directory
   List<File> getFilmFiles() {

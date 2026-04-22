@@ -52,14 +52,22 @@ class PipelineRouter:
         
         logger.info(f"[PipelineRouter] Executing Decision: class={image_class.upper()}")
         
+        # FIX: If user explicitly enforced halftone mode, route to artwork pipeline
+        # regardless of image class. The artwork pipeline handles halftone generation.
+        user_enforced_halftone = params.get('halftone', False)
+        if user_enforced_halftone and image_class == 'text_logo':
+            print(f"🎯 [PipelineRouter] User enforced HALFTONE on text_logo - routing to artwork pipeline", flush=True)
+            logger.info(f"[PipelineRouter] User enforced HALFTONE on text_logo - routing to artwork pipeline")
+            return self._run_artwork(image, params, image_class)
+        
         if image_class == 'text_logo':
             if params.get('colors', 1) > 1:
-                return self._run_artwork(image, params)
+                return self._run_artwork(image, params, image_class)
             return self._run_text_logo(image, params)
         elif image_class == 'photo':
             return self._run_photo(image, params)
         else:
-            return self._run_artwork(image, params)
+            return self._run_artwork(image, params, image_class)
 
     def route(self, image: np.ndarray, analysis, args: argparse.Namespace) -> PipelineResult:
         """Legacy compatibility wrapper."""
@@ -74,11 +82,15 @@ class PipelineRouter:
         return self.route_deterministic(image, decision)
 
     def _run_text_logo(self, image: np.ndarray, params: Dict[str, Any]) -> PipelineResult:
-        from core.router_utils import preprocess_text_logo, _make_single_color_separation
-        preprocessed = preprocess_text_logo(image)
+        from core.router_utils import preprocess_text_logo, _make_single_color_separation, apply_upscale_factor
+        denoise_strength = params.get('denoise_strength', 5)
+        # Disable upscale for text_logo to prevent artifacts
+        upscale_factor = 1.0 
+        preprocessed = preprocess_text_logo(image, denoise_strength=denoise_strength)
+        preprocessed = apply_upscale_factor(preprocessed, upscale_factor)
         gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
         
-        binary = edge_aware_binarize(gray, use_adaptive=False)
+        binary = edge_aware_binarize(gray, use_adaptive=False, denoise_strength=denoise_strength)
         binary = self.controller.enforce_polarity(
             binary, stage="text_logo", force_black_ink=True, alpha_mask=self.alpha_mask
         )
@@ -101,17 +113,20 @@ class PipelineRouter:
             image_class='text_logo', skip_binarization=True
         )
 
-    def _run_artwork(self, image: np.ndarray, params: Dict[str, Any]) -> PipelineResult:
-        from core.router_utils import preprocess_artwork, apply_halftone_pipeline
-        logger.info(f"[_run_artwork] Params: halftone={params.get('halftone')}, lpi={params.get('lpi')}, dpi={params.get('dpi')}, colors={params.get('colors')}")
-        preprocessed = preprocess_artwork(image)
+    def _run_artwork(self, image: np.ndarray, params: Dict[str, Any], image_class: str = 'artwork') -> PipelineResult:
+        from core.router_utils import preprocess_artwork, apply_halftone_pipeline, apply_upscale_factor
+        logger.info(f"[_run_artwork] Params: halftone={params.get('halftone')}, lpi={params.get('lpi')}, dpi={params.get('dpi')}, colors={params.get('colors')}, image_class={image_class}")
+        denoise_strength = params.get('denoise_strength', 9)
+        upscale_factor = params.get('upscale_factor', 1.0)
+        preprocessed = preprocess_artwork(image, denoise_strength=denoise_strength)
+        preprocessed = apply_upscale_factor(preprocessed, upscale_factor)
         target_colors = params.get('colors', 1)
         should_halftone = params.get('halftone', False)
 
         if target_colors == 1 and not should_halftone:
             from core.router_utils import _make_single_color_separation
             gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
-            m = edge_aware_binarize(gray, use_adaptive=False)
+            m = edge_aware_binarize(gray, use_adaptive=False, denoise_strength=params.get('denoise_strength', 9))
             m = self.controller.enforce_polarity(m, stage="artwork_1color", alpha_mask=self.alpha_mask)
             masks = [(m > 127).astype(np.uint8) * 255]
             sep_result = _make_single_color_separation(image)
@@ -135,20 +150,25 @@ class PipelineRouter:
                 def __init__(self, p): 
                     self.p = p
                     self._halftone_raster_dpi = None  # Will be set by apply_halftone_pipeline
+                    # Critical: Propagate explicit overrides for safety rules
+                    self.overrides = p.get('overrides', [])
                 def __getattr__(self, k): 
+                    if k not in self.p and k != '_halftone_raster_dpi' and k != 'overrides':
+                        raise AttributeError(f"No such parameter: {k}")
                     val = self.p.get(k)
                     if k in ['lpi', 'dpi', 'halftone', 'mesh_count']:
                         logger.info(f"[ParamProxy] Accessing {k} = {val}")
                     return val
-            logger.info(f"[PipelineRouter] Applying halftone with params: lpi={params.get('lpi')}, dpi={params.get('dpi')}, dot_shape={params.get('dot-shape')}")
-            masks = apply_halftone_pipeline(masks, ParamProxy(params), self.halftone_gen)
+            logger.info(f"[PipelineRouter] Applying halftone with params: lpi={params.get('lpi')}, dpi={params.get('dpi')}, dot_shape={params.get('dot-shape')}, image_class={image_class}")
+            masks = apply_halftone_pipeline(masks, ParamProxy(params), self.halftone_gen, image_class=image_class)
 
         processed_masks = []
+        _binarize_denoise = params.get('denoise_strength', 9)
         for i, m in enumerate(masks):
             # For non-halftone: binarize to 0/255
             # For halftone: keep grayscale values (0-255) for dot patterns
             if not should_halftone:
-                m = edge_aware_binarize(m, use_adaptive=False)
+                m = edge_aware_binarize(m, use_adaptive=False, denoise_strength=_binarize_denoise)
                 m = (m > 127).astype(np.uint8) * 255  # Binary: only for non-halftone
             
             if self.alpha_mask is not None:
@@ -173,9 +193,12 @@ class PipelineRouter:
         )
 
     def _run_photo(self, image: np.ndarray, params: Dict[str, Any]) -> PipelineResult:
-        from core.router_utils import preprocess_photo, _make_single_color_separation
+        from core.router_utils import preprocess_photo, _make_single_color_separation, apply_upscale_factor
         from core.raster_halftone import RasterHalftoneEngine, RasterHalftoneConfig
-        preprocessed_gray = preprocess_photo(image)
+        denoise_strength = params.get('denoise_strength', 15)
+        upscale_factor = params.get('upscale_factor', 1.0)
+        preprocessed_gray = preprocess_photo(image, denoise_strength=denoise_strength)
+        preprocessed_gray = apply_upscale_factor(preprocessed_gray, upscale_factor)
         
         output_dpi = params.get('dpi', 450)
         raster_dpi = max(1200, output_dpi * 2)

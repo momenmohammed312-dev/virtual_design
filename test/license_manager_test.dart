@@ -12,11 +12,12 @@ void main() {
 
     test('License model can be created', () {
       final license = License(
-        activationKey: 'TEST-KEY-1234-5678',
+        key: 'TEST-KEY-1234-5678',
+        status: LicenseStatus.active,
         licenseHash: 'hash123',
         deviceId: 'device-001',
         activated: DateTime.now(),
-        expiresAt: DateTime.now().add(const Duration(days: 365)),
+        expiryDate: DateTime.now().add(const Duration(days: 365)),
       );
 
       expect(license.activationKey, 'TEST-KEY-1234-5678');
@@ -26,11 +27,12 @@ void main() {
 
     test('License expiration check works', () {
       final expiredLicense = License(
-        activationKey: 'TEST-KEY',
+        key: 'TEST-KEY',
+        status: LicenseStatus.expired,
         licenseHash: 'hash',
         deviceId: 'device-001',
         activated: DateTime.now().subtract(const Duration(days: 400)),
-        expiresAt: DateTime.now().subtract(const Duration(days: 1)),
+        expiryDate: DateTime.now().subtract(const Duration(days: 1)),
       );
 
       expect(expiredLicense.isExpired, true);
@@ -39,11 +41,12 @@ void main() {
 
     test('License JSON serialization works', () {
       final license = License(
-        activationKey: 'TEST-KEY-1234-5678',
+        key: 'TEST-KEY-1234-5678',
+        status: LicenseStatus.active,
         licenseHash: 'hash123',
         deviceId: 'device-001',
         activated: DateTime.now(),
-        expiresAt: DateTime.now().add(const Duration(days: 365)),
+        expiryDate: DateTime.now().add(const Duration(days: 365)),
       );
 
       final json = license.toJson();
@@ -57,15 +60,16 @@ void main() {
 
     test('License copyWith creates modified copy', () {
       final license = License(
-        activationKey: 'TEST-KEY',
+        key: 'TEST-KEY',
+        status: LicenseStatus.active,
         licenseHash: 'hash',
         deviceId: 'device-001',
         activated: DateTime.now(),
-        expiresAt: DateTime.now().add(const Duration(days: 365)),
+        expiryDate: DateTime.now().add(const Duration(days: 365)),
       );
 
       final modified = license.copyWith(
-        activationKey: 'NEW-TEST-KEY',
+        key: 'NEW-TEST-KEY',
       );
 
       expect(modified.activationKey, 'NEW-TEST-KEY');

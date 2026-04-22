@@ -100,6 +100,19 @@ _ai_status = {
     'mmproj_path': MMPROJ_PATH,
 }
 
+# Log AI status at module load - VERY VISIBLE
+logger.info("🔵🔵🔵" * 20)
+logger.info("[AIBridge] 🤖 AI VISION BRIDGE MODULE LOADED")
+logger.info(f"[AIBridge] 📁 Model path: {MODEL_PATH if MODEL_PATH else 'NOT FOUND'}")
+logger.info(f"[AIBridge] 📁 MMProj path: {MMPROJ_PATH if MMPROJ_PATH else 'NOT FOUND'}")
+logger.info(f"[AIBridge] 🔧 AI Disabled: {AI_DISABLED}")
+if MODEL_PATH and os.path.exists(MODEL_PATH):
+    size_mb = os.path.getsize(MODEL_PATH) / (1024*1024)
+    logger.info(f"[AIBridge] ✅ Model file exists ({size_mb:.1f} MB) - AI IS AVAILABLE")
+else:
+    logger.warning("[AIBridge] ❌ Model file NOT FOUND - AI will use FAST CLASSIFIER fallback")
+logger.info("🔵🔵🔵" * 20)
+
 _llm = None
 
 def get_ai_status() -> Dict:
@@ -138,36 +151,59 @@ def _get_llm():
 # ─── API ─────────────────────────────────────────────────────────────────────
 
 def _classify_without_ai(image: np.ndarray) -> Optional[str]:
-    """Fast heuristic to skip AI for simple high-contrast logos (Task 4b)."""
-    if len(image.shape) == 3: gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    else: gray = image
+    """Fast heuristic bypass — only for pure binary B&W images with no color."""
+    logger.info("[AIBridge] 🔍 Fast Classifier Check - analyzing image characteristics...")
+    if len(image.shape) == 3:
+        # Check saturation: if image has significant color, never bypass
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        sat_mean = float(np.mean(hsv[:, :, 1])) / 255.0
+        if sat_mean > 0.08:  # Has meaningful color → must use AI
+            return None
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
     hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
     total = gray.size
-    dark_ratio = hist[:30].sum() / total
-    light_ratio = hist[225:].sum() / total
-    if dark_ratio + light_ratio > 0.88: return 'text_logo'
-    if total < 400 * 400 and (dark_ratio > 0.4 or light_ratio > 0.7): return 'artwork'
+    dark_ratio = hist[:20].sum() / total   # Strict: only pure black
+    light_ratio = hist[235:].sum() / total  # Strict: only pure white
+    # Only bypass if image is ≥ 96% pure black + white (truly binary)
+    if dark_ratio + light_ratio > 0.96:
+        return 'text_logo'
     return None
 
 def analyze_image(image: np.ndarray, opencv_colors: list = None) -> Optional[dict]:
     """Analyze image with Fast-Classifier bypass for speed."""
+    print("🤖 [AIBridge] ===== AI ANALYSIS STARTED =====", flush=True)
+    logger.info("[AIBridge] ===== AI ANALYSIS STARTED =====")
+    
     # 1. Check Cache
     img_hash = _get_image_hash(image)
-    if img_hash in _ai_cache: return _ai_cache[img_hash]
+    if img_hash in _ai_cache: 
+        print("♻️ [AIBridge] Using cached result", flush=True)
+        logger.info("[AIBridge] ♻️ Using cached result")
+        return _ai_cache[img_hash]
     
     # 2. Skip AI for simple logos (Fix for analysis delay)
     fast_class = _classify_without_ai(image)
     if fast_class:
-        logger.info(f"[AIBridge] Fast classifier bypass: {fast_class}")
+        print(f"⚡ [AIBridge] FAST CLASSIFIER BYPASS: {fast_class}", flush=True)
+        logger.info(f"[AIBridge] ⚡ FAST CLASSIFIER BYPASS: {fast_class} (pure B&W logo)")
         res = _get_safe_fallback()
         res['image_class'] = fast_class
         res['confidence'] = 1.0
         return _validate_ai_params(res)
-    img_hash = _get_image_hash(image)
-    if img_hash in _ai_cache: return _ai_cache[img_hash]
+    
+    print("🧠 [AIBridge] AI Model required (not a simple B&W logo)", flush=True)
+    logger.info("[AIBridge] 🧠 AI Model required (not a simple B&W logo)")
 
     llm = _get_llm()
-    if llm is None: return _get_safe_fallback()
+    if llm is None: 
+        print("❌ [AIBridge] AI Model NOT AVAILABLE - using safe fallback", flush=True)
+        logger.warning("[AIBridge] ❌ AI Model NOT AVAILABLE - using safe fallback")
+        return _get_safe_fallback()
+    
+    print("✅ [AIBridge] AI Model loaded, analyzing image...", flush=True)
+    logger.info("[AIBridge] ✅ AI Model loaded, analyzing image...")
 
     h, w = image.shape[:2]
     max_dim = 512
@@ -183,6 +219,16 @@ def analyze_image(image: np.ndarray, opencv_colors: list = None) -> Optional[dic
         color_lines = [f"  {i+1}. {c['hex']} - {c['coverage']:.1f}% coverage" for i, c in enumerate(opencv_colors[:8])]
         prompt = _PROMPT_TEMPLATE.replace("{opencv_colors_context}", "\n".join(color_lines))
 
+    # LOG: Show the prompt being sent to AI
+    logger.info("=" * 60)
+    logger.info("[AIBridge] 📝 PROMPT SENT TO AI MODEL:")
+    logger.info(f"{prompt}")
+    logger.info("=" * 60)
+    print("=" * 60, flush=True)
+    print("📝 [AIBridge] PROMPT SENT TO AI MODEL:", flush=True)
+    print(f"{prompt}", flush=True)
+    print("=" * 60, flush=True)
+
     try:
         response = llm.create_chat_completion(
             messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}, {"type": "text", "text": prompt}]}],
@@ -192,8 +238,25 @@ def analyze_image(image: np.ndarray, opencv_colors: list = None) -> Optional[dic
         result = _parse_response(raw) or _get_safe_fallback()
         result = _adjust_for_resolution(result, h, w)
         _ai_cache[img_hash] = result
+        
+        # Log AI results
+        print(f"✅ [AIBridge] AI ANALYSIS COMPLETE", flush=True)
+        print(f"📊 [AIBridge] Class: {result.get('image_class', 'unknown')}", flush=True)
+        print(f"📊 [AIBridge] Params: denoise={result.get('denoise_strength', '-')}, "
+              f"upscale={result.get('upscale_factor', '-')}, "
+              f"smooth={result.get('smoothing_factor', '-')}, "
+              f"corner={result.get('corner_threshold', '-')}", flush=True)
+        logger.info(f"[AIBridge] ✅ AI ANALYSIS COMPLETE")
+        logger.info(f"[AIBridge] 📊 Class: {result.get('image_class', 'unknown')}")
+        logger.info(f"[AIBridge] 📊 Params: denoise={result.get('denoise_strength', '-')}, "
+                   f"upscale={result.get('upscale_factor', '-')}, "
+                   f"smooth={result.get('smoothing_factor', '-')}, "
+                   f"corner={result.get('corner_threshold', '-')}")
         return result
-    except Exception: return _get_safe_fallback()
+    except Exception as e:
+        print(f"❌ [AIBridge] AI Analysis failed: {e}", flush=True)
+        logger.error(f"[AIBridge] ❌ AI Analysis failed: {e}")
+        return _get_safe_fallback()
 
 def _get_safe_fallback() -> dict:
     return {
@@ -243,8 +306,26 @@ def _validate_ai_params(result: dict) -> dict:
     
     return result
 
-_PROMPT_TEMPLATE = "[PROMPT_OUTFIT]" # Real implementation uses the long prompt above
-_PROMPT = _PROMPT_TEMPLATE
+_PROMPT = """You are a professional silk screen printing expert and image analyst.
+Analyze this image and respond ONLY with a valid JSON object. No markdown, no explanation.
+
+Determine the best processing parameters for silk screen printing:
+
+- image_class: one of "text_logo" (sharp edges, 1-3 flat colors, text/icons), "artwork" (illustrations, limited colors, medium detail), "photo" (photographs, gradients, many tones)
+- num_colors: integer 1-8, exact number of ink colors needed for printing
+- use_halftone: true if gradients or photographic tones are present, false for flat/solid areas
+- lpi: integer 35-150, recommended lines-per-inch for halftone screen (lower for coarse mesh, higher for fine mesh)
+- smoothing_factor: float 0.01-0.5, how much to smooth vector paths (low for text/logos, higher for photos)
+- corner_threshold: float 20-180, angle in degrees for corner detection (low=sharp corners, high=smooth curves)
+- simplification_epsilon: float 0.01-3.0, path simplification tolerance
+- dot_shape: one of "round", "ellipse", "square", "line"
+- upscale_factor: float 1.0-4.0, how much to upscale if image is low resolution
+- denoise_strength: integer 0-10, noise removal strength
+
+Respond with ONLY this JSON structure:
+{"image_class": "artwork", "num_colors": 3, "use_halftone": false, "lpi": 65, "smoothing_factor": 0.25, "corner_threshold": 95.0, "simplification_epsilon": 1.2, "dot_shape": "round", "upscale_factor": 1.0, "denoise_strength": 3}"""
+
+_PROMPT_TEMPLATE = _PROMPT
 _ai_cache = {}
 
 def _get_image_hash(image: np.ndarray) -> str:
@@ -407,7 +488,8 @@ def analyze_with_prompt(
             f"Respond ONLY with a JSON object containing adjusted parameters:\n"
             f'{{"smoothing_factor": 0.0-0.5, "corner_threshold": 20-180, '
             f'"simplification_epsilon": 0.01-3.0, "use_halftone": true/false, '
-            f'"lpi": 45-150, "reason": "brief explanation based on user request"}}'
+            f'"lpi": 45-150, "dot_sizes": [1.0, 0.8, 1.2], '
+            f'"reason": "brief explanation based on user request"}}'
         )
 
         response = llm.create_chat_completion(
