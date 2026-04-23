@@ -178,6 +178,7 @@ class DecisionOracle:
             elif self.decision.image_class == 'photo': smooth = 0.65
             else: smooth = 0.35
             self.update_param('smoothing_factor', smooth, DecisionSource.HEURISTIC, "Class-based auto-smoothing")
+            args.smoothing_factor = smooth  # Sync back to args so pipeline uses it
 
         # 4. PHYSICAL CONSTRAINTS & LPI/DPI MAPPING
         mesh = safe_int(getattr(ppm_module, 'mesh_count', 160), 160)

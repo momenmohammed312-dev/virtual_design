@@ -13,6 +13,7 @@ import 'package:path/path.dart' as p;
 
 import 'python_config.dart';
 import 'process_result.dart';
+import 'package:virtual_design/domain/entities/processing_settings.dart';
 
 class PythonProcessor {
   final PythonConfig config;
@@ -336,11 +337,16 @@ class PythonProcessor {
 
     try {
       final pythonCmd = await config.resolvePythonCommand();
+      final geminiKey = const String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
       final process = await Process.start(
         pythonCmd,
         [autoFixScript, ...args],
         workingDirectory: scriptsDir,
-        environment: {'PYTHONPATH': scriptsDir},
+        environment: {
+          ...Platform.environment,
+          'PYTHONPATH': scriptsDir,
+          if (geminiKey.isNotEmpty) 'GEMINI_API_KEY': geminiKey,
+        },
       );
 
       final stdoutBuffer = StringBuffer();
@@ -395,5 +401,79 @@ class PythonProcessor {
       iteration: iteration,
       prevParams: prevParams,
     );
+  }
+
+  Future<String?> reprocessLayerAsHalftone({
+    required String imagePath,
+    required int layerIndex,
+    required String outputDir,
+  }) async {
+    try {
+      if (!config.isInitialized || !config.isPythonAvailable) {
+        Get.log('[PythonProcessor] reprocessLayerAsHalftone: Python not available');
+        return null;
+      }
+
+      // Build settings map directly for _buildArgs
+      // These keys must match the argument names expected by main.py (after hyphen conversion)
+      final settings = {
+        'colors': 1,
+        'dpi': 1200,
+        'halftone': true,
+        'lpi': 79,
+        'dotShape': 'round',
+        'meshCount': 355,
+        'reprocessLayer': layerIndex,
+      };
+
+      final args = _buildArgs(
+        imagePath: imagePath,
+        settings: settings,
+        outputDir: outputDir,
+      );
+
+      final pythonCmd = await config.resolvePythonCommand();
+      final scriptsDir = await config.getPythonScriptsDir();
+      final mainScript = p.join(scriptsDir, 'main.py');
+
+      Get.log('[PythonProcessor] reprocessLayerAsHalftone layer=$layerIndex args=$args');
+
+      final result = await Process.run(
+        pythonCmd,
+        [mainScript, ...args],
+        workingDirectory: scriptsDir,
+        environment: {
+          ...Platform.environment,
+          'PYTHONIOENCODING': 'utf-8',
+        },
+      );
+
+      if (result.exitCode != 0) {
+        Get.log('[PythonProcessor] reprocessLayerAsHalftone FAILED: ${result.stderr}');
+        return null;
+      }
+
+      // Find the new film PNG for this layer
+      final outputDirObj = Directory(outputDir);
+      if (!outputDirObj.existsSync()) return null;
+
+      final pngFiles = outputDirObj
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.toLowerCase().endsWith('.png') && !f.path.contains('debug'))
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
+
+      if (pngFiles.length > layerIndex) {
+        return pngFiles[layerIndex].path;
+      } else if (pngFiles.isNotEmpty) {
+        return pngFiles.last.path;
+      }
+
+      return null;
+    } catch (e) {
+      Get.log('[PythonProcessor] reprocessLayerAsHalftone exception: $e');
+      return null;
+    }
   }
 }

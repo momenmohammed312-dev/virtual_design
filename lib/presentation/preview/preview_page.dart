@@ -583,6 +583,25 @@ class PreviewPage extends StatelessWidget {
                               ],
                             ),
                           ),
+                          // Per-layer Halftone Toggle (NEW Fix 5)
+                          Obx(() => IconButton(
+                                icon: Icon(
+                                  controller.layerIsHalftone.length > index &&
+                                          controller.layerIsHalftone[index]
+                                      ? Icons.grain
+                                      : Icons.square,
+                                  color: controller.layerIsHalftone.length >
+                                              index &&
+                                          controller.layerIsHalftone[index]
+                                      ? primaryBlue
+                                      : Colors.grey.shade400,
+                                  size: 20,
+                                ),
+                                onPressed: () =>
+                                    controller.toggleLayerHalftone(index),
+                                tooltip: 'Per-layer Halftone',
+                              )),
+                          const SizedBox(width: 4),
                           isPdf
                               ? IconButton(
                                   icon: const Icon(Icons.open_in_new, size: 18),
@@ -1116,83 +1135,6 @@ class PreviewPage extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildTuningSlider({
-    required String label,
-    required RxDouble value,
-    required double min,
-    required double max,
-    int? divisions,
-    required String description,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(label,
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600)),
-              Obx(() => Text(
-                    value.value.toInt() == value.value
-                        ? value.value.toInt().toString()
-                        : value.value.toStringAsFixed(2),
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: primaryBlue,
-                        fontWeight: FontWeight.bold),
-                  )),
-            ],
-          ),
-          Obx(() {
-            final safeValue = value.value.clamp(min, max).toDouble();
-            if (safeValue != value.value) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                value.value = safeValue;
-              });
-            }
-            return Slider(
-              value: safeValue,
-              min: min,
-              max: max,
-              divisions: divisions,
-              onChanged: (v) => value.value = v,
-              activeColor: primaryBlue,
-            );
-          }),
-          Text(description,
-              style: const TextStyle(fontSize: 10, color: Colors.grey)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildColorSeed(PreviewController controller, Color color) {
-    return GestureDetector(
-      onTap: () => controller.tshirtColor.value = color,
-      child: Obx(() {
-        final isSelected = controller.tshirtColor.value == color;
-        return Container(
-          width: 30,
-          height: 30,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: isSelected ? primaryBlue : Colors.grey.shade300,
-              width: isSelected ? 3 : 1,
-            ),
-          ),
-          child: isSelected
-              ? const Icon(Icons.check, size: 15, color: Colors.white)
-              : null,
-        );
-      }),
     );
   }
 }

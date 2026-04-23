@@ -61,12 +61,13 @@ def apply_mobile_hints(args, decision, image):
     if not hints:
          return decision, None
          
-    if hints.image_class_hint != 'auto' and hints.ai_confidence > 0.8:
-         if getattr(decision, 'is_locked', False):
-              logger.info(f"[Mobile AI] Ignoring class hint '{hints.image_class_hint}' because decision is already LOCKED.")
-         else:
-              logger.info(f"[Mobile AI] Injecting highly confident class: {hints.image_class_hint}")
-              decision.image_class = hints.image_class_hint
+    # FIX: Disable automatic class injection; delegate to Fast Classifier for consistency
+    # if hints.image_class_hint != 'auto' and hints.ai_confidence > 0.8:
+    #      if getattr(decision, 'is_locked', False):
+    #           logger.info(f"[Mobile AI] Ignoring class hint '{hints.image_class_hint}' because decision is already LOCKED.")
+    #      else:
+    #           logger.info(f"[Mobile AI] Injecting highly confident class: {hints.image_class_hint}")
+    #           decision.image_class = hints.image_class_hint
          
     alpha_mask = None
     if hints.pre_mask_path:

@@ -67,6 +67,7 @@ class PreviewController extends GetxController {
   // Per-layer overrides
   final RxList<bool> isLayerInverted = <bool>[].obs;
   final RxList<bool> isLayerSolid = <bool>[].obs;
+  final RxList<bool> layerIsHalftone = <bool>[].obs;
 
   // Simulation Settings
   final Rx<Color> tshirtColor = Colors.white.obs;
@@ -314,6 +315,7 @@ class PreviewController extends GetxController {
           // Always reinitialize layer toggles to default (false) for new processing
           isLayerInverted.value = List.filled(previewPaths.length, false);
           isLayerSolid.value = List.filled(previewPaths.length, false);
+          layerIsHalftone.value = List.filled(previewPaths.length, false);
         }
 
         // Trigger cache bust (Phase 10) - Always update to force UI refresh
@@ -331,6 +333,57 @@ class PreviewController extends GetxController {
     if (index >= 0 && index < previewPaths.length) {
       selectedFilmIndex.value = index;
       fitToScreen(); // reset zoom when changing films
+    }
+  }
+
+  void toggleLayerHalftone(int index) {
+    if (index < 0 || index >= layerIsHalftone.length) return;
+    layerIsHalftone[index] = !layerIsHalftone[index];
+
+    if (layerIsHalftone[index]) {
+      _reprocessSingleLayer(index);
+    } else {
+      // Revert to original (re-load from output directory)
+      _loadFilmsAndInfo();
+    }
+  }
+
+  Future<void> _reprocessSingleLayer(int index) async {
+    if (isRegenerating.value) return;
+
+    try {
+      isRegenerating.value = true;
+      progress.value = 0.5;
+      progressMessage.value = 'Reprocessing layer ${index + 1} as halftone...';
+
+      final pythonProcessor = Get.find<PythonProcessor>();
+      final result = await pythonProcessor.reprocessLayerAsHalftone(
+        imagePath: imagePath.value,
+        layerIndex: index,
+        outputDir: outputDirectory.value,
+      );
+
+      if (result != null && result.isNotEmpty) {
+        // Force UI refresh by updating timestamp (don't append to path - breaks File())
+        previewPaths[index] = result;
+        lastUpdateTimestamp.value = DateTime.now().millisecondsSinceEpoch;
+        SoundManager().playDone();
+        Get.snackbar(
+          'Layer ${index + 1}',
+          'Halftone applied successfully.',
+          backgroundColor: Colors.green.withAlpha((0.1 * 255).round()),
+          colorText: Colors.green,
+        );
+      } else {
+        Get.snackbar('Error', 'Layer reprocessing failed. Check logs.');
+        layerIsHalftone[index] = false;
+      }
+    } catch (e) {
+      Get.log('Error in _reprocessSingleLayer: $e');
+      layerIsHalftone[index] = false;
+    } finally {
+      isRegenerating.value = false;
+      progress.value = 0.0;
     }
   }
 

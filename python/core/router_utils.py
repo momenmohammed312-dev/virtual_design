@@ -323,7 +323,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
     # print_job_config.validate_lpi() whenever one side was updated independently.
     mesh_count = getattr(args, 'mesh_count', None)
     if mesh_count is None:
-        mesh_count = 160  # Fallback to standard mesh
+        mesh_count = 355  # Corrected fallback for Phase 22
         logger.warning(f"[HalftonePipeline] mesh_count not provided, using fallback: {mesh_count}")
     dpi_lpi_ratio = 4.5
     auto_lpi = min(150, max(65, int(output_dpi / dpi_lpi_ratio)))
@@ -336,7 +336,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
     except Exception as _e:
         # Fallback: inline formula so the pipeline never crashes on import error.
         logger.warning(f"[HalftonePipeline] PrintJobConfig unavailable ({_e}), using inline LPI fallback")
-        mesh_safe = mesh_count if mesh_count is not None else 160
+        mesh_safe = mesh_count if mesh_count is not None else 355
         # FIX: Use correct industry standard mesh/4.5 ratio
         mesh_ceiling = int(mesh_safe / 4.5)
         dpi_ceiling  = output_dpi // 4

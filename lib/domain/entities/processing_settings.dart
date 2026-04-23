@@ -119,6 +119,7 @@ class ProcessingSettings {
   final String? imageClassHint;
   final double? aiConfidence;
   final String? preMaskPath;
+  final int? reprocessLayer;
 
   const ProcessingSettings({
     this.colorCount = 2,
@@ -158,6 +159,7 @@ class ProcessingSettings {
     this.imageClassHint,
     this.aiConfidence,
     this.preMaskPath,
+    this.reprocessLayer,
   });
 
   static const List<int> standardMeshCounts = [
@@ -224,6 +226,7 @@ class ProcessingSettings {
     String? scaleMode,
     double? customScalePercent,
     List<double>? dotSizeMultipliers,
+    int? reprocessLayer,
   }) =>
       ProcessingSettings(
         colorCount: colorCount ?? this.colorCount,
@@ -259,6 +262,7 @@ class ProcessingSettings {
         scaleMode: scaleMode ?? this.scaleMode,
         customScalePercent: customScalePercent ?? this.customScalePercent,
         dotSizeMultipliers: dotSizeMultipliers ?? this.dotSizeMultipliers,
+        reprocessLayer: reprocessLayer ?? this.reprocessLayer,
       );
 
   /// Validates settings and returns list of error messages if any

@@ -98,6 +98,15 @@ def run_pipeline(args: argparse.Namespace) -> int:
     
     from core.mobile_hints import apply_mobile_hints
     decision, mobile_mask = apply_mobile_hints(args, decision, image)
+    
+    # REPROCESS SINGLE LAYER AS HALFTONE
+    reprocess_layer = getattr(args, 'reprocess_layer', -1)
+    if reprocess_layer >= 0:
+        logger.info(f"[Main] Reprocessing single layer {reprocess_layer} as halftone")
+        args.halftone = True
+        args.colors = 1
+        # Force halftone pipeline for this specific layer only
+        args._single_layer_reprocess = reprocess_layer
     if mobile_mask is not None:
         alpha_mask = mobile_mask
     
@@ -301,6 +310,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--contour-min-area", type=int, default=50)
     parser.add_argument("--simplification-epsilon", type=float, default=1.2)
     parser.add_argument("--ai-autofix", action="store_true")
+    parser.add_argument("--reprocess-layer", type=int, default=-1, help="Index of a single layer to re-process")
 
     # Scaling & Physical Source Integrity (Phase 2 Upgrade)
     parser.add_argument("--target-width-mm", type=float, default=0.0, help="Explicit target width in mm")
