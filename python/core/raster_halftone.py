@@ -129,11 +129,11 @@ class RasterHalftoneEngine:
         )
 
         # FIX: [Task 2c] Auto-boost if coverage too low
-        if coverage < 3.0 and cfg.gamma > 0.8:
-            logger.warning(f"[RasterHalftone] Coverage {coverage:.1f}% critically low — auto-retry with gamma={cfg.gamma - 0.4:.1f}")
+        if coverage < 2.0 and cfg.gamma > 1.2:
+            logger.warning(f"[RasterHalftone] Coverage {coverage:.1f}% critically low — auto-retry with gamma={cfg.gamma - 0.2:.1f}")
             cfg_retry = RasterHalftoneConfig(
                 lpi=cfg.lpi, dpi=cfg.dpi, angle=cfg.angle, dot_fn=cfg.dot_fn,
-                gamma=max(0.8, cfg.gamma - 0.4), oversample=cfg.oversample,
+                gamma=max(1.2, cfg.gamma - 0.2), oversample=cfg.oversample,
                 threshold=cfg.threshold,
                 source_dpi=cfg.source_dpi,
                 greyscale_output=cfg.greyscale_output
@@ -261,8 +261,8 @@ class RasterHalftoneEngine:
                 # Calculate dot radius based on ink amount
                 # At 0% ink: radius = 0 (no dot)
                 # At 100% ink: radius = dot_spacing/2 (full cell)
-                max_radius = dot_spacing * 0.5
-                radius = max_radius * math.sqrt(ink)  # Square root for better tone curve
+                max_radius = dot_spacing * 0.42   # cap at 42% of cell (leaves visible gap)
+                radius = max_radius * math.pow(ink, 0.65)  # gentler curve, smaller dots at low ink
                 
                 if radius < 0.5:
                     continue  # Too small to draw

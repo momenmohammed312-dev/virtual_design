@@ -134,14 +134,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onPressed: () => _scaffoldKey.currentState?.openDrawer(),
             ),
           const SizedBox(width: 8),
-          const Text(
-            'Dashboard',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Expanded(
+            child: Text(
+              'Dashboard',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           Flexible(
-            child: SizedBox(
-              width: context.isMobile ? 150 : 300,
+            flex: 2,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: context.isMobile ? 150 : 300),
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
@@ -211,13 +215,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             Icon(icon, color: color, size: 22),
             const SizedBox(height: 6),
-            Text(title,
-                style: const TextStyle(fontSize: 11, color: Colors.black54),
-                overflow: TextOverflow.ellipsis),
-            Text(value,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                overflow: TextOverflow.ellipsis),
+            Flexible(
+              child: Text(title,
+                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            Flexible(
+              child: Text(value,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis),
+            ),
           ],
         ),
       ),

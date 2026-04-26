@@ -407,6 +407,11 @@ class PythonProcessor {
     required String imagePath,
     required int layerIndex,
     required String outputDir,
+    int dpi = 1200,
+    int lpi = 79,
+    String dotShape = 'round',
+    int meshCount = 355,
+    double dotSizeMultiplier = 0.7,
   }) async {
     try {
       if (!config.isInitialized || !config.isPythonAvailable) {
@@ -418,11 +423,12 @@ class PythonProcessor {
       // These keys must match the argument names expected by main.py (after hyphen conversion)
       final settings = {
         'colors': 1,
-        'dpi': 1200,
+        'dpi': dpi,
         'halftone': true,
-        'lpi': 79,
-        'dotShape': 'round',
-        'meshCount': 355,
+        'lpi': lpi,
+        'dotShape': dotShape,
+        'meshCount': meshCount,
+        'dotSize': dotSizeMultiplier,
         'reprocessLayer': layerIndex,
       };
 

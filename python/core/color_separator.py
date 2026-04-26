@@ -99,10 +99,21 @@ class ColorSeparator:
                 border_samples.reshape(1, -1, 3), cv2.COLOR_BGR2LAB
             ).reshape(-1, 3).astype(np.float32)
             border_lightness_var = float(np.var(border_lab[:, 0]))
-            border_ab_magnitude  = float(np.mean(np.abs(border_lab[:, 1:])))
-            # Bleed if: consistent border colour (low variance) that is not
-            # achromatic white/grey (ab channels are non-zero)
+            
+            # FIXED: OpenCV LAB offsets a/b by 128. Subtract to get true neutral at 0.
+            border_ab_centered = border_lab[:, 1:] - 128.0
+            border_ab_magnitude = float(np.mean(np.abs(border_ab_centered)))
+            
+            # Bleed if: consistent border colour (low variance) that is NOT achromatic
             is_bleed_artwork = border_lightness_var < 50 and border_ab_magnitude > 5
+
+            # SAFETY: If border is nearly pure white or black, it's NOT bleed
+            is_achromatic_border = (
+                np.all(border_mean_bgr > 220) or  # near-white
+                np.all(border_mean_bgr < 35)       # near-black
+            )
+            if is_achromatic_border:
+                is_bleed_artwork = False
         else:
             is_white_background = True
             is_black_background = False
@@ -407,21 +418,31 @@ class ColorSeparator:
         
         logger.info(f"[ColorSeparator] 🔍 Checking {len(color_info)} colors for background exclusion:")
         for i, (center, info) in enumerate(zip(sorted_centers, color_info)):
-            bgr = np.clip(center, 0, 255).astype(np.uint8)
+            # Determine actual BGR color for comparison
+            if use_lab:
+                bgr_actual = cv2.cvtColor(
+                    np.array([[np.clip(center, 0, 255).astype(np.uint8)]], dtype=np.uint8), 
+                    cv2.COLOR_LAB2BGR
+                )[0][0]
+            else:
+                bgr_actual = np.clip(center, 0, 255).astype(np.uint8)
+                
             brightness = info['brightness']
             coverage_pct = info['percentage']
             
             # Debug: log every color being checked
-            logger.warning(f"[ColorSeparator] 🔍 Color {i}: BGR={bgr.tolist()}, brightness={brightness:.1f}, coverage={coverage_pct:.2f}%")
+            logger.warning(f"[ColorSeparator] 🔍 Color {i}: BGR={bgr_actual.tolist()}, brightness={brightness:.1f}, coverage={coverage_pct:.2f}%")
             
             # Skip colors that are:
             # 1. Too bright (background-like) OR
-            # 2. Have too little coverage (< 1%)
-            is_background_like = brightness > background_brightness_threshold
+            # 2. Near-white (using BGR channels) OR
+            # 3. Have too little coverage (< 1%)
+            is_near_white = np.all(bgr_actual > 235)
+            is_background_like = brightness > background_brightness_threshold or is_near_white
             is_too_small = coverage_pct < min_color_coverage_pct
             
             if is_background_like:
-                logger.warning(f"[ColorSeparator] ❌ EXCLUDING color {i}: brightness={brightness:.1f} > {background_brightness_threshold} (BACKGROUND-LIKE)")
+                logger.warning(f"[ColorSeparator] ❌ EXCLUDING color {i}: brightness={brightness:.1f}, is_white={is_near_white} (BACKGROUND-LIKE)")
                 continue
             if is_too_small:
                 logger.warning(f"[ColorSeparator] ❌ EXCLUDING color {i}: coverage={coverage_pct:.2f}% < {min_color_coverage_pct}% (TOO SMALL)")
@@ -429,7 +450,7 @@ class ColorSeparator:
             
             logger.warning(f"[ColorSeparator] ✅ KEEPING color {i}: brightness={brightness:.1f}, coverage={coverage_pct:.2f}%")
                 
-            rgb_pixel = cv2.cvtColor(np.array([[bgr]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
+            rgb_pixel = cv2.cvtColor(np.array([[bgr_actual]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
             valid_colors.append(tuple(int(x) for x in rgb_pixel))
             valid_centers.append(center)
             valid_labels.append(i)
@@ -522,17 +543,17 @@ class ColorSeparator:
         brightness = []
         
         for i, center in enumerate(centers):
+            center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
             if use_lab:
-                center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
-                lab_pixel = np.array([[center_uint8]], dtype=np.uint8)
-                bgr_pixel = cv2.cvtColor(lab_pixel, cv2.COLOR_LAB2BGR)[0][0]
-                rgb_pixel = cv2.cvtColor(np.array([[bgr_pixel]], dtype=np.uint8), cv2.COLOR_BGR2RGB)[0][0]
-                brightness_val = np.mean(rgb_pixel)
+                # Convert LAB center -> BGR -> compute true pixel brightness
+                bgr_pixel = cv2.cvtColor(
+                    np.array([[center_uint8]], dtype=np.uint8), cv2.COLOR_LAB2BGR
+                )[0][0]
             else:
-                center_uint8 = np.clip(center, 0, 255).astype(np.uint8)
-                gray_val = cv2.cvtColor(np.array([[center_uint8]], dtype=np.uint8), cv2.COLOR_BGR2GRAY)[0][0]
-                brightness_val = float(gray_val)
+                bgr_pixel = center_uint8
             
+            # Brightness = mean of BGR channels (consistent 0-255 scale)
+            brightness_val = float(np.mean(bgr_pixel))
             brightness.append(brightness_val)
         
         return np.array(brightness)

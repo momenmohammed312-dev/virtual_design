@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../core/utils/responsive.dart';
 
 class UsersPage extends StatefulWidget {
   const UsersPage({super.key});
@@ -40,15 +41,20 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
+    final bool isDesktop = context.isDesktop;
+
     return Scaffold(
+      key: scaffoldKey,
       backgroundColor: const Color(0xFFF5F5F5),
+      drawer: isDesktop ? null : Drawer(child: _buildSidebar()),
       body: Row(
         children: [
-          _buildSidebar(),
+          if (isDesktop) _buildSidebar(),
           Expanded(
             child: Column(
               children: [
-                _buildTopBar(),
+                _buildTopBar(isDesktop, scaffoldKey),
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(30),
@@ -211,7 +217,7 @@ class _UsersPageState extends State<UsersPage> {
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(bool isDesktop, GlobalKey<ScaffoldState> scaffoldKey) {
     return Container(
       height: 60,
       padding: const EdgeInsets.symmetric(horizontal: 30),
@@ -227,11 +233,19 @@ class _UsersPageState extends State<UsersPage> {
       ),
       child: Row(
         children: [
-          const Text(
-            'User Management',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          if (!isDesktop)
+            IconButton(
+              icon: const Icon(Icons.menu),
+              onPressed: () => scaffoldKey.currentState?.openDrawer(),
+            ),
+          const Expanded(
+            child: Text(
+              'User Management',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           IconButton(
             onPressed: () {},
             icon: const Icon(Icons.notifications_none_outlined),
@@ -249,19 +263,13 @@ class _UsersPageState extends State<UsersPage> {
   }
 
   Widget _buildStatsCards() {
-    return Row(
+    return Wrap(
+      spacing: 15,
+      runSpacing: 15,
       children: [
-        Expanded(
-          child: _buildStatCard('Total Users', totalUsers.toString(), Colors.blue),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: _buildStatCard('Active', activeUsers.toString(), Colors.green),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: _buildStatCard('Inactive', inactiveUsers.toString(), Colors.orange),
-        ),
+        _buildStatCard('Total Users', totalUsers.toString(), Colors.blue),
+        _buildStatCard('Active', activeUsers.toString(), Colors.green),
+        _buildStatCard('Inactive', inactiveUsers.toString(), Colors.orange),
       ],
     );
   }
@@ -276,6 +284,7 @@ class _UsersPageState extends State<UsersPage> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
@@ -291,24 +300,29 @@ class _UsersPageState extends State<UsersPage> {
                   color: color,
                 ),
               ),
-              const Spacer(),
             ],
           ),
           const SizedBox(height: 15),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
+          Flexible(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(height: 5),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 13,
-              color: Color(0xFF6B7280),
+          Flexible(
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B7280),
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -317,10 +331,13 @@ class _UsersPageState extends State<UsersPage> {
   }
 
   Widget _buildTableHeader() {
-    return Row(
+    return Wrap(
+      spacing: 15,
+      runSpacing: 15,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Expanded(
-          flex: 3,
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 300),
           child: TextField(
             onChanged: (value) => setState(() => _searchQuery = value),
             decoration: InputDecoration(
@@ -336,7 +353,6 @@ class _UsersPageState extends State<UsersPage> {
             ),
           ),
         ),
-        const SizedBox(width: 15),
         Container(
           width: 150,
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -360,7 +376,6 @@ class _UsersPageState extends State<UsersPage> {
             },
           ),
         ),
-        const SizedBox(width: 15),
         ElevatedButton.icon(
           onPressed: () => _showAddUserDialog(),
           icon: const Icon(Icons.add, size: 18),
@@ -381,15 +396,14 @@ class _UsersPageState extends State<UsersPage> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE5E7EB)),
       ),
-      child: ListView.separated(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _filteredUsers.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final user = _filteredUsers[index];
-          return _buildUserRow(user);
-        },
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: context.screenWidth > 1000 ? context.screenWidth - 310 : 800),
+          child: Column(
+            children: _filteredUsers.map((user) => _buildUserRow(user)).toList(),
+          ),
+        ),
       ),
     );
   }

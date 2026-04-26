@@ -125,7 +125,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     print(f"📊 [Main] FINAL DECISION: class={decision.image_class}, LPI={final_lpi}, DPI={final_dpi}, halftone={final_halftone}", flush=True)
     logger.info(f"[Main] FINAL: LPI={final_lpi}, DPI={final_dpi}, halftone={final_halftone}")
     
-    _progress(0.4, f"Oracle: {decision.image_class.upper()}")
+    _progress(0.4, f"Ai Decisions: {decision.image_class.upper()}")
 
     # 3. Routing Phase
     _step(3, "Executing Pipeline Plan")
@@ -139,6 +139,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     setattr(args, 'reasoning', decision.reasoning)
     
     result: PipelineResult = router.route_deterministic(image, decision)
+    _progress(0.6, "Generating film layers...")
 
     
     # Cleanup memory
@@ -160,6 +161,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
             from reportlab.lib.pagesizes import A4, A3, letter
             from core.vector_exporter import render_raster_halftone
             from core.vector_marks import add_vector_marks_to_page
+            _progress(0.85, "Exporting PDF film...")
 
             page_sizes = {'A4': A4, 'A3': A3, 'LETTER': letter}
             page_name = params.get('page_size', 'A4').upper()
@@ -193,7 +195,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
                     custom_scale_percent=safe_float(params.get('custom_scale_percent', 100.0)),
                     custom_page_w=p_width,
                     custom_page_h=p_height,
-                    fit_to_artwork=params.get('fit_artwork', False)
+                    fit_to_artwork=params.get('fit_artwork', False),
+                    lpi=int(params.get('lpi', 45)),
+                    mesh_count=int(mesh_count)
                 )
                 
                 job_name = Path(args.input).stem
@@ -206,10 +210,11 @@ def run_pipeline(args: argparse.Namespace) -> int:
             if page_size_val.upper() == 'CUSTOM':
                 page_size_val = f"{params.get('page_width', 210)}x{params.get('page_height', 297)}"
 
-            # FIX: Pass original dimensions for proper scaling if image was downscaled
             if 'original_dimensions' in sep_res:
                 setattr(args, 'original_dimensions', sep_res['original_dimensions'])
                 logger.info(f"[Export] Original dimensions: {sep_res['original_dimensions']}")
+
+            _progress(0.85, "Exporting PDF film...")
 
             export_vector_pdf(
                 masks=masks, colors=sep_res['colors'], color_names=sep_res['color_names'],
@@ -220,25 +225,38 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 image_class=result.image_class, page_size=page_size_val,
                 epsilon=safe_float(params.get('simplification_epsilon', 1.2)),
                 job_name=Path(args.input).stem, is_halftone=params.get('halftone', False),
-                args=args
+                args=args,
+                lpi=int(params.get('lpi', 45)),
+                mesh_count=int(mesh_count),
+                angle=45.0
             )
 
         # Previews - save mask directly (ink=0 black, background=255 white)
         for i, (mask, color_name) in enumerate(zip(masks, sep_res['color_names'])):
-            cv2.imwrite(str(output_dir / f"film_{i+1}_{color_name.replace(' ', '_')}.png"), mask)
+            display_idx = (reprocess_layer + 1) if reprocess_layer >= 0 else (i + 1)
+            # CRITICAL FIX: If reprocessing, remove old file for this index to avoid name mismatch (e.g. Black vs Gold)
+            if reprocess_layer >= 0:
+                for existing_file in output_dir.glob(f"film_{display_idx}_*.png"):
+                    try: os.remove(existing_file)
+                    except: pass
+            
+            cv2.imwrite(str(output_dir / f"film_{display_idx}_{color_name.replace(' ', '_')}.png"), mask)
 
-        # Write color_info.json for Dart
-        color_info_path = Path(args.output) / 'color_info.json'
-        color_data = []
-        for name, rgb in zip(sep_res['color_names'], sep_res['colors']):
-            hex_str = f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}"
-            color_data.append({
-                'name': name,
-                'hex': hex_str,
-                'percentage': 0.0
-            })
-        with open(color_info_path, 'w', encoding='utf-8') as f:
-            json.dump({'colors': color_data}, f)
+        # 5. Write metadata (ONLY for full runs, skip if reprocessing single layer)
+        if reprocess_layer < 0:
+            color_info_path = Path(args.output) / 'color_info.json'
+            color_data = []
+            for name, rgb in zip(sep_res['color_names'], sep_res['colors']):
+                hex_str = f"#{int(rgb[0]):02x}{int(rgb[1]):02x}{int(rgb[2]):02x}"
+                color_data.append({
+                    'name': name,
+                    'hex': hex_str,
+                    'percentage': 0.0
+                })
+            with open(color_info_path, 'w', encoding='utf-8') as f:
+                json.dump({'colors': color_data}, f)
+        else:
+            logger.info(f"[Main] Reprocess mode: Skipping color_info.json update to preserve other layers.")
 
         _progress(1.0, "Complete")
         if getattr(args, 'json_output', False):
@@ -252,6 +270,15 @@ def run_pipeline(args: argparse.Namespace) -> int:
     except Exception as e:
         logger.error(f"Export failed: {e}", exc_info=True)
         return 1
+    
+    # 5. SINGLE LAYER REPROCESS CLEANUP
+    # If we are only reprocessing one layer, we exit here to avoid overwriting color_info.json
+    # or the global PDF, which would make other layers "disappear" from the UI.
+    if reprocess_layer >= 0:
+        logger.info(f"[Main] Single layer {reprocess_layer} reprocessed successfully. Skipping global metadata update.")
+        _progress(1.0, "Layer reprocessed")
+        _output_dir_signal(str(output_dir))
+        return 0
 
     try:
         from core.mobile_hints import cleanup_mobile_mask

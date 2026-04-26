@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'preview_controller.dart';
+import '../../core/utils/responsive.dart';
 
 void _showAIFixDialog(PreviewController controller) {
   final textController = TextEditingController();
@@ -75,15 +76,19 @@ class PreviewPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = Get.find<PreviewController>();
 
+    final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
+
     return Scaffold(
+      key: scaffoldKey,
       backgroundColor: const Color(0xFFF5F5F5),
+      drawer: context.isDesktop ? null : Drawer(child: _buildSidebar()),
       body: Row(
         children: [
-          _buildSidebar(),
+          if (context.isDesktop) _buildSidebar(),
           Expanded(
             child: Column(
               children: [
-                _buildTopBar(),
+                _buildTopBar(context.isDesktop, scaffoldKey),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) {
@@ -112,26 +117,31 @@ class PreviewPage extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 30),
-                            SizedBox(
-                              height: 500,
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Main Preview Area
-                                  Expanded(
-                                    flex: 7,
-                                    child: _buildPreviewArea(controller),
-                                  ),
-                                  const SizedBox(width: 20),
+                            if (isNarrow) ...[
+                              _buildPreviewArea(controller),
+                              const SizedBox(height: 20),
+                              _buildRightPanel(controller),
+                            ] else
+                              SizedBox(
+                                height: 500,
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Main Preview Area
+                                    Expanded(
+                                      flex: 7,
+                                      child: _buildPreviewArea(controller),
+                                    ),
+                                    const SizedBox(width: 20),
 
-                                  // Sidebar with Layers Panel only (Bug 1: Removed Fine-Tune tab)
-                                  SizedBox(
-                                    width: 260,
-                                    child: _buildRightPanel(controller),
-                                  ),
-                                ],
+                                    // Sidebar with Layers Panel only (Bug 1: Removed Fine-Tune tab)
+                                    SizedBox(
+                                      width: 260,
+                                      child: _buildRightPanel(controller),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
                             const SizedBox(height: 20),
                             _buildBottomActions(controller, isNarrow),
                           ],
@@ -974,7 +984,7 @@ class PreviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(bool isDesktop, GlobalKey<ScaffoldState> scaffoldKey) {
     return Container(
       height: 60,
       padding: const EdgeInsets.symmetric(horizontal: 30),
@@ -990,6 +1000,11 @@ class PreviewPage extends StatelessWidget {
       ),
       child: Row(
         children: [
+          if (!isDesktop)
+            IconButton(
+              icon: const Icon(Icons.menu),
+              onPressed: () => scaffoldKey.currentState?.openDrawer(),
+            ),
           const Expanded(
             child: Text(
               'Print Preview',

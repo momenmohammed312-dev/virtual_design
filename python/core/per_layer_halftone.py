@@ -45,9 +45,14 @@ def multiplier_to_lpi(base_lpi, multiplier, mesh_count):
     Applies safety bounds: 25 <= LPI <= mesh/3.5
     """
     if multiplier <= 0:
-        multiplier = 1.0
+        multiplier = 0.7
         
-    effective = base_lpi / multiplier
+    # Standardize: 0.7 is the "Normal" base.
+    # If multiplier = 0.7, effective = base_lpi.
+    # If multiplier = 1.0 (Bold), effective = base_lpi / (1.42) -> Lower LPI -> Larger dots.
+    # If multiplier = 0.3 (Fine), effective = base_lpi / (0.42) -> Higher LPI -> Smaller dots.
+    effective = base_lpi / (multiplier / 0.7)
+    
     max_lpi = mesh_count / 3.5 if mesh_count else 150
     
     return int(max(25, min(max_lpi, effective)))

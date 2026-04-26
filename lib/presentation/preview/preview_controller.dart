@@ -357,10 +357,19 @@ class PreviewController extends GetxController {
       progressMessage.value = 'Reprocessing layer ${index + 1} as halftone...';
 
       final pythonProcessor = Get.find<PythonProcessor>();
+      final settings = initialSettings.value;
+      final ht = settings?.halftoneSettings;
       final result = await pythonProcessor.reprocessLayerAsHalftone(
         imagePath: imagePath.value,
         layerIndex: index,
         outputDir: outputDirectory.value,
+        dpi: settings?.dpi.toInt() ?? 1200,
+        lpi: ht?.lpi ?? 79,
+        dotShape: ht?.dotShape ?? 'round',
+        meshCount: settings?.meshCount ?? 355,
+        dotSizeMultiplier: dotSizeMultipliers.isNotEmpty && index < dotSizeMultipliers.length
+            ? dotSizeMultipliers[index]
+            : (ht?.dotSizeMultiplier ?? 0.7),
       );
 
       if (result != null && result.isNotEmpty) {
@@ -578,6 +587,19 @@ class PreviewController extends GetxController {
 
         print('[AI_AUTOFIX] Applied changes: $changes');
         Get.log('[AI_AUTOFIX] Applied changes: $changes');
+
+        if (changes.isEmpty) {
+          Get.snackbar(
+            'AI AutoFix',
+            'No issues detected — image quality is already optimal.',
+            snackPosition: SnackPosition.BOTTOM,
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.green.withAlpha(30),
+            colorText: Colors.green[800],
+          );
+          isRegenerating.value = false;
+          return;
+        }
 
         _lastAutoFixParams = result; // Store for next iteration
         final reason = result['adjustment_reason'] ?? 'AI adjustments applied';

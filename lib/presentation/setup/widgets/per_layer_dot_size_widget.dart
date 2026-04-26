@@ -39,7 +39,7 @@ class _PerLayerDotSizeWidgetState extends State<PerLayerDotSizeWidget> {
   void initState() {
     super.initState();
     multipliers =
-        List.filled(widget.colorCount > 0 ? widget.colorCount : 1, 1.0);
+        List.filled(widget.colorCount > 0 ? widget.colorCount : 1, 0.7);
   }
 
   @override
@@ -48,7 +48,7 @@ class _PerLayerDotSizeWidgetState extends State<PerLayerDotSizeWidget> {
     if (oldWidget.colorCount != widget.colorCount) {
       final currentMultipliers = List<double>.from(multipliers);
       multipliers =
-          List.filled(widget.colorCount > 0 ? widget.colorCount : 1, 1.0);
+          List.filled(widget.colorCount > 0 ? widget.colorCount : 1, 0.7);
       for (int i = 0;
           i < currentMultipliers.length && i < multipliers.length;
           i++) {
@@ -73,16 +73,16 @@ class _PerLayerDotSizeWidgetState extends State<PerLayerDotSizeWidget> {
   }
 
   String _getLabel(double multiplier) {
-    if (multiplier <= 0.6) return 'Very Fine';
-    if (multiplier <= 0.8) return 'Fine';
-    if (multiplier <= 1.1) return 'Normal';
-    if (multiplier <= 1.3) return 'Bold';
+    if (multiplier <= 0.4) return 'Extra Fine';
+    if (multiplier <= 0.6) return 'Fine';
+    if (multiplier <= 0.8) return 'Normal';
+    if (multiplier <= 1.0) return 'Bold';
     return 'Very Bold';
   }
 
   int _getEffectiveLpi(double multiplier) {
-    if (multiplier <= 0) multiplier = 1.0;
-    return (widget.baseLpi / multiplier).round().clamp(25, 200);
+    if (multiplier <= 0) multiplier = 0.5;
+    return (widget.baseLpi / multiplier).round().clamp(25, 300);
   }
 
   @override
@@ -126,7 +126,7 @@ class _PerLayerDotSizeWidgetState extends State<PerLayerDotSizeWidget> {
                     label: const Text('Reset'),
                     onPressed: () {
                       setState(() {
-                        multipliers = List.filled(multipliers.length, 1.0);
+                        multipliers = List.filled(multipliers.length, 0.7);
                         widget.onChanged(multipliers);
                       });
                     },
@@ -159,10 +159,10 @@ class _PerLayerDotSizeWidgetState extends State<PerLayerDotSizeWidget> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Slider(
-                        value: val,
-                        min: 0.5,
-                        max: 1.5,
-                        divisions: 20,
+                        value: val.clamp(0.3, 1.2),
+                        min: 0.3,
+                        max: 1.2,
+                        divisions: 18,
                         activeColor: c,
                         onChanged: (v) => _updateMultiplier(index, v),
                       ),
@@ -203,7 +203,7 @@ class DotSizePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 1.0 = normal size
-    double size = 12 * multiplier;
+    double size = 20 * multiplier;
     return Container(
       width: 24,
       height: 24,

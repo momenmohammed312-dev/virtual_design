@@ -215,11 +215,14 @@ class _FilesPageState extends State<FilesPage> {
       ),
       child: Row(
         children: [
-          const Text(
-            'My Folders / Files',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Expanded(
+            child: Text(
+              'My Folders / Files',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           IconButton(
             onPressed: () {},
             icon: const Icon(Icons.notifications_none_outlined),
@@ -242,19 +245,13 @@ class _FilesPageState extends State<FilesPage> {
     // For folders, we don't have status - just show count
     final totalItems = folders.fold<int>(0, (sum, f) => sum + (f['itemCount'] as int));
 
-    return Row(
+    return Wrap(
+      spacing: 15,
+      runSpacing: 15,
       children: [
-        Expanded(
-          child: _buildStatCard('Total Folders', totalFolders.toString(), Colors.blue),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: _buildStatCard('Total Items', totalItems.toString(), Colors.green),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: _buildStatCard('My Files', totalItems.toString(), Colors.orange),
-        ),
+        _buildStatCard('Total Folders', totalFolders.toString(), Colors.blue),
+        _buildStatCard('Total Items', totalItems.toString(), Colors.green),
+        _buildStatCard('My Files', totalItems.toString(), Colors.orange),
       ],
     );
   }
@@ -269,6 +266,7 @@ class _FilesPageState extends State<FilesPage> {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
@@ -284,24 +282,29 @@ class _FilesPageState extends State<FilesPage> {
                   color: color,
                 ),
               ),
-              const Spacer(),
             ],
           ),
           const SizedBox(height: 15),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Colors.black,
+          Flexible(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(height: 5),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 13,
-              color: Color(0xFF6B7280),
+          Flexible(
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B7280),
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -310,9 +313,13 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Widget _buildFilterBar() {
-    return Row(
+    return Wrap(
+      spacing: 15,
+      runSpacing: 15,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Expanded(
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 300),
           child: TextField(
             onChanged: (value) => setState(() => _searchQuery = value),
             decoration: InputDecoration(
@@ -328,32 +335,33 @@ class _FilesPageState extends State<FilesPage> {
             ),
           ),
         ),
-        const SizedBox(width: 15),
-        Row(
-          children: ['All', 'Complete', 'Processing', 'Error'].map((status) {
-            final isSelected = _statusFilter == status;
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                label: Text(status),
-                selected: isSelected,
-                onSelected: (selected) {
-                  if (selected) setState(() => _statusFilter = status);
-                },
-                selectedColor: primaryBlue,
-                labelStyle: TextStyle(
-                  color: isSelected ? Colors.white : Colors.grey[700],
-                  fontSize: 13,
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: ['All', 'Complete', 'Processing', 'Error'].map((status) {
+              final isSelected = _statusFilter == status;
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(status),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    if (selected) setState(() => _statusFilter = status);
+                  },
+                  selectedColor: primaryBlue,
+                  labelStyle: TextStyle(
+                    color: isSelected ? Colors.white : Colors.grey[700],
+                    fontSize: 13,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: const BorderSide(color: Color(0xFFE5E7EB)),
+                  ),
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  side: const BorderSide(color: Color(0xFFE5E7EB)),
-                ),
-              ),
-            );
-          }).toList(),
+              );
+            }).toList(),
+          ),
         ),
-        const SizedBox(width: 15),
         ElevatedButton.icon(
           onPressed: () => Get.toNamed('/upload'),
           icon: const Icon(Icons.add, size: 18),
@@ -441,7 +449,7 @@ class _FilesPageState extends State<FilesPage> {
         children: [
           // Folder icon header
           Container(
-            height: 120,
+            height: 100, // Reduced from 120
             decoration: BoxDecoration(
               color: const Color(0xFFE3F2FD),
               borderRadius: const BorderRadius.only(
@@ -452,44 +460,50 @@ class _FilesPageState extends State<FilesPage> {
             child: Center(
               child: Icon(
                 Icons.folder,
-                size: 64,
+                size: 48, // Reduced from 64
                 color: const Color(0xFF1564A5).withAlpha((0.8 * 255).round()),
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  folder['name'],
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  folder['path'],
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    const Icon(Icons.insert_drive_file, size: 14, color: Color(0xFF6B7280)),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${folder['itemCount']} items',
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(12), // Reduced from 16
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    folder['name'],
+                    style: const TextStyle(
+                      fontSize: 14, // Reduced from 16
+                      fontWeight: FontWeight.bold,
                     ),
-                  ],
-                ),
-              ],
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    folder['path'],
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.insert_drive_file, size: 12, color: Color(0xFF6B7280)),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          '${folder['itemCount']} items',
+                          style: const TextStyle(fontSize: 11, color: Color(0xFF6B7280)),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ],

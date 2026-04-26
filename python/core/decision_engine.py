@@ -132,9 +132,11 @@ class DecisionOracle:
                     final_class = ai_class
                     is_class_locked = True
                     self.decision.is_locked = True
+                    self.decision.confidence = ai_conf
                     logger.info(f"[DecisionEngine] Class LOCKED by high-conf AI: {final_class} ({ai_conf:.2%})")
-                elif ai_conf > 0.6:
+                elif ai_conf > 0.1: # Store even low confidence for decision logic
                     final_class = ai_class
+                    self.decision.confidence = ai_conf
                 
                 # Propagate AI parameters if not user-set
                 for p, val in ai_result.items():
@@ -149,10 +151,13 @@ class DecisionOracle:
             analyzer = SmartAnalyzer()
             dpi = self.decision.parameters.get('dpi', 300)
             smart_result = analyzer.analyze(image, dpi=dpi)
-            if self.decision.image_class == 'artwork' or self.decision.confidence < 0.4:
+            
+            # SmartAnalyzer overrides only if AI confidence is low (< 0.7)
+            # or if the current class is generic 'artwork' and smart analyzer found something more specific
+            if self.decision.confidence < 0.7:
                 final_class = smart_result.image_class.value
                 self.decision.confidence = smart_result.confidence
-                logger.info(f"[DecisionEngine] Heuristic fallback: {final_class}")
+                logger.info(f"[DecisionEngine] Heuristic fallback: {final_class} (AI conf was {self.decision.confidence:.2%})")
 
         self.decision.image_class = final_class
         

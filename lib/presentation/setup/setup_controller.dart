@@ -31,9 +31,7 @@ class SetupController extends GetxController {
   final RxDouble cornerThreshold = 45.0.obs; // 15-150°
   final RxInt smoothingSlider = 35.obs; // Legacy
 
-  // Track if user manually moved these sliders
-  bool smoothingAdjustmentMade = false;
-  bool cornerAdjustmentMade = false;
+  // Track if user manually moved threshold slider
   bool thresholdAdjustmentMade = false;
 
   // AI Auto-Fix controls
@@ -152,8 +150,7 @@ class SetupController extends GetxController {
           break;
       }
       // Reset adjustment flags when image type changes to allow engine defaults
-      smoothingAdjustmentMade = false;
-      cornerAdjustmentMade = false;
+      thresholdAdjustmentMade = false;
     });
   }
 
@@ -203,8 +200,6 @@ class SetupController extends GetxController {
     smoothingFactor.value = 35.0;
     cornerThreshold.value = 45.0;
     smoothingSlider.value = 35;
-    smoothingAdjustmentMade = false;
-    cornerAdjustmentMade = false;
     thresholdAdjustmentMade = false;
     // New AI controls
     isAiAutoFix.value = true;
@@ -288,8 +283,8 @@ class SetupController extends GetxController {
         responsiveMode: responsiveMode.value,
         imageType: selectedImageType.value,
         globalThreshold: thresholdAdjustmentMade ? globalThreshold.value : 0.0,
-        smoothingFactor: smoothingAdjustmentMade ? smoothingFactor.value : -1.0,
-        cornerThreshold: cornerAdjustmentMade ? cornerThreshold.value : -1.0,
+        smoothingFactor: -1.0, // -1.0 means the Python pipeline decides automatically
+        cornerThreshold: -1.0, // -1.0 means the Python pipeline decides automatically
         smoothingSlider: -1, // Use independent smoothingFactor instead
         targetWidthMm: targetWidthMm.value,
         sourceDpi: sourceDpi.value,

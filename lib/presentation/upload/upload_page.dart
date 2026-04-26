@@ -40,104 +40,109 @@ class _UploadPageState extends State<UploadPage> {
       builder: (controller) {
         return Scaffold(
           appBar: AppBar(title: const Text('Upload Image'), elevation: 0),
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.image, size: 80, color: Get.theme.primaryColor),
-                const SizedBox(height: 24),
-                const Text(
-                  'Select Image to Process',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 32),
-                  child: Text(
-                    'Choose an image from your gallery or device',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                ),
-                const SizedBox(height: 48),
-                SizedBox(
-                  width: 420,
-                  child: TextField(
-                    controller: _urlController,
-                    decoration: const InputDecoration(
-                      labelText: 'Image URL (public)',
-                      hintText: 'https://example.com/image.png',
-                      border: OutlineInputBorder(),
+          body: SingleChildScrollView(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.image, size: 80, color: Get.theme.primaryColor),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Select Image to Process',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                     ),
-                    keyboardType: TextInputType.url,
-                    onChanged: (v) => controller.urlInput.value = v,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: () =>
-                      controller.importFromUrl(_urlController.text),
-                  icon: const Icon(Icons.cloud_download),
-                  label: const Text('Import from URL'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 32,
-                      vertical: 16,
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Choose an image from your gallery or device',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Obx(() {
-                  if (!controller.isUrlDownloading.value) {
-                    return const SizedBox(height: 0);
-                  }
-                  return SizedBox(
-                    width: 420,
-                    child: Column(
-                      children: [
-                        LinearProgressIndicator(
-                          value: controller.urlDownloadProgress.value > 0
-                              ? controller.urlDownloadProgress.value
-                              : null,
+                    const SizedBox(height: 40),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: TextField(
+                        controller: _urlController,
+                        decoration: const InputDecoration(
+                          labelText: 'Image URL (public)',
+                          hintText: 'https://example.com/image.png',
+                          border: OutlineInputBorder(),
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          controller.urlDownloadStatus.value,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                          ),
-                          textAlign: TextAlign.center,
+                        keyboardType: TextInputType.url,
+                        onChanged: (v) => controller.urlInput.value = v,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: () =>
+                          controller.importFromUrl(_urlController.text),
+                      icon: const Icon(Icons.cloud_download),
+                      label: const Text('Import from URL'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
                         ),
-                      ],
+                      ),
                     ),
-                  );
-                }),
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  onPressed: controller.pickImage,
-                  icon: const Icon(Icons.photo_library),
-                  label: const Text('Pick from Gallery'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 32,
-                      vertical: 16,
+                    const SizedBox(height: 10),
+                    Obx(() {
+                      if (!controller.isUrlDownloading.value) {
+                        return const SizedBox(height: 0);
+                      }
+                      return ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 420),
+                        child: Column(
+                          children: [
+                            LinearProgressIndicator(
+                              value: controller.urlDownloadProgress.value > 0
+                                  ? controller.urlDownloadProgress.value
+                                  : null,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              controller.urlDownloadStatus.value,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 32),
+                    ElevatedButton.icon(
+                      onPressed: controller.pickImage,
+                      icon: const Icon(Icons.photo_library),
+                      label: const Text('Pick from Gallery'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
+                        ),
+                        minimumSize: const Size(200, 50),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: controller.pickFile,
+                      icon: const Icon(Icons.folder_open),
+                      label: const Text('Pick from Files'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 16,
+                        ),
+                        minimumSize: const Size(200, 50),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: controller.pickFile,
-                  icon: const Icon(Icons.folder_open),
-                  label: const Text('Pick from Files'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 32,
-                      vertical: 16,
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         );

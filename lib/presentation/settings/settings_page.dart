@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:virtual_design/app/providers/settings_provider.dart';
+import 'package:virtual_design/core/utils/responsive.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -29,15 +30,20 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
+    final bool isDesktop = context.isDesktop;
+
     return Scaffold(
+      key: scaffoldKey,
       backgroundColor: const Color(0xFFF5F5F5),
+      drawer: isDesktop ? null : Drawer(child: _buildSidebar()),
       body: Row(
         children: [
-          _buildSidebar(),
+          if (isDesktop) _buildSidebar(),
           Expanded(
             child: Column(
               children: [
-                _buildTopBar(),
+                _buildTopBar(isDesktop, scaffoldKey),
                 Expanded(
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(30),
@@ -200,7 +206,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(bool isDesktop, GlobalKey<ScaffoldState> scaffoldKey) {
     return Container(
       height: 60,
       padding: const EdgeInsets.symmetric(horizontal: 30),
@@ -216,9 +222,17 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       child: Row(
         children: [
-          const Text(
-            'Settings',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          if (!isDesktop)
+            IconButton(
+              icon: const Icon(Icons.menu),
+              onPressed: () => scaffoldKey.currentState?.openDrawer(),
+            ),
+          const Expanded(
+            child: Text(
+              'Settings',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
           ),
           const Spacer(),
           IconButton(
@@ -367,9 +381,13 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               const Text('Output Directory',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-              Text(
-                '/Documents/silk_screen_output',
-                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  '/Documents/silk_screen_output',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ),

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../preview/preview_controller.dart';
+import '../../core/utils/responsive.dart';
 
 class SelectPrintTypeScreen extends StatelessWidget {
   const SelectPrintTypeScreen({super.key});
@@ -9,9 +10,13 @@ class SelectPrintTypeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = Get.find<PreviewController>();
+    final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
+    final bool isDesktop = context.isDesktop;
 
     return Scaffold(
+      key: scaffoldKey,
       backgroundColor: const Color(0xFFF5F5F5),
+      drawer: isDesktop ? null : Drawer(child: _buildSidebar()),
       appBar: AppBar(
         title: const Text('AI Fix & Film Layers'),
         leading: IconButton(
@@ -21,27 +26,41 @@ class SelectPrintTypeScreen extends StatelessWidget {
       ),
       body: Row(
         children: [
-          _buildSidebar(),
+          if (isDesktop) _buildSidebar(),
           Expanded(
             child: Column(
               children: [
-                _buildTopBar(),
+                _buildTopBar(isDesktop, scaffoldKey),
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          flex: 2,
-                          child: _buildFilmLayersPanel(controller),
-                        ),
-                        const SizedBox(width: 20),
-                        Expanded(
-                          flex: 1,
-                          child: _AIFixPanel(controller: controller),
-                        ),
-                      ],
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final bool isNarrow = constraints.maxWidth < 900;
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.all(20),
+                        child: isNarrow
+                            ? Column(
+                                children: [
+                                  _buildFilmLayersPanel(controller),
+                                  const SizedBox(height: 20),
+                                  _AIFixPanel(controller: controller),
+                                ],
+                              )
+                            : Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    flex: 2,
+                                    child: _buildFilmLayersPanel(controller),
+                                  ),
+                                  const SizedBox(width: 20),
+                                  Expanded(
+                                    flex: 1,
+                                    child: _AIFixPanel(controller: controller),
+                                  ),
+                                ],
+                              ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -319,7 +338,7 @@ class SelectPrintTypeScreen extends StatelessWidget {
     }
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(bool isDesktop, GlobalKey<ScaffoldState> scaffoldKey) {
     return Container(
       height: 60,
       padding: const EdgeInsets.symmetric(horizontal: 30),
@@ -335,9 +354,17 @@ class SelectPrintTypeScreen extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Text(
-            'Select Print Type',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          if (!isDesktop)
+            IconButton(
+              icon: const Icon(Icons.menu),
+              onPressed: () => scaffoldKey.currentState?.openDrawer(),
+            ),
+          const Expanded(
+            child: Text(
+              'Select Print Type',
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
           ),
           const Spacer(),
           IconButton(

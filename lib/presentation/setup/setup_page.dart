@@ -421,12 +421,12 @@ class _SetupPageState extends State<SetupPage> {
                 icon: const Icon(Icons.menu),
                 color: primaryBlue),
           const SizedBox(width: 10),
-          const Expanded(
+          Expanded(
             child: Text('System Configuration',
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           IconButton(
               onPressed: () {},
               icon: const Icon(Icons.notifications_none_outlined),
@@ -437,14 +437,18 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   Widget _buildProgressSteps(bool isDesktop) {
-    return Row(
-      children: [
-        _buildStepItem('IMAGE', true, true, isDesktop),
-        _buildStepLine(true),
-        _buildStepItem('SETUP', true, false, isDesktop),
-        _buildStepLine(false),
-        _buildStepItem('PREVIEW', false, false, isDesktop),
-      ],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildStepItem('IMAGE', true, true, isDesktop),
+          SizedBox(width: isDesktop ? 40 : 20, child: _buildStepLine(true)),
+          _buildStepItem('SETUP', true, false, isDesktop),
+          SizedBox(width: isDesktop ? 40 : 20, child: _buildStepLine(false)),
+          _buildStepItem('PREVIEW', false, false, isDesktop),
+        ],
+      ),
     );
   }
 
@@ -877,15 +881,7 @@ class _SetupPageState extends State<SetupPage> {
   Widget _buildDPISlider() {
     String qualityLabel = 'Standard';
     Color qualityColor = Colors.grey;
-    // EXTENDED RANGE: Up to 4800 for special cases
-    // Note: Realistic screen printing is 300-1200, but allow higher for photo/engraving
-    if (printQuality >= 4800) {
-      qualityLabel = 'ULTRA HI-RES (Photo/Engraving)';
-      qualityColor = Colors.red;
-    } else if (printQuality >= 2400) {
-      qualityLabel = 'MAX QUALITY (Photo Printing)';
-      qualityColor = Colors.deepOrange;
-    } else if (printQuality >= 1200) {
+    if (printQuality >= 1200) {
       qualityLabel = 'High-End Halftone';
       qualityColor = Colors.purple;
     } else if (printQuality >= 600) {
@@ -923,34 +919,11 @@ class _SetupPageState extends State<SetupPage> {
           ],
         ),
         const SizedBox(height: 10),
-        // Warning for extreme DPI
-        if (printQuality > 1200)
-          Container(
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.orange.withAlpha(30),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: Colors.orange),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.warning_amber, size: 16, color: Colors.orange),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'DPI > 1200 is for photo/engraving only. Screen printing works best at 300-900 DPI.',
-                    style: TextStyle(fontSize: 11, color: Colors.orange[800]),
-                  ),
-                ),
-              ],
-            ),
-          ),
         Slider(
-          value: printQuality.clamp(300, 4800),
+          value: printQuality.clamp(300, 1200),
           min: 300,
-          max: 4800,
-          divisions: 15,
+          max: 1200,
+          divisions: 9,
           activeColor: qualityColor,
           label: '${printQuality.toInt()} DPI',
           onChanged: (v) {
@@ -962,18 +935,11 @@ class _SetupPageState extends State<SetupPage> {
         ),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('300',
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
-            const Text('600',
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
-            const Text('900',
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
-            const Text('1200',
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
-            const Text('2400',
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
-            const Text('4800',
+          children: const [
+            Text('300', style: TextStyle(fontSize: 10, color: Colors.grey)),
+            Text('600', style: TextStyle(fontSize: 10, color: Colors.grey)),
+            Text('900', style: TextStyle(fontSize: 10, color: Colors.grey)),
+            Text('1200',
                 style: TextStyle(
                     fontSize: 10,
                     color: Colors.grey,
