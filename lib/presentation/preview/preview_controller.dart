@@ -40,22 +40,25 @@ class PreviewController extends GetxController {
   // Zoom functionality for InteractiveViewer
   final TransformationController transformationController =
       TransformationController();
-  final RxDouble zoomLevel = 1.0.obs;
+  final Rx<double> zoomLevel = Rx<double>(1.0);
 
   // --- Adjustment State (Senior Perspective) ---
-  final RxDouble globalThreshold = 180.0.obs;
-  final RxDouble smoothingFactor = 0.25.obs; // Match setup controller default
-  final RxDouble cornerThreshold = 45.0.obs; // Match setup controller default
+  final Rx<double> globalThreshold = Rx<double>(180.0);
+  final Rx<double> smoothingFactor =
+      Rx<double>(-1.0); // Sentinel = adaptive from AI/decision engine
+  final Rx<double> cornerThreshold =
+      Rx<double>(-1.0); // Sentinel = adaptive from AI/decision engine
   final RxInt noiseRemoval = 3.obs;
   final RxBool forceHalftone = false.obs;
   final RxBool adaptiveThreshold = false.obs;
   final RxString filmLabel = "".obs;
   late final TextEditingController filmLabelController;
-  final RxDouble currentDpi = 300.0.obs; // Professional Standard = 300
+  final Rx<double> currentDpi =
+      Rx<double>(300.0); // Professional Standard = 300
 
   // BUG 4 FIX: Paper size observables for regeneration
-  final RxDouble paperWidthCm = 21.0.obs; // Default A4 width
-  final RxDouble paperHeightCm = 29.7.obs; // Default A4 height
+  final Rx<double> paperWidthCm = Rx<double>(21.0); // Default A4 width
+  final Rx<double> paperHeightCm = Rx<double>(29.7); // Default A4 height
 
   // Cache busting
   final RxInt lastUpdateTimestamp = 0.obs;
@@ -68,6 +71,7 @@ class PreviewController extends GetxController {
   final RxList<bool> isLayerInverted = <bool>[].obs;
   final RxList<bool> isLayerSolid = <bool>[].obs;
   final RxList<bool> layerIsHalftone = <bool>[].obs;
+  final RxList<bool> isLayerHidden = <bool>[].obs;
 
   // Simulation Settings
   final Rx<Color> tshirtColor = Colors.white.obs;
@@ -78,7 +82,7 @@ class PreviewController extends GetxController {
 
   // Processing state for regeneration
   final RxBool isRegenerating = false.obs;
-  final RxDouble progress = 0.0.obs;
+  final Rx<double> progress = Rx<double>(0.0);
   final RxString progressMessage = ''.obs;
 
   bool _needsAnotherPass = false; // Queue for overlapping adjustment requests
@@ -108,14 +112,15 @@ class PreviewController extends GetxController {
           adaptiveThreshold.value = settings.adaptiveThreshold;
           filmLabel.value = settings.filmLabel;
           currentDpi.value = settings.dpi;
-          
+
           // Paper sizes
           paperWidthCm.value = settings.paperWidthCm;
           paperHeightCm.value = settings.paperHeightCm;
 
           // Initialize dot multipliers
           if (settings.dotSizeMultipliers != null) {
-            dotSizeMultipliers.value = List<double>.from(settings.dotSizeMultipliers!);
+            dotSizeMultipliers.value =
+                List<double>.from(settings.dotSizeMultipliers!);
           }
         }
       }
@@ -198,7 +203,8 @@ class PreviewController extends GetxController {
         halftoneSettings: initialSettings.value!.halftoneSettings,
         paperWidthCm: paperWidthCm.value,
         paperHeightCm: paperHeightCm.value,
-        dotSizeMultipliers: dotSizeMultipliers.isEmpty ? null : dotSizeMultipliers.toList(),
+        dotSizeMultipliers:
+            dotSizeMultipliers.isEmpty ? null : dotSizeMultipliers.toList(),
       );
 
       Get.log(
@@ -288,7 +294,8 @@ class PreviewController extends GetxController {
             .where(
               (f) =>
                   f.path.toLowerCase().endsWith('final_films.pdf') ||
-                  f.path.toLowerCase().endsWith('all_films_combined.pdf'),
+                  f.path.toLowerCase().endsWith('all_films_combined.pdf') ||
+                  f.path.toLowerCase().endsWith('_films.pdf'),
             )
             .toList();
         if (combined.isNotEmpty) {
@@ -316,6 +323,7 @@ class PreviewController extends GetxController {
           isLayerInverted.value = List.filled(previewPaths.length, false);
           isLayerSolid.value = List.filled(previewPaths.length, false);
           layerIsHalftone.value = List.filled(previewPaths.length, false);
+          isLayerHidden.value = List.filled(previewPaths.length, false);
         }
 
         // Trigger cache bust (Phase 10) - Always update to force UI refresh
@@ -348,6 +356,17 @@ class PreviewController extends GetxController {
     }
   }
 
+  void toggleLayerHidden(int index) {
+    if (index < 0 || index >= isLayerHidden.length) return;
+    isLayerHidden[index] = !isLayerHidden[index];
+  }
+
+  void restoreAllLayers() {
+    for (int i = 0; i < isLayerHidden.length; i++) {
+      isLayerHidden[i] = false;
+    }
+  }
+
   Future<void> _reprocessSingleLayer(int index) async {
     if (isRegenerating.value) return;
 
@@ -359,17 +378,38 @@ class PreviewController extends GetxController {
       final pythonProcessor = Get.find<PythonProcessor>();
       final settings = initialSettings.value;
       final ht = settings?.halftoneSettings;
+
+      // FIX 2A/4: Always use reactive currentDpi (never fall back to 1200).
+      // currentDpi is initialised from settings.dpi in onInit and kept in sync.
+      final actualDpi = currentDpi.value.toInt();
+
+      final actualMesh = settings?.meshCount ?? 110;
+
+      // DEFAULT LPI for manual halftone toggle = safe standard value
+      // Formula: mesh 355 / 4.5 = 78.8 → 79 LPI
+      const int defaultToggleLpi = 79;
+
+      final computedLpi =
+          (initialSettings.value?.halftoneSettings?.lpi != null &&
+                  initialSettings.value!.halftoneSettings!.lpi > 0)
+              ? initialSettings.value!.halftoneSettings!.lpi
+              : defaultToggleLpi;
+
+      Get.log(
+          '[PreviewController] _reprocessSingleLayer: dpi=$actualDpi, lpi=$computedLpi, mesh=$actualMesh');
+
       final result = await pythonProcessor.reprocessLayerAsHalftone(
         imagePath: imagePath.value,
         layerIndex: index,
         outputDir: outputDirectory.value,
-        dpi: settings?.dpi.toInt() ?? 1200,
-        lpi: ht?.lpi ?? 79,
+        dpi: actualDpi,
+        lpi: computedLpi,
         dotShape: ht?.dotShape ?? 'round',
-        meshCount: settings?.meshCount ?? 355,
-        dotSizeMultiplier: dotSizeMultipliers.isNotEmpty && index < dotSizeMultipliers.length
-            ? dotSizeMultipliers[index]
-            : (ht?.dotSizeMultiplier ?? 0.7),
+        meshCount: actualMesh,
+        dotSizeMultiplier:
+            dotSizeMultipliers.isNotEmpty && index < dotSizeMultipliers.length
+                ? dotSizeMultipliers[index]
+                : (ht?.dotSizeMultiplier ?? 0.7),
       );
 
       if (result != null && result.isNotEmpty) {
@@ -396,6 +436,17 @@ class PreviewController extends GetxController {
     }
   }
 
+  /// FIX 3A: Update dot sizes and trigger re-processing of all halftone layers.
+  void updateDotSizes(List<double> multipliers) {
+    dotSizeMultipliers.value = multipliers;
+    // Reprocess every layer that is currently toggled to halftone mode
+    for (int i = 0; i < layerIsHalftone.length; i++) {
+      if (layerIsHalftone[i]) {
+        _reprocessSingleLayer(i);
+      }
+    }
+  }
+
   void setPrintType(PrintType type) {
     selectedPrintType.value = type;
   }
@@ -419,8 +470,7 @@ class PreviewController extends GetxController {
 
   void _applyZoom(double scale) {
     // Zoom toward center
-    final matrix = Matrix4.identity();
-    matrix.scale(scale, scale, 1.0);
+    final matrix = Matrix4.diagonal3Values(scale, scale, 1.0);
     transformationController.value = matrix;
     zoomLevel.value = scale;
   }
@@ -433,9 +483,38 @@ class PreviewController extends GetxController {
       return;
     }
 
+    // Check if any layers are hidden
+    final hiddenIndices = <int>[];
+    for (int i = 0; i < isLayerHidden.length; i++) {
+      if (isLayerHidden[i]) {
+        hiddenIndices.add(i);
+      }
+    }
+
+    // If layers are hidden, regenerate combined PDF excluding them
+    if (hiddenIndices.isNotEmpty) {
+      Get.log(
+          'ًڑ”„ Regenerating combined PDF excluding layers: $hiddenIndices');
+      final pythonProcessor = Get.find<PythonProcessor>();
+      final success = await pythonProcessor.regenerateCombinedPdf(
+        outputDir: outputDirectory.value,
+        hiddenLayerIndices: hiddenIndices,
+        dpi: currentDpi.value.toInt(),
+      );
+
+      if (!success) {
+        Get.snackbar(
+            'Error', 'Failed to regenerate PDF with hidden layers excluded.');
+        return;
+      }
+
+      // Reload to get the new combined PDF path
+      await _loadFilmsAndInfo();
+    }
+
     // Hybrid DPI Logic: If current preview is low quality, generate high quality for export
     if (currentDpi.value < 300) {
-      Get.log('ًںڑ€ Triggering high-DPI (300) pass for final export...');
+      Get.log('ًڑ€ Triggering high-DPI (300) pass for final export...');
       final success = await regenerateFilms(forcedDpi: 300.0);
       if (!success) return;
     }
@@ -570,22 +649,24 @@ class PreviewController extends GetxController {
         }
         if (result['dot_sizes'] != null) {
           changes['dot_sizes'] = result['dot_sizes'];
-          final list = (result['dot_sizes'] as List).map((v) => (v as num).toDouble()).toList();
+          final list = (result['dot_sizes'] as List)
+              .map((v) => (v as num).toDouble())
+              .toList();
           dotSizeMultipliers.value = list;
         }
         if (result['lpi'] != null) {
-           changes['lpi'] = result['lpi'];
-           // Update in initialSettings if needed for regeneration
-           if (initialSettings.value?.halftoneSettings != null) {
-             initialSettings.value = initialSettings.value!.copyWith(
-               halftoneSettings: initialSettings.value!.halftoneSettings!.copyWith(
-                 lpi: (result['lpi'] as num).toInt(),
-               ),
-             );
-           }
+          changes['lpi'] = result['lpi'];
+          // Update in initialSettings if needed for regeneration
+          if (initialSettings.value?.halftoneSettings != null) {
+            initialSettings.value = initialSettings.value!.copyWith(
+              halftoneSettings:
+                  initialSettings.value!.halftoneSettings!.copyWith(
+                lpi: (result['lpi'] as num).toInt(),
+              ),
+            );
+          }
         }
 
-        print('[AI_AUTOFIX] Applied changes: $changes');
         Get.log('[AI_AUTOFIX] Applied changes: $changes');
 
         if (changes.isEmpty) {
@@ -603,13 +684,13 @@ class PreviewController extends GetxController {
 
         _lastAutoFixParams = result; // Store for next iteration
         final reason = result['adjustment_reason'] ?? 'AI adjustments applied';
-        
+
         // Show diff in dialog
         String diffText = "Reason: $reason\n\nChanges:\n";
         changes.forEach((key, val) {
-           diffText += "$key: ${oldParams[key]} -> $val\n";
+          diffText += "$key: ${oldParams[key]} -> $val\n";
         });
-        
+
         Get.defaultDialog(
           title: "AI Autofix Diff",
           middleText: diffText,

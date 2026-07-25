@@ -6,6 +6,7 @@ import 'package:virtual_design/core/enums/app_enums.dart';
 import 'package:virtual_design/domain/entities/processing_settings.dart' as ps;
 import 'package:virtual_design/presentation/setup/setup_controller.dart';
 import 'package:virtual_design/presentation/setup/widgets/per_layer_dot_size_widget.dart';
+import 'package:virtual_design/core/server/server_connector.dart';
 
 // Re-export DetailLevel from processing_settings for consistency
 typedef DetailLevel = ps.DetailLevel;
@@ -66,6 +67,7 @@ class _SetupPageState extends State<SetupPage> {
   // Halftone settings
   bool showHalftoneSettings = false;
   DotShape selectedDotShape = DotShape.round;
+  int manualLpi = 0; // 0 = auto
 
   // DYNAMIC LPI: Calculated from DPI and Mesh (not user selectable)
   // Formula: LPI = min(DPI/2, Mesh/4.5) with safety limits 35-150
@@ -144,6 +146,7 @@ class _SetupPageState extends State<SetupPage> {
     adaptiveThreshold = controller.adaptiveThreshold.value;
     responsiveMode = controller.responsiveMode.value;
     showHalftoneSettings = controller.isHalftone.value;
+    manualLpi = controller.manualLpi.value;
   }
 
   @override
@@ -291,7 +294,7 @@ class _SetupPageState extends State<SetupPage> {
   // ============= Widgets =============
 
   Widget _buildSidebar({bool isDrawer = false}) {
-    return Container(
+    final content = Container(
       width: 280,
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -379,6 +382,9 @@ class _SetupPageState extends State<SetupPage> {
         ],
       ),
     );
+    // FIX 1A-1: Wrap drawer content in SafeArea so it is not hidden behind the
+    // status bar / notch on mobile devices.
+    return isDrawer ? SafeArea(child: content) : content;
   }
 
   Widget _buildSidebarItem(IconData icon, String title, bool isSelected) {
@@ -424,8 +430,76 @@ class _SetupPageState extends State<SetupPage> {
           Expanded(
             child: Text('System Configuration',
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           ),
+          const SizedBox(width: 8),
+          // ── Server / Local AI status badge ────────────────────────────────
+          Obx(() {
+            final connector = ServerConnector();
+            final isServer = connector.isServerMode;
+            final isChecking = connector.isChecking.value;
+            return GestureDetector(
+              onTap: () => Get.toNamed('/settings'),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: isChecking
+                      ? Colors.grey.withAlpha(25)
+                      : isServer
+                          ? Colors.green.withAlpha(30)
+                          : Colors.orange.withAlpha(30),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isChecking
+                        ? Colors.grey.withAlpha(60)
+                        : isServer
+                            ? Colors.green.withAlpha(80)
+                            : Colors.orange.withAlpha(80),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isChecking)
+                      const SizedBox(
+                        width: 8,
+                        height: 8,
+                        child: CircularProgressIndicator(strokeWidth: 1.5),
+                      )
+                    else
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isServer ? Colors.green : Colors.orange,
+                        ),
+                      ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isChecking
+                          ? 'Detecting…'
+                          : isServer
+                              ? 'PC Server'
+                              : 'Local AI',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: isChecking
+                            ? Colors.grey
+                            : isServer
+                                ? Colors.green
+                                : Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
           const SizedBox(width: 8),
           IconButton(
               onPressed: () {},
@@ -493,16 +567,18 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   Widget _buildStepLine(bool isCompleted) {
-    return Expanded(
-        child: Container(
-            height: 2,
-            margin: const EdgeInsets.symmetric(horizontal: 10),
-            color: isCompleted ? primaryBlue : const Color(0xFFE5E7EB)));
+    // FIX 1A-3: Remove Expanded from inside SizedBox — Expanded has no effect when
+    // its parent already provides a fixed constraint (SizedBox with explicit width).
+    return Container(
+        height: 2,
+        margin: const EdgeInsets.symmetric(horizontal: 10),
+        color: isCompleted ? primaryBlue : const Color(0xFFE5E7EB));
   }
 
   Widget _buildColorComplexitySection(bool isDesktop) {
     return Container(
-      padding: const EdgeInsets.all(25),
+      // FIX 1A-4: Responsive padding on all section containers
+      padding: EdgeInsets.all(isDesktop ? 25 : 16),
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -545,38 +621,43 @@ class _SetupPageState extends State<SetupPage> {
 
   Widget _buildAutoColorOption(bool isDesktop) {
     bool isSelected = selectedColorCount == 0;
+    // FIX 1A-2: Replace fixed width with ConstrainedBox(maxWidth) so the Wrap
+    // can shrink items on very small screens without causing overflow.
     return InkWell(
       onTap: () {
         setState(() => selectedColorCount = 0);
         Get.find<SetupController>().selectedColors.value = 0;
       },
-      child: Container(
-        width: isDesktop ? 130 : 110,
-        height: isDesktop ? 100 : 90,
-        decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-                color: isSelected ? primaryBlue : const Color(0xFFE5E7EB),
-                width: isSelected ? 2 : 1)),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-                width: 35,
-                height: 35,
-                decoration: const BoxDecoration(
-                    shape: BoxShape.circle, color: Color(0xFF9C27B0)),
-                child: const Icon(Icons.auto_awesome,
-                    size: 20, color: Colors.white)),
-            const SizedBox(height: 10),
-            Text('Auto',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight:
-                        isSelected ? FontWeight.bold : FontWeight.normal,
-                    color: isSelected ? primaryBlue : Colors.black87)),
-          ],
+      child: ConstrainedBox(
+        constraints:
+            BoxConstraints(maxWidth: isDesktop ? 130 : 110, minWidth: 80),
+        child: Container(
+          height: isDesktop ? 100 : 90,
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: isSelected ? primaryBlue : const Color(0xFFE5E7EB),
+                  width: isSelected ? 2 : 1)),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                  width: 35,
+                  height: 35,
+                  decoration: const BoxDecoration(
+                      shape: BoxShape.circle, color: Color(0xFF9C27B0)),
+                  child: const Icon(Icons.auto_awesome,
+                      size: 20, color: Colors.white)),
+              const SizedBox(height: 10),
+              Text('Auto',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? primaryBlue : Colors.black87)),
+            ],
+          ),
         ),
       ),
     );
@@ -595,36 +676,40 @@ class _SetupPageState extends State<SetupPage> {
       Colors.teal,
       Colors.indigo
     ];
+    // FIX 1A-2: Same ConstrainedBox treatment as _buildAutoColorOption
     return InkWell(
       onTap: () {
         setState(() => selectedColorCount = count);
         Get.find<SetupController>().selectedColors.value = count;
       },
-      child: Container(
-        width: isDesktop ? 130 : 110,
-        height: isDesktop ? 100 : 90,
-        decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-                color: isSelected ? primaryBlue : const Color(0xFFE5E7EB),
-                width: isSelected ? 2 : 1)),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-                width: 35,
-                height: 35,
-                decoration: BoxDecoration(
-                    shape: BoxShape.circle, color: colors[count])),
-            const SizedBox(height: 10),
-            Text('$count Colors',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight:
-                        isSelected ? FontWeight.bold : FontWeight.normal,
-                    color: isSelected ? primaryBlue : Colors.black87)),
-          ],
+      child: ConstrainedBox(
+        constraints:
+            BoxConstraints(maxWidth: isDesktop ? 130 : 110, minWidth: 80),
+        child: Container(
+          height: isDesktop ? 100 : 90,
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: isSelected ? primaryBlue : const Color(0xFFE5E7EB),
+                  width: isSelected ? 2 : 1)),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                  width: 35,
+                  height: 35,
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle, color: colors[count])),
+              const SizedBox(height: 10),
+              Text('$count Colors',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected ? primaryBlue : Colors.black87)),
+            ],
+          ),
         ),
       ),
     );
@@ -632,7 +717,8 @@ class _SetupPageState extends State<SetupPage> {
 
   Widget _buildDetailLevelSection(bool isDesktop) {
     return Container(
-      padding: const EdgeInsets.all(25),
+      // FIX 1A-4: Responsive padding
+      padding: EdgeInsets.all(isDesktop ? 25 : 16),
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -698,7 +784,8 @@ class _SetupPageState extends State<SetupPage> {
 
   Widget _buildPrintFinishSection(SetupController controller, bool isDesktop) {
     return Container(
-      padding: const EdgeInsets.all(25),
+      // FIX 1A-4: Responsive padding
+      padding: EdgeInsets.all(isDesktop ? 25 : 16),
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -792,7 +879,7 @@ class _SetupPageState extends State<SetupPage> {
           const Text('Halftone Parameters',
               style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 15),
-          // DYNAMIC LPI DISPLAY (Read-only - calculated from DPI & Mesh)
+          // LPI Slider (manual override; 0 means auto)
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -805,33 +892,50 @@ class _SetupPageState extends State<SetupPage> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.auto_fix_high, size: 16, color: primaryBlue),
+                    Icon(Icons.tune, size: 16, color: primaryBlue),
                     const SizedBox(width: 8),
                     Text(
-                      'Auto LPI: $lpi lines/inch',
+                      '${manualLpi > 0 ? manualLpi : lpi} LPI',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: primaryBlue,
                         fontSize: 14,
                       ),
                     ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          manualLpi = 0;
+                        });
+                        Get.find<SetupController>().manualLpi.value = 0;
+                      },
+                      child: const Text('Auto'),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Mesh: $meshCount | DPI: ${printQuality.toInt()} | Ratio: ${(printQuality / lpi).toStringAsFixed(1)}:1',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+                Slider(
+                  value: (manualLpi > 0 ? manualLpi : lpi)
+                      .clamp(20, 117)
+                      .toDouble(),
+                  min: 20,
+                  max: 117,
+                  divisions: 97,
+                  activeColor: primaryBlue,
+                  label: '${manualLpi > 0 ? manualLpi : lpi} LPI',
+                  onChanged: (v) {
+                    final newVal = v.round();
+                    setState(() {
+                      manualLpi = newVal;
+                    });
+                    Get.find<SetupController>().manualLpi.value = newVal;
+                  },
                 ),
-                const SizedBox(height: 2),
                 Text(
-                  'Formula: min(DPI÷2, Mesh÷4.5)',
+                  'Auto: $lpi | Mesh: $meshCount',
                   style: TextStyle(
                     fontSize: 10,
-                    color: Colors.grey[500],
-                    fontStyle: FontStyle.italic,
+                    color: Colors.grey[600],
                   ),
                 ),
               ],
@@ -843,7 +947,7 @@ class _SetupPageState extends State<SetupPage> {
             final colorsCount = controller.selectedColors.value;
             return PerLayerDotSizeWidget(
               colorCount: colorsCount,
-              baseLpi: lpi,
+              baseLpi: manualLpi > 0 ? manualLpi : lpi,
               onChanged: (multipliers) {
                 controller.dotSizeMultipliers.value = multipliers;
                 if (multipliers.isNotEmpty) {
@@ -905,16 +1009,24 @@ class _SetupPageState extends State<SetupPage> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                     overflow: TextOverflow.ellipsis)),
             const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                  color: qualityColor.withAlpha(30),
-                  borderRadius: BorderRadius.circular(4)),
-              child: Text(qualityLabel,
+            // FIX 1A-6: Wrap badge in Flexible and truncate text on mobile
+            // so long labels like 'Fine Detail (Recommended)' don't overflow.
+            Flexible(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                    color: qualityColor.withAlpha(30),
+                    borderRadius: BorderRadius.circular(4)),
+                child: Text(
+                  qualityLabel,
                   style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: qualityColor)),
+                      color: qualityColor),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ),
             ),
           ],
         ),
@@ -952,7 +1064,8 @@ class _SetupPageState extends State<SetupPage> {
 
   Widget _buildSpecificationsSection(bool isDesktop) {
     return Container(
-      padding: const EdgeInsets.all(25),
+      // FIX 1A-4: Responsive padding
+      padding: EdgeInsets.all(isDesktop ? 25 : 16),
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -1001,9 +1114,60 @@ class _SetupPageState extends State<SetupPage> {
                 selectedPaperSize = v;
                 isCustomPaper = (v == 'Custom (cm)');
               });
+              final controller = Get.find<SetupController>();
+              switch (v) {
+                case 'A4 (21 × 29.7 cm)':
+                  controller.paperWidthCm.value = 21.0;
+                  controller.paperHeightCm.value = 29.7;
+                  break;
+                case 'A3 (29.7 × 42 cm)':
+                  controller.paperWidthCm.value = 29.7;
+                  controller.paperHeightCm.value = 42.0;
+                  break;
+                case 'A5 (14.8 × 21 cm)':
+                  controller.paperWidthCm.value = 14.8;
+                  controller.paperHeightCm.value = 21.0;
+                  break;
+                case 'Letter (21.6 × 27.9 cm)':
+                  controller.paperWidthCm.value = 21.6;
+                  controller.paperHeightCm.value = 27.9;
+                  break;
+              }
             }
           },
         ),
+        if (isCustomPaper) ...[
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+                child: TextField(
+              decoration: InputDecoration(
+                  labelText: 'Width (cm)', border: OutlineInputBorder()),
+              keyboardType: TextInputType.number,
+              onChanged: (v) {
+                final val = double.tryParse(v);
+                if (val != null && val > 0) {
+                  customPaperWidthCm = val;
+                  Get.find<SetupController>().paperWidthCm.value = val;
+                }
+              },
+            )),
+            const SizedBox(width: 12),
+            Expanded(
+                child: TextField(
+              decoration: InputDecoration(
+                  labelText: 'Height (cm)', border: OutlineInputBorder()),
+              keyboardType: TextInputType.number,
+              onChanged: (v) {
+                final val = double.tryParse(v);
+                if (val != null && val > 0) {
+                  customPaperHeightCm = val;
+                  Get.find<SetupController>().paperHeightCm.value = val;
+                }
+              },
+            )),
+          ]),
+        ]
       ],
     );
   }
@@ -1072,7 +1236,8 @@ class _SetupPageState extends State<SetupPage> {
 
   Widget _buildOutputDirectorySection(SetupController controller) {
     return Container(
-      padding: const EdgeInsets.all(25),
+      // FIX 1A-4: Responsive padding
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -1090,14 +1255,22 @@ class _SetupPageState extends State<SetupPage> {
     return Row(children: [
       Expanded(
           child: OutlinedButton(
-              onPressed: () {}, child: const Text('Save Template'))),
+              onPressed: () {},
+              // FIX 1A-5: FittedBox prevents text overflow on small phones
+              child: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text('Save Template'),
+              ))),
       const SizedBox(width: 20),
       Expanded(
         child: ElevatedButton(
           onPressed: () => controller.startProcessing(),
           style: ElevatedButton.styleFrom(
               backgroundColor: primaryBlue, foregroundColor: Colors.white),
-          child: const Text('START PROCESSING'),
+          child: const FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text('START PROCESSING'),
+          ),
         ),
       ),
     ]);

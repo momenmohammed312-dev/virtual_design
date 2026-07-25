@@ -51,11 +51,139 @@ def _progress(pct: float, msg: str = ""):
 def _output_dir_signal(path: str):
     print(f"OUTPUT_DIR:{os.path.abspath(path)}", flush=True)
 
+def regenerate_combined_pdf_only(args: argparse.Namespace, output_dir: Path, hidden_layer_indices: List[int]) -> int:
+    """Regenerate combined PDF excluding hidden layers."""
+    try:
+        # Load existing PNG files from output directory
+        png_files = sorted(output_dir.glob("film_*.png"))
+        if not png_files:
+            logger.error("[Main] No film PNG files found in output directory")
+            return 1
+
+        # Load color_info.json if available
+        color_info_path = output_dir / "color_info.json"
+        color_names = []
+        colors = []
+        if color_info_path.exists():
+            with open(color_info_path, 'r', encoding='utf-8') as f:
+                color_data = json.load(f)
+                for color in color_data.get('colors', []):
+                    color_names.append(color['name'])
+                    # Parse hex color to RGB
+                    hex_str = color['hex'].lstrip('#')
+                    rgb = tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
+                    colors.append(rgb)
+        else:
+            # Fallback: generate color names from filenames
+            for i, png_file in enumerate(png_files):
+                color_names.append(f"Layer {i+1}")
+                colors.append((0, 0, 0))  # Default black
+
+        # Load masks from PNG files
+        masks = []
+        for png_file in png_files:
+            mask = cv2.imread(str(png_file), cv2.IMREAD_GRAYSCALE)
+            if mask is None:
+                logger.error(f"[Main] Failed to load mask: {png_file}")
+                return 1
+            masks.append(mask)
+
+        # Filter out hidden layers
+        visible_masks = []
+        visible_colors = []
+        visible_color_names = []
+        for i, (mask, color, color_name) in enumerate(zip(masks, colors, color_names)):
+            if i not in hidden_layer_indices:
+                visible_masks.append(mask)
+                visible_colors.append(color)
+                visible_color_names.append(color_name)
+                logger.info(f"[Main] Including layer {i}: {color_name}")
+            else:
+                logger.info(f"[Main] Excluding hidden layer {i}: {color_name}")
+
+        if not visible_masks:
+            logger.error("[Main] No visible layers after filtering")
+            return 1
+
+        # Get DPI from args or default
+        dpi = getattr(args, 'dpi', 300)
+
+        # Determine page size
+        page_size_val = getattr(args, 'page_size', 'A4')
+        if page_size_val.upper() == 'CUSTOM':
+            page_size_val = f"{getattr(args, 'page_width', 210)}x{getattr(args, 'page_height', 297)}"
+
+        # Generate combined PDF
+        output_pdf = output_dir / "all_films_combined.pdf"
+        from core.router_utils import safe_float
+        from core.vector_exporter import export_vector_pdf
+
+        _progress(0.5, "Regenerating combined PDF...")
+
+        # Create a minimal separation result for export
+        sep_res = {
+            'colors': visible_colors,
+            'color_names': visible_color_names
+        }
+
+        export_vector_pdf(
+            masks=visible_masks,
+            colors=visible_colors,
+            color_names=visible_color_names,
+            output_path=output_pdf,
+            dpi=dpi,
+            mask_dpi=dpi,
+            smooth_factor=safe_float(getattr(args, 'smoothing_factor', -1.0)),
+            corner_threshold=safe_float(getattr(args, 'corner_threshold', -1.0)),
+            min_contour_area=getattr(args, 'contour_min_area', 50),
+            image_class='text_logo',  # Default for regeneration
+            page_size=page_size_val,
+            epsilon=safe_float(getattr(args, 'simplification_epsilon', 1.2)),
+            job_name='combined_films',
+            is_halftone=False,
+            args=args,
+            lpi=getattr(args, 'lpi', 45),
+            mesh_count=getattr(args, 'mesh_count', 160),
+            angle=45.0
+        )
+
+        _progress(1.0, "Combined PDF regenerated")
+        _output_dir_signal(str(output_dir))
+        logger.info(f"[Main] Combined PDF regenerated successfully: {output_pdf}")
+        return 0
+
+    except Exception as e:
+        logger.error(f"[Main] Failed to regenerate combined PDF: {e}", exc_info=True)
+        return 1
+
 def run_pipeline(args: argparse.Namespace) -> int:
     """Refactored orchestrator using the Unified Decision Engine."""
     start_time = time.time()
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True, parents=True)
+
+    # Parse hidden layers argument (comma-separated indices)
+    hidden_layer_indices = []
+    if hasattr(args, 'hidden_layers') and args.hidden_layers:
+        try:
+            hidden_layer_indices = [int(x.strip()) for x in args.hidden_layers.split(',')]
+            logger.info(f"[Main] Hidden layer indices: {hidden_layer_indices}")
+        except Exception as e:
+            logger.warning(f"[Main] Failed to parse hidden_layers: {e}")
+
+    # Check if this is a combined PDF regeneration request
+    if hasattr(args, 'regenerate_combined') and args.regenerate_combined:
+        logger.info("[Main] Regenerating combined PDF with hidden layers excluded")
+        return regenerate_combined_pdf_only(args, output_dir, hidden_layer_indices)
+
+    # Normalize source DPI: never allow <=0 values (e.g. -1 sentinel) to
+    # propagate into physical sizing computations.
+    try:
+        src_dpi = int(getattr(args, 'source_dpi', 0) or 0)
+    except Exception:
+        src_dpi = 0
+    if src_dpi <= 0:
+        args.source_dpi = 300
 
     _step(1, "Unified Engine Initialization")
 
@@ -216,11 +344,13 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
             _progress(0.85, "Exporting PDF film...")
 
+            ct = safe_float(params.get('corner_threshold', -1.0))
+            corner_threshold = 110.0 if ct <= 0 else ct  # -1 يتحول لـ 110
             export_vector_pdf(
                 masks=masks, colors=sep_res['colors'], color_names=sep_res['color_names'],
                 output_path=output_pdf, dpi=params.get('dpi', 300), mask_dpi=result.mask_dpi,
-                smooth_factor=safe_float(params.get('smoothing_factor', 0.25)),
-                corner_threshold=safe_float(params.get('corner_threshold', 120.0)),
+                smooth_factor=safe_float(params.get('smoothing_factor', -1.0)),
+                corner_threshold=corner_threshold,
                 min_contour_area=params.get('contour_min_area', 50),
                 image_class=result.image_class, page_size=page_size_val,
                 epsilon=safe_float(params.get('simplification_epsilon', 1.2)),
@@ -228,7 +358,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
                 args=args,
                 lpi=int(params.get('lpi', 45)),
                 mesh_count=int(mesh_count),
-                angle=45.0
+                angle=float(params.get('angle', 45.0))
             )
 
         # Previews - save mask directly (ink=0 black, background=255 white)
@@ -299,7 +429,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--colors", type=int, default=0)
     parser.add_argument("--image-type", choices=["text_logo", "artwork", "photo", "auto"], default="auto")
     parser.add_argument("--halftone", action="store_true")
-    parser.add_argument("--smoothing-factor", type=float, default=0.25)
+    parser.add_argument("--smoothing-factor", type=float, default=-1.0)
     parser.add_argument("--use-underbase", action="store_true")
     parser.add_argument("--choke-px", type=int, default=2)
     parser.add_argument("--trapping-px", type=int, default=1)
@@ -344,6 +474,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-dpi", type=int, default=-1, help="Original artwork DPI (overrides metadata)")
     parser.add_argument("--scale-mode", choices=["fit_to_page", "actual_size", "specific_width", "custom_scale"], default="fit_to_page")
     parser.add_argument("--custom-scale-percent", type=float, default=100.0)
+
+    # Layer Hiding for Combined PDF Regeneration
+    parser.add_argument("--hidden-layers", type=str, default=None, help="Comma-separated indices of layers to hide from combined PDF")
+    parser.add_argument("--regenerate-combined", action="store_true", help="Regenerate combined PDF excluding hidden layers")
 
     return parser.parse_args()
 

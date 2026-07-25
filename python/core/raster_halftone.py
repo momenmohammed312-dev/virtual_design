@@ -45,6 +45,7 @@ class RasterHalftoneConfig:
     source_dpi: Optional[int] = None
     # Greyscale output for preview (dots are greyscale 0-255, not binary)
     greyscale_output: bool = False  # True = greyscale dots, False = binary (for films)
+    dot_size_multiplier: float = 1.0  # user-controlled (0.3–1.5)
 
 
 # ─── Engine ──────────────────────────────────────────────────────────────────
@@ -79,16 +80,20 @@ class RasterHalftoneEngine:
 
         # FIX A-04: Only upsample when source DPI is explicitly known AND
         # is lower than the target DPI.
-        if cfg.source_dpi is not None and cfg.source_dpi < cfg.dpi:
-            scale = cfg.dpi / cfg.source_dpi
+        current_dpi = cfg.source_dpi if cfg.source_dpi is not None and cfg.source_dpi > 0 else 300
+        
+        if current_dpi < cfg.dpi:
+            scale = cfg.dpi / current_dpi
             new_w = max(1, int(gray.shape[1] * scale))
             new_h = max(1, int(gray.shape[0] * scale))
             gray  = cv2.resize(gray, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
             logger.info(
                 f"[RasterHalftone] Upsampled {gray.shape[1] // int(scale)}x"
                 f"{gray.shape[0] // int(scale)} "
-                f"@ {cfg.source_dpi} DPI → {new_w}x{new_h} @ {cfg.dpi} DPI"
+                f"@ {current_dpi} DPI -> {new_w}x{new_h} @ {cfg.dpi} DPI"
             )
+        else:
+            logger.info(f"[RasterHalftone] No upsample needed: image_dpi={current_dpi}, target_dpi={cfg.dpi}")
 
         # Apply noise suppression and cleaning to input grayscale
         gray_clean = cv2.medianBlur(gray, 3)
@@ -136,7 +141,8 @@ class RasterHalftoneEngine:
                 gamma=max(1.2, cfg.gamma - 0.2), oversample=cfg.oversample,
                 threshold=cfg.threshold,
                 source_dpi=cfg.source_dpi,
-                greyscale_output=cfg.greyscale_output
+                greyscale_output=cfg.greyscale_output,
+                dot_size_multiplier=cfg.dot_size_multiplier
             )
             return RasterHalftoneEngine(cfg_retry).generate(grayscale)
 
@@ -261,7 +267,8 @@ class RasterHalftoneEngine:
                 # Calculate dot radius based on ink amount
                 # At 0% ink: radius = 0 (no dot)
                 # At 100% ink: radius = dot_spacing/2 (full cell)
-                max_radius = dot_spacing * 0.42   # cap at 42% of cell (leaves visible gap)
+                base_radius_ratio = 0.42
+                max_radius = dot_spacing * base_radius_ratio * cfg.dot_size_multiplier
                 radius = max_radius * math.pow(ink, 0.65)  # gentler curve, smaller dots at low ink
                 
                 if radius < 0.5:

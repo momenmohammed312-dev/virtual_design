@@ -1,5 +1,5 @@
 // lib/data/repositories/processing_repository_impl.dart
-
+import 'package:get/get.dart';
 import 'package:virtual_design/domain/repositories/processing_repository.dart';
 import 'package:virtual_design/domain/entities/processing_settings.dart';
 import 'package:virtual_design/core/python_bridge/process_result.dart';
@@ -116,12 +116,27 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
   }
 
   @override
+  Future<ProcessResult> processImageFromMap({
+    required String imagePath,
+    required Map<String, dynamic> settingsMap,
+    String? outputDir,
+    void Function(double progress, String message)? onProgress,
+  }) async {
+    return await _processor.processImage(
+      imagePath: imagePath,
+      settings: settingsMap,
+      outputDir: outputDir,
+      onProgress: onProgress,
+    );
+  }
+
+  @override
   Future<List<String>> getSavedProjects() async {
     try {
       final projects = _hiveService.getAllProjects();
       return projects.map((p) => p.name).toList();
     } catch (e) {
-      print('[ProcessingRepo] Failed to load projects: $e');
+      Get.log('[ProcessingRepo] Failed to load projects: $e');
       return [];
     }
   }
@@ -174,7 +189,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
       };
       await box.put('last_settings', json);
     } catch (e) {
-      print('[ProcessingRepo] Warning: Failed to save settings: $e');
+      Get.log('[ProcessingRepo] Warning: Failed to save settings: $e');
     }
   }
 
@@ -217,9 +232,9 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
         globalThreshold:
             (rawJson['globalThreshold'] as num?)?.toDouble() ?? 180.0,
         smoothingFactor:
-            (rawJson['smoothingFactor'] as num?)?.toDouble() ?? 0.25,
+            (rawJson['smoothingFactor'] as num?)?.toDouble() ?? -1.0,
         cornerThreshold:
-            (rawJson['cornerThreshold'] as num?)?.toDouble() ?? 45.0,
+            (rawJson['cornerThreshold'] as num?)?.toDouble() ?? -1.0,
         noiseRemoval: (rawJson['noiseRemoval'] as num?)?.toInt() ?? 3,
         autoCrop: (rawJson['autoCrop'] as bool?) ?? false,
         forceHalftone: (rawJson['forceHalftone'] as bool?) ?? false,
@@ -261,7 +276,7 @@ class ProcessingRepositoryImpl implements ProcessingRepository {
         smoothingSlider: (rawJson['smoothingSlider'] as num?)?.toInt() ?? 35,
       );
     } catch (e) {
-      print(
+      Get.log(
           '[ProcessingRepo] Warning: Failed to load settings (data may be corrupted): $e');
       return null;
     }

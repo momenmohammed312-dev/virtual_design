@@ -244,6 +244,13 @@ def _make_single_color_separation(image: np.ndarray, white_threshold: int = 240)
 # FIX GROUP 5.3: Standard CMYK angles for multi-color halftone
 CMYK_ANGLES = [45.0, 15.0, 75.0, 0.0]  # C, M, Y, K standard screen angles
 
+# ── FIX 3: Maximum pixel count for post-constraint noise removal ────────────
+# connectedComponentsWithStats is O(N) but has high constant overhead on very
+# large raster-halftone images (e.g. 4000×7108 @ 1200 DPI → 28 MP).
+# Above this threshold we skip micro-noise removal (dots are already small enough
+# that 4-px islands are sub-pixel at output DPI and invisible after print).
+_MAX_PIXELS_FOR_CC_CLEANUP = 8_000_000  # 8 MP
+
 
 def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, image_class: str = 'auto') -> List[np.ndarray]:
     """
@@ -252,11 +259,23 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
     
     HYBRID MODE: For 'artwork' class with mixed edges + gradients, uses HybridHalftoneEngine
     which combines Vector dots (sharp edges) + Raster dots (smooth gradients).
+
+    FIX 2: dot_shape is now resolved with hyphen/underscore fallback so that the
+    user's choice actually reaches the engine (was always 'round' before).
+    FIX 3: post-constraint CC cleanup is skipped for images > 8 MP to avoid the
+    ~2.5-minute bottleneck on large halftone rasters.
     """
     print(f"🔵 [HalftonePipeline] ===== ENTERING with {len(masks)} masks =====", flush=True)
-    print(f"🔵 [HalftonePipeline] Args: dpi={getattr(args, 'dpi', 'N/A')}, lpi={getattr(args, 'lpi', 'N/A')}, dot_shape={getattr(args, 'dot_shape', 'N/A')}, image_class={image_class}", flush=True)
+
+    # ── FIX 2-B: Resolve dot_shape with both naming conventions ──────────────
+    dot_shape = (
+        getattr(args, 'dot_shape', None)
+        or getattr(args, 'dot-shape', None)
+        or 'round'
+    )
+    print(f"🔵 [HalftonePipeline] Args: dpi={getattr(args, 'dpi', 'N/A')}, lpi={getattr(args, 'lpi', 'N/A')}, dot_shape={dot_shape}, image_class={image_class}", flush=True)
     logger.info(f"[HalftonePipeline] ===== ENTERING with {len(masks)} masks =====")
-    logger.info(f"[HalftonePipeline] Args: dpi={getattr(args, 'dpi', 'N/A')}, lpi={getattr(args, 'lpi', 'N/A')}, dot_shape={getattr(args, 'dot_shape', 'N/A')}, image_class={image_class}")
+    logger.info(f"[HalftonePipeline] Args: dpi={getattr(args, 'dpi', 'N/A')}, lpi={getattr(args, 'lpi', 'N/A')}, dot_shape={dot_shape}, image_class={image_class}")
     
     # HYBRID HALFTONE: Use for artwork with mixed content (edges + gradients)
     use_hybrid = image_class == 'artwork' and getattr(args, '_use_hybrid_halftone', True)
@@ -294,23 +313,22 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
     max_sensible_dpi = min(current_lpi * 20, 2400)  # Hard cap at 2400
     min_dpi = max(300, current_lpi * 8)  # Minimum 300 or LPI*8
     
-    # Clamp user DPI to sensible range
+    # Clamp user DPI to sensible range (changed to warning only)
     if output_dpi > max_sensible_dpi:
-        logger.warning(f"[HalftonePipeline] DPI {output_dpi} exceeds sensible max {max_sensible_dpi} for LPI={current_lpi}, clamping")
-        output_dpi = max_sensible_dpi
+        logger.warning(f"User DPI {output_dpi} exceeds recommended "
+                       f"{max_sensible_dpi} for LPI={current_lpi}. "
+                       f"Proceeding with user value.")
     elif output_dpi < min_dpi:
-        logger.warning(f"[HalftonePipeline] DPI {output_dpi} below minimum {min_dpi} for LPI={current_lpi}, using minimum")
-        output_dpi = min_dpi
+        logger.warning(f"User DPI {output_dpi} below recommended minimum "
+                       f"{min_dpi} for LPI={current_lpi}. Proceeding with user value.")
     
     logger.info(f"[HalftonePipeline] DPI constraints: LPI={current_lpi}, ideal={ideal_dpi}, clamped DPI={output_dpi}")
 
     # FIX 2: Unified raster_dpi formula — smarter scaling based on actual needs.
     # For high detail mode, we push to higher internal resolution.
     # Raster DPI should be 2x output for quality, but capped reasonably.
-    if getattr(args, '_is_high_detail', False):
-        raster_dpi = min(max(1200, output_dpi * 2), 3600)
-    else:
-        raster_dpi = min(max(600, output_dpi * 2), 2400)
+    source_dpi = getattr(args, 'source_dpi', 300) or 300
+    raster_dpi = source_dpi * 4
         
     logger.info(f"[HalftonePipeline] Config: output_dpi={output_dpi}, raster_dpi={raster_dpi}")
 
@@ -319,19 +337,25 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
     args._halftone_raster_dpi = raster_dpi
 
     # FIX: Delegate LPI validation to PrintJobConfig — single source of truth.
-    # Previously this block re-implemented mesh/3.5 + dpi/4 inline, drifting from
-    # print_job_config.validate_lpi() whenever one side was updated independently.
-    mesh_count = getattr(args, 'mesh_count', None)
+    mesh_count = getattr(args, 'mesh_count', None) or getattr(args, 'mesh-count', None)
+    if mesh_count is None:
+        # ParamProxy in pipeline_router may store params in a dict
+        params = getattr(args, 'p', None)
+        if isinstance(params, dict):
+            mesh_count = params.get('mesh_count') or params.get('mesh-count')
+
     if mesh_count is None:
         mesh_count = 355  # Corrected fallback for Phase 22
-        logger.warning(f"[HalftonePipeline] mesh_count not provided, using fallback: {mesh_count}")
+
+    if not getattr(args, 'mesh_count', None):
+        logger.warning("[HalftonePipeline] mesh_count not in args, using fallback: %d", mesh_count)
     dpi_lpi_ratio = 4.5
     auto_lpi = min(150, max(65, int(output_dpi / dpi_lpi_ratio)))
-    requested_lpi = args.lpi if args.lpi != 85 else auto_lpi
+    requested_lpi = args.lpi  # always trust user
     try:
         from core.print_job_config import PrintJobConfig
         _job_cfg = PrintJobConfig(mesh_count=mesh_count, dpi=output_dpi)
-        effective_lpi = _job_cfg.validate_lpi(requested_lpi, output_dpi=output_dpi, auto_fix=True)
+        effective_lpi = _job_cfg.validate_lpi(requested_lpi, output_dpi=output_dpi, auto_fix=False)
         max_safe_lpi = _job_cfg.max_safe_lpi(output_dpi)
     except Exception as _e:
         # Fallback: inline formula so the pipeline never crashes on import error.
@@ -343,7 +367,7 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
         max_safe_lpi = max(25, min(mesh_ceiling, dpi_ceiling))
         effective_lpi = min(requested_lpi, max_safe_lpi)
 
-    from core.per_layer_halftone import parse_dot_sizes_from_args, multiplier_to_lpi
+    from core.per_layer_halftone import parse_dot_sizes_from_args
     dot_sizes = parse_dot_sizes_from_args(args, len(masks))
 
     logger.info(f"[HalftonePipeline] Final Base LPI: {effective_lpi} (DPI={output_dpi}, mesh={mesh_count}, max_safe={max_safe_lpi})")
@@ -351,7 +375,9 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     for i, (mask, multiplier) in enumerate(zip(masks, dot_sizes)):
-        layer_lpi = multiplier_to_lpi(effective_lpi, multiplier, mesh_count)
+        # NOTE: LPI controls screen density (frequency). Dot size is controlled
+        # independently via Raster/Hybrid dot_size_multiplier.
+        layer_lpi = effective_lpi
         try:
             total_pixels = mask.size
             design_pixels = np.sum(mask < 128)
@@ -375,12 +401,9 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
 
             # SAFETY CHECK: Near-solid coverage handling
             if coverage_percentage > 95.0:
-                # Policy: If User EXPLICITLY forced halftone (Level 1), obey even if solid.
-                # Otherwise (Auto/Default), skip to avoid flooding.
                 if user_forced_halftone:
                     logger.info(f"[Halftone] Mask {i+1} is {coverage_percentage:.1f}% solid but FORCE HALFTONE is ON. Proceeding.")
                 else:
-                    # FIX 4: Near-solid mask passed as-is to avoid halftone on flood-fill areas.
                     logger.warning(
                         f"[Halftone] Mask {i+1} has {coverage_percentage:.1f}% ink coverage — "
                         f"exceeds 95%% threshold. Skipping halftone (Auto-Safe). "
@@ -396,28 +419,22 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
 
             if is_binary_mask:
                 # Apply distance transform to create gradient near edges
-                # This gives the halftone engine tonal information for edge dots
                 ink_region = (enhanced_raw < 128).astype(np.uint8)
                 dist = cv2.distanceTransform(ink_region, cv2.DIST_L2, 5)
-                # Normalize: center of ink = 0 (dark), edge = gradient, background = 255 (white)
                 max_dist = max(dist.max(), 1.0)
                 dist_norm = np.clip(dist / min(max_dist, 20.0), 0, 1)  # cap at 20px feather
-                # Convert to grayscale: ink center = 10, ink edge = 100, background = 255
                 enhanced = np.where(ink_region == 1,
                                    (10 + (1 - dist_norm) * 90).astype(np.uint8),
                                    255).astype(np.uint8)
                 logger.info(f"[Halftone] Binary mask -> edge-softened gradient for halftone")
             else:
-                # required: grayscale must be cleaned (bilateral filter required before halftone dot generation)
                 enhanced = cv2.bilateralFilter(enhanced_raw, 5, 50, 50)
                 enhanced = clahe.apply(enhanced)
 
             angle = CMYK_ANGLES[i % 4]
-            dot_shape = getattr(args, 'dot_shape', None) or getattr(args, 'dot-shape', None) or 'round'
 
             # HYBRID HALFTONE: Use for artwork with mixed edges + gradients
             ht = None
-            # Check if preview mode (greyscale dots for visualization)
             greyscale_preview = getattr(args, '_greyscale_preview', False)
             if use_hybrid:
                 try:
@@ -426,24 +443,21 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
                         lpi=layer_lpi,
                         dpi=raster_dpi,
                         angle=angle,
-                        dot_shape=dot_shape,
+                        dot_shape=dot_shape,          # FIX 2-B: resolved above
                         gamma=1.6,
                         greyscale_output=greyscale_preview,
+                        source_dpi=getattr(args, 'source_dpi', 300),
+                        dot_size_multiplier=multiplier,
                     )
                     ht_engine = HybridHalftoneEngine(hybrid_cfg)
                     ht = ht_engine.generate(enhanced)
-                    if greyscale_preview:
-                        logger.info(f"[Halftone] ✅ Hybrid GREYSCALE halftone generated for mask {i+1}")
-                    else:
-                        logger.info(f"[Halftone] ✅ Hybrid BINARY halftone generated for mask {i+1}")
+                    logger.info(f"[Halftone] ✅ Hybrid halftone generated for mask {i+1} (dot_shape={dot_shape}, multiplier={multiplier:.2f})")
                 except Exception as e:
                     print(f"❌ [Halftone] Hybrid halftone failed: {e}", flush=True)
                     logger.error(f"[Halftone] ❌ Hybrid halftone failed: {e}, falling back to raster")
                     import traceback
-                    tb_str = traceback.format_exc()
-                    print(f"[Halftone] Traceback: {tb_str}", flush=True)
-                    logger.error(f"[Halftone] Traceback: {tb_str}")
-                    ht = None  # Trigger fallback
+                    logger.error(traceback.format_exc())
+                    ht = None
             
             # FALLBACK: Use RasterHalftone if hybrid failed or not applicable
             if ht is None:
@@ -452,43 +466,37 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
                         lpi=layer_lpi,
                         dpi=raster_dpi,
                         angle=angle,
-                        dot_fn=dot_shape,
+                        dot_fn=dot_shape,             # FIX 2-B: resolved above
                         gamma=1.6,
                         oversample=2,
-                        source_dpi=output_dpi,
+                        source_dpi=getattr(args, 'source_dpi', 300),
                         greyscale_output=greyscale_preview,
+                        dot_size_multiplier=multiplier,
                     )
                     ht_engine = RasterHalftoneEngine(raster_cfg)
                     ht = ht_engine.generate(enhanced)
-                    if greyscale_preview:
-                        logger.info(f"[Halftone] ✅ Raster GREYSCALE halftone generated for mask {i+1}")
-                    else:
-                        logger.info(f"[Halftone] ✅ Raster BINARY halftone generated for mask {i+1}")
+                    logger.info(f"[Halftone] ✅ Raster halftone generated for mask {i+1} (dot_shape={dot_shape}, multiplier={multiplier:.2f})")
                 except Exception as e:
                     print(f"❌❌ [Halftone] RASTER HALFTONE FAILED: {e}", flush=True)
                     logger.error(f"[Halftone] ❌❌ RASTER HALFTONE ALSO FAILED: {e}")
                     import traceback
-                    tb_str = traceback.format_exc()
-                    print(f"[Halftone] Traceback: {tb_str}", flush=True)
-                    logger.error(f"[Halftone] Traceback: {tb_str}")
-                    # Last resort: return original mask
+                    logger.error(traceback.format_exc())
                     result.append(mask)
                     continue
         
         except Exception as e:
-            error_msg = f"❌❌❌ [Halftone] CRITICAL ERROR processing mask {i+1}: {e}"
-            print(error_msg, flush=True)
+            print(f"❌❌❌ [Halftone] CRITICAL ERROR processing mask {i+1}: {e}", flush=True)
             logger.error(f"[Halftone] ❌❌❌ CRITICAL ERROR processing mask {i+1}: {e}")
             import traceback
-            tb_str = traceback.format_exc()
-            print(f"[Halftone] Traceback: {tb_str}", flush=True)
-            logger.error(f"[Halftone] Traceback: {tb_str}")
-            result.append(mask)  # Return original mask as fallback
+            logger.error(traceback.format_exc())
+            result.append(mask)
             continue
         
-        # FINAL FIX: [Fix 2a] Mask constraint + micro noise removal
-        # Prevent halftone dots from appearing outside artwork boundary
-        # mask convention: 0=ink(artwork), 255=background
+        # ── FIX 3: Post-constraint with performance guard ─────────────────────
+        # For very large raster images (e.g. 4000×7108) the connectedComponents
+        # call took ~2.5 min.  We skip micro-noise removal above the threshold
+        # because at high raster DPI, 4-px components are already sub-pixel at
+        # the final output size and are invisible after printing.
         if mask.ndim == 2:
             # Create strict artwork boundary (ink areas)
             artwork_binary = (mask < 128).astype(np.uint8) * 255
@@ -497,31 +505,45 @@ def apply_halftone_pipeline(masks: List[np.ndarray], args, halftone_gen=None, im
             erode_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             artwork_eroded = cv2.erode(artwork_binary, erode_kernel, iterations=1)
             
-            # Apply: keep halftone dots only inside artwork
-            # ht convention: 0=ink dot, 255=background
-            # We want to keep 0s (dots) only where artwork_eroded=255
-            
             # FIX: Resize mask to match upsampled halftone result resolution
             if artwork_eroded.shape != ht.shape:
                 artwork_eroded = cv2.resize(artwork_eroded, (ht.shape[1], ht.shape[0]), 
                                            interpolation=cv2.INTER_NEAREST)
             
+            # Apply boundary: keep halftone dots only inside artwork
             ht_constrained = np.where(artwork_eroded == 255, ht, 255)
             
-            # Remove micro noise (connected components < 4px²)
-            dots_only = (ht_constrained < 128).astype(np.uint8)
-            n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(dots_only, connectivity=8)
-            cleaned = ht_constrained.copy()
-            for lbl in range(1, n_labels):
-                if stats[lbl, cv2.CC_STAT_AREA] < 4:
-                    cleaned[labels == lbl] = 255
-            ht = cleaned
+            # ── FIX 3: Skip CC cleanup on large images (performance) ──────────
+            ht_pixels = ht.shape[0] * ht.shape[1]
+            if ht_pixels <= _MAX_PIXELS_FOR_CC_CLEANUP:
+                # Remove micro noise (connected components < 4px²)
+                dots_only = (ht_constrained < 128).astype(np.uint8)
+                n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(dots_only, connectivity=8)
+                cleaned = ht_constrained.copy()
+                for lbl in range(1, n_labels):
+                    if stats[lbl, cv2.CC_STAT_AREA] < 4:
+                        cleaned[labels == lbl] = 255
+                ht = cleaned
+                logger.info(f"[Halftone] CC cleanup done ({ht_pixels/1e6:.1f} MP)")
+            else:
+                # Fast path: skip CC, apply a morphological open instead
+                # (removes isolated tiny blobs without full CC traversal)
+                tiny_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+                ht_u8 = ht_constrained.astype(np.uint8)
+                # Invert so dots=255, background=0 for morphological open
+                dots_inv = cv2.bitwise_not(ht_u8)
+                dots_cleaned = cv2.morphologyEx(dots_inv, cv2.MORPH_OPEN, tiny_kernel, iterations=1)
+                ht = cv2.bitwise_not(dots_cleaned)
+                logger.info(
+                    f"[Halftone] CC cleanup SKIPPED for large image "
+                    f"({ht_pixels/1e6:.1f} MP > {_MAX_PIXELS_FOR_CC_CLEANUP/1e6:.0f} MP threshold); "
+                    f"used morphological open instead."
+                )
             
             # Log actual coverage after constraint
             final_coverage = 100 * np.mean(ht < 128)
             logger.info(f"[Halftone] Post-constraint coverage: {final_coverage:.2f}%")
         else:
-            # ensure strict binary integrity on halftone dots
             ht = (ht > 127).astype(np.uint8) * 255
 
         result.append(ht)
@@ -534,19 +556,25 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
     """Fallback legacy halftone if RasterHalftoneEngine unavailable."""
     dpi_lpi_ratio = 4.5
     auto_lpi = min(150, max(65, int(args.dpi / dpi_lpi_ratio)))
-    effective_lpi = args.lpi if args.lpi != 85 else auto_lpi
+    effective_lpi = args.lpi
 
     # FIX A-03: Apply the same corrected formula as the primary path
     mesh_count = getattr(args, 'mesh_count', None)
     if mesh_count is None:
         mesh_count = 160
-    # FIX: Use correct industry standard mesh/4.5 ratio
     mesh_ceiling = int(mesh_count / 4.5)
     dpi_ceiling  = args.dpi // 4
     max_safe_lpi = max(25, min(mesh_ceiling, dpi_ceiling))
     if effective_lpi > max_safe_lpi:
         logger.warning(f"[LegacyHalftone] LPI {effective_lpi} clamped to {max_safe_lpi} (mesh={mesh_count}, dpi={args.dpi})")
         effective_lpi = max_safe_lpi
+
+    # ── FIX 2-B (legacy path): resolve dot_shape ─────────────────────────────
+    dot_shape = (
+        getattr(args, 'dot_shape', None)
+        or getattr(args, 'dot-shape', None)
+        or 'round'
+    )
 
     logger.info(f"[LegacyHalftone] Auto LPI: {effective_lpi} (DPI={args.dpi}, mesh={mesh_count}, max_safe={max_safe_lpi})")
     result = []
@@ -559,7 +587,6 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
             result.append(mask)
             continue
         if coverage_percentage > 95.0:
-            # FIX 4: Same flood-risk warning as primary halftone path.
             logger.warning(
                 f"[LegacyHalftone] Mask {i+1} has {coverage_percentage:.1f}% ink coverage — "
                 f"exceeds 95%% threshold. Skipping halftone. VERIFY on press for flood risk."
@@ -572,11 +599,10 @@ def _apply_legacy_halftone(masks: List[np.ndarray], args, halftone_gen) -> List[
         if not is_binary_mask:
             enhanced = clahe.apply(enhanced)
         angle = CMYK_ANGLES[i % 4]
-        dot_shape = getattr(args, 'dot_shape', None) or getattr(args, 'dot-shape', None) or 'round'
         ht = halftone_gen.generate(enhanced, lpi=effective_lpi, angle=angle,
                                    dot_shape=dot_shape, dpi=args.dpi, gamma=1.6)
         
-        # FINAL FIX: enforce strict binary integrity on legacy halftone
+        # enforce strict binary integrity on legacy halftone
         ht = (ht > 127).astype(np.uint8) * 255
         result.append(ht)
     logger.info(f"[HalftonePipeline] ===== COMPLETE - {len(result)} masks processed =====")

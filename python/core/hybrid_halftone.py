@@ -55,6 +55,12 @@ class HybridHalftoneConfig:
     
     # Greyscale output for preview (dots are greyscale 0-255, not binary)
     greyscale_output: bool = False  # True = greyscale dots, False = binary (for films)
+    
+    # FIX: [DPI Scaling] Source DPI for upsampling
+    source_dpi: Optional[int] = None
+
+    # Dot sizing (matches RasterHalftoneConfig behavior)
+    dot_size_multiplier: float = 1.0
 
 
 class HybridHalftoneEngine:
@@ -85,6 +91,16 @@ class HybridHalftoneEngine:
         try:
             h, w = grayscale.shape[:2]
             logger.info(f"[HybridHalftone] Starting: {w}x{h} @ {self.cfg.dpi} DPI, {self.cfg.lpi} LPI")
+            
+            # FIX A-04: Upscale input image to target DPI if needed
+            current_dpi = self.cfg.source_dpi if self.cfg.source_dpi is not None and self.cfg.source_dpi > 0 else 300
+            if current_dpi < self.cfg.dpi:
+                scale = self.cfg.dpi / current_dpi
+                new_w = max(1, int(grayscale.shape[1] * scale))
+                new_h = max(1, int(grayscale.shape[0] * scale))
+                grayscale = cv2.resize(grayscale, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+                h, w = grayscale.shape[:2]
+                logger.info(f"[HybridHalftone] Upsampled {grayscale.shape[1] // int(scale)}x{grayscale.shape[0] // int(scale)} @ {current_dpi} DPI -> {w}x{h} @ {self.cfg.dpi} DPI")
             
             # Step 1: Edge Detection
             edge_mask = self._detect_edges(grayscale)
@@ -148,6 +164,9 @@ class HybridHalftoneEngine:
     
     def _generate_raster(self, gray: np.ndarray, mask: np.ndarray) -> np.ndarray:
         """Generate raster halftone for smooth regions."""
+        dot_mult = getattr(self.cfg, 'dot_size_multiplier', None)
+        if dot_mult is None:
+            dot_mult = 1.0
         cfg = RasterHalftoneConfig(
             lpi=self.cfg.lpi,
             dpi=self.cfg.dpi,
@@ -155,7 +174,9 @@ class HybridHalftoneEngine:
             dot_fn=self.cfg.dot_shape,
             gamma=self.cfg.gamma,
             oversample=self.cfg.raster_oversample,
-            greyscale_output=self.cfg.greyscale_output
+            greyscale_output=self.cfg.greyscale_output,
+            source_dpi=self.cfg.dpi,  # Image is already upsampled to target DPI
+            dot_size_multiplier=float(dot_mult),
         )
         
         engine = RasterHalftoneEngine(cfg)

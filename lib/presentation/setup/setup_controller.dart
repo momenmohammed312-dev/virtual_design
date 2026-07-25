@@ -1,5 +1,6 @@
 // lib/presentation/setup/setup_controller.dart
 // Fixes 2, 4, 7: Real UI values, dot_shape, temp file cleanup
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:get/get.dart';
@@ -7,9 +8,16 @@ import 'package:virtual_design/domain/entities/processing_settings.dart' as ps;
 import 'package:virtual_design/domain/repositories/processing_repository.dart';
 import 'package:virtual_design/core/utils/sound_manager.dart';
 import 'package:virtual_design/core/mobile_ai/mobile_ai_service.dart';
+import 'package:virtual_design/core/server/server_connector.dart';
+import 'package:virtual_design/core/python_bridge/process_result.dart';
 
 class SetupController extends GetxController {
   final ProcessingRepository _repository;
+
+  // Manual LPI override (0 = auto)
+  final RxInt manualLpi = 0.obs;
+  final RxInt userLpi = 79.obs;
+  final RxInt userMeshCount = 355.obs;
 
   SetupController({required ProcessingRepository repository})
       : _repository = repository;
@@ -36,7 +44,7 @@ class SetupController extends GetxController {
 
   // AI Auto-Fix controls
   final RxBool isAiAutoFix = true.obs; // Auto-adjust sliders by AI
-  final RxInt selectedDpi = 1200.obs; // Default high DPI for halftone
+  final RxInt selectedDpi = 300.obs; // Default DPI baseline
   final RxString colorComplexity = 'Auto'.obs; // Auto or 1-8 colors
 
   // Available DPI options
@@ -54,23 +62,11 @@ class SetupController extends GetxController {
   // DYNAMIC LPI: Computed from DPI and Mesh (not stored, calculated on-the-fly)
   // Formula: LPI = min(DPI/2, Mesh/4.5) with safety limits 35-150
   int get lpiValue {
-    final dpi = printQuality.value;
-    final mesh = meshCount;
-    // Ideal LPI from DPI (2:1 ratio for quality halftone)
-    final lpiFromDpi = dpi / 2.0;
-    // Max safe LPI from mesh (conservative 4.5 factor)
-    final maxLpiFromMesh = mesh / 4.5;
-    // Optimal is the lower of the two
-    final optimalLpi =
-        lpiFromDpi < maxLpiFromMesh ? lpiFromDpi : maxLpiFromMesh;
-    // Clamp to safe range
-    if (optimalLpi < 35) return 35;
-    if (optimalLpi > 150) return 150;
-    return optimalLpi.round();
+    return userLpi.value;
   }
 
   final RxString selectedDotShape = 'round'.obs;
-  final RxDouble dotSizeMultiplier = 1.0.obs;
+  final RxDouble dotSizeMultiplier = 0.7.obs;
   // Per-layer dot sizes
   final RxList<double> dotSizeMultipliers = <double>[].obs;
 
@@ -101,18 +97,7 @@ class SetupController extends GetxController {
   /// Higher DPI needs higher mesh count for quality halftone
   /// EXTENDED: Support up to 4800 DPI for photo/engraving applications
   int get meshCount {
-    final dpi = printQuality.value;
-    // Select appropriate mesh based on DPI
-    // For screen printing: realistic max is 355 (for 900-1200 DPI)
-    // For photo/engraving: we return 355 but LPI formula handles the rest
-    if (dpi <= 400) return 110; // Low res, basic mesh
-    if (dpi <= 500) return 160; // Standard
-    if (dpi <= 600) return 196; // Good quality
-    if (dpi <= 800) return 230; // High quality
-    if (dpi <= 1000) return 280; // Very high quality
-    // Beyond 1200 DPI is for photo/engraving - mesh stays at max
-    // LPI will be limited by mesh/4.5 formula
-    return 355; // Maximum mesh count
+    return userMeshCount.value;
   }
 
   // ─── Lifecycle ───────────────────────────────────────────────────────────
@@ -162,7 +147,12 @@ class SetupController extends GetxController {
       selectedFinish.value = settings.printFinish;
       isHalftone.value = (settings.printFinish == ps.PrintFinish.halftone);
       strokeWidth.value = settings.strokeWidthMm;
-      printQuality.value = settings.dpi;
+      // Normalize legacy/invalid values so "auto" mode is stable across restarts.
+      // (Avoid persisting 1200 as a sticky default when the app is moving to 300 baseline.)
+      printQuality.value = (settings.dpi <= 0) ? 300.0 : settings.dpi;
+      if (printQuality.value > 300.0 && !isHalftone.value) {
+        printQuality.value = 300.0;
+      }
       adaptiveThreshold.value = settings.adaptiveThreshold;
       responsiveMode.value = settings.responsiveMode;
       selectedImageType.value = settings.imageType;
@@ -171,7 +161,6 @@ class SetupController extends GetxController {
         // LPI is now computed dynamically from DPI and Mesh
         // selectedDotShape is still loaded from settings
         selectedDotShape.value = settings.halftoneSettings!.dotShape;
-        dotSizeMultiplier.value = settings.halftoneSettings!.dotSizeMultiplier;
       }
     }
   }
@@ -191,6 +180,8 @@ class SetupController extends GetxController {
     isHalftone.value = false;
     // lpiValue is now computed dynamically (no longer stored)
     selectedDotShape.value = 'round';
+    dotSizeMultiplier.value = 0.7; // Sensible default for artwork
+    dotSizeMultipliers.clear();
     edgeEnhancement.value = false;
     colorCorrection.value = false;
     adaptiveThreshold.value = false;
@@ -203,7 +194,7 @@ class SetupController extends GetxController {
     thresholdAdjustmentMade = false;
     // New AI controls
     isAiAutoFix.value = true;
-    selectedDpi.value = 1200;
+    selectedDpi.value = 300;
     colorComplexity.value = 'Auto';
     targetWidthMm.value = 0.0;
     sourceDpi.value = 300;
@@ -244,30 +235,65 @@ class SetupController extends GetxController {
 
     isProcessing.value = true;
     progress.value = 0.0;
-    progressMessage.value = 'Starting AI Analysis...';
+    progressMessage.value = 'Analyzing image on-device…';
 
     try {
-      // 1. Mobile-side AI classification
+      // ── 1. On-device AI (MobileNetV3 + DeepLabV3) ───────────────────────
       final aiService = MobileAIService();
       final aiAnalysis = await aiService.analyze(imagePath.value);
-      progressMessage.value = 'AI Analysis complete.';
-      // Build halftone settings ONLY if finish is halftone
+      Get.log(
+        '🤖 Mobile AI: class=${aiAnalysis.imageClass} '
+        'conf=${aiAnalysis.confidence.toStringAsFixed(2)} '
+        'source=${aiAnalysis.source}',
+      );
+
+      progressMessage.value = 'AI analysis complete.';
+      progress.value = 0.12;
+
+      // ── 2. Apply AI suggestions in Auto-color mode ───────────────────────
+      if (selectedColors.value == 0 &&
+          aiAnalysis.suggestions?.suggestedColors != null) {
+        Get.log(
+          '🎨 Auto-colors: AI suggests ${aiAnalysis.suggestions!.suggestedColors} colors',
+        );
+        selectedColors.value = aiAnalysis.suggestions!.suggestedColors!;
+      }
+
+      // ── 3. Resolve class hint (user choice is final) ─────────────────────
+      String resolvedClass = aiAnalysis.imageClass;
+      if (resolvedClass == 'logo') resolvedClass = 'text_logo';
+      if (selectedFinish.value == ps.PrintFinish.solid) {
+        resolvedClass = 'text_logo';
+      }
+
       final bool effectivelyHalftone =
           selectedFinish.value == ps.PrintFinish.halftone;
+
+      double resolvedConfidence = (selectedFinish.value == ps.PrintFinish.solid)
+          ? aiAnalysis.confidence
+          : aiAnalysis.confidence;
+
+      // Halftone: keep mobile AI class hint, cap confidence below .90 so Python AI runs.
+      if (effectivelyHalftone) {
+        resolvedConfidence = min(aiAnalysis.confidence, 0.89);
+      }
+
+      // Manual LPI override
+      final effectiveLpi = userLpi.value;
+
+      // ── 4. Build ProcessingSettings ──────────────────────────────────────
       final halftone = effectivelyHalftone
           ? ps.HalftoneSettings(
-              lpi: lpiValue, // Dynamic LPI from DPI and Mesh
+              lpi: effectiveLpi,
               dotShape: selectedDotShape.value,
               dotSizeMultiplier: dotSizeMultiplier.value,
             )
           : null;
 
-      // Determine edge enhancement from toggle
       final edge = edgeEnhancement.value
           ? ps.EdgeEnhancement.light
           : ps.EdgeEnhancement.none;
 
-      // Build settings from REAL controller values
       final settings = ps.ProcessingSettings(
         colorCount: selectedColors.value,
         detailLevel: selectedDetail.value,
@@ -283,24 +309,26 @@ class SetupController extends GetxController {
         responsiveMode: responsiveMode.value,
         imageType: selectedImageType.value,
         globalThreshold: thresholdAdjustmentMade ? globalThreshold.value : 0.0,
-        smoothingFactor: -1.0, // -1.0 means the Python pipeline decides automatically
-        cornerThreshold: -1.0, // -1.0 means the Python pipeline decides automatically
-        smoothingSlider: -1, // Use independent smoothingFactor instead
+        smoothingFactor: -1.0,
+        cornerThreshold: -1.0,
+        smoothingSlider: -1,
         targetWidthMm: targetWidthMm.value,
         sourceDpi: sourceDpi.value,
         scaleMode: scaleMode.value,
         customScalePercent: customScalePercent.value,
-        dotSizeMultipliers: dotSizeMultipliers.isEmpty ? null : dotSizeMultipliers.toList(),
-        imageClassHint: aiAnalysis.imageClass,
-        aiConfidence: aiAnalysis.confidence,
+        dotSizeMultipliers:
+            dotSizeMultipliers.isEmpty ? null : dotSizeMultipliers.toList(),
+        imageClassHint: resolvedClass,
+        aiConfidence: resolvedConfidence,
         preMaskPath: aiAnalysis.maskPath,
       );
 
       Get.log(
-        '✅ Settings built: DPI=${settings.dpi}, mesh=${settings.meshCount}, edge=${settings.edgeEnhancement.name}',
+        '✅ Settings built: DPI=${settings.dpi}, mesh=${settings.meshCount}, '
+        'edge=${settings.edgeEnhancement.name}',
       );
 
-      // Validate settings before sending to Python
+      // ── 4. Validate ──────────────────────────────────────────────────────
       final validationErrors = settings.validate();
       if (validationErrors.isNotEmpty) {
         Get.log('❌ Settings validation failed: $validationErrors');
@@ -318,48 +346,80 @@ class SetupController extends GetxController {
 
       await _repository.saveSettings(settings);
 
-      Get.log('🔄 Starting image processing...');
-      Get.log(
-          '📊 HALFTONE SETTINGS: isHalftone=${isHalftone.value}, LPI=$lpiValue, Mesh=$meshCount, DotShape=${selectedDotShape.value}');
-      Get.log(
-          '📊 DPI: ${printQuality.value}, Detail: ${selectedDetail.value}, Colors: ${selectedColors.value}');
-      final outputDirVal = outputDir.value.isNotEmpty ? outputDir.value : null;
+      // ── 5. Build settings map for ServerConnector API fields ─────────────
+      final settingsMap = <String, dynamic>{
+        'colors': settings.colorCount,
+        'dpi': settings.dpi.round(),
+        'halftone': effectivelyHalftone,
+        'lpi': effectiveLpi,
+        'dot_shape': selectedDotShape.value,
+        'dot_size': dotSizeMultiplier.value.clamp(0.3, 1.5),
+        'mesh_count': meshCount,
+        'paper_width': paperWidthCm.value,
+        'paper_height': paperHeightCm.value,
+        'detail_level': selectedDetail.value.name,
+        'target_width_mm': targetWidthMm.value,
+        'source_dpi': sourceDpi.value,
+        'scale_mode': scaleMode.value,
+        'custom_scale_percent': customScalePercent.value,
+        // Smoothing & corner (sentinel -1.0 = adaptive from AI/decision engine)
+        'smoothing_factor': -1.0,
+        'corner_threshold': -1.0,
+      };
 
-      final result = await _repository.processImage(
+      // ── 6. Route: server (Qwen) or local pipeline ────────────────────────
+      progressMessage.value = 'Processing…';
+      progress.value = 0.15;
+
+      final connector = ServerConnector();
+      Get.log(
+        '🔌 Connection mode: ${connector.mode.value.name} '
+        '(${connector.serverUrl.value})',
+      );
+
+      final result = await connector.processImage(
         imagePath: imagePath.value,
-        settings: settings,
-        outputDir: outputDirVal,
+        settings: settingsMap,
+        maskPath: aiAnalysis.maskPath,
+        imageClassHint: resolvedClass,
+        aiConfidence: resolvedConfidence,
         onProgress: (p, msg) {
-          progress.value = p;
+          // Blend connector progress [0..1] into overall [0.15..1.0]
+          progress.value = 0.15 + p * 0.85;
           progressMessage.value = msg;
-          Get.log('Progress: $p - $msg');
+          Get.log(
+              'Progress: ${(progress.value * 100).toStringAsFixed(0)}% — $msg');
         },
       );
 
       Get.log('Processing result: ${result.success}');
+
       if (result.success) {
-        Get.log(
-          '✅ Success! Navigating to preview with: ${result.outputPath}',
-        );
-        // Play completion sound
+        Get.log('✅ Success → preview: ${result.outputDirectory}');
         SoundManager().playDone();
         await Future.delayed(const Duration(milliseconds: 500));
         Get.offNamed(
           '/preview',
           arguments: {
-            'outputDirectory': result.outputPath,
+            'outputDirectory': result.outputDirectory,
             'imagePath': imagePath.value,
             'originalPath': _originalTempPath,
             'settings': settings,
           },
         );
       } else {
-        Get.log('❌ Processing failed: ${result.errorMessage}');
+        Get.log('❌ Processing failed: ${result.error}');
         isProcessing.value = false;
+
+        // Surface a friendly error with connection context
+        final isServerMode = connector.isServerMode;
+        final errorTitle = isServerMode ? 'Server Error' : 'Processing Error';
+        final errorBody = result.error ?? 'An unknown error occurred.';
+
         Get.toNamed(
           '/error',
           arguments: {
-            'processResult': result,
+            'processResult': _makeErrorResult(errorBody),
             'onRetry': () {
               Get.back();
               startProcessing();
@@ -369,11 +429,18 @@ class SetupController extends GetxController {
             },
           },
         );
+        Get.snackbar(
+          errorTitle,
+          errorBody,
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.red.withAlpha((0.12 * 255).round()),
+          colorText: Colors.red,
+          duration: const Duration(seconds: 6),
+        );
       }
     } catch (e, stackTrace) {
       Get.log('🔥 EXCEPTION in startProcessing: $e');
       Get.log('Stack trace: $stackTrace');
-
       Get.snackbar(
         'Processing Error',
         'An unexpected error occurred: $e',
@@ -383,19 +450,14 @@ class SetupController extends GetxController {
         duration: const Duration(seconds: 5),
       );
     } finally {
-      // NOTE: Cleanup deferred to PreviewController.onClose() to allow Regenerate feature.
-      /*
-      if (imagePath.value.contains('vd_normalized_')) {
-        ImageProcessor.cleanupTempFile(imagePath.value);
-      }
-      if (_originalTempPath.isNotEmpty &&
-          _originalTempPath.contains('vd_normalized_')) {
-        ImageProcessor.cleanupTempFile(_originalTempPath);
-      }
-      */
       if (isProcessing.value) isProcessing.value = false;
       Get.log('=== startProcessing() finished ===');
     }
+  }
+
+  /// Returns a ProcessResult so the error page can classify it properly.
+  ProcessResult _makeErrorResult(String message) {
+    return ProcessResult.failure(errorMessage: message);
   }
 
   Future<void> selectOutputDirectory() async {

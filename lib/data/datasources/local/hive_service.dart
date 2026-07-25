@@ -1,4 +1,5 @@
 // lib/data/datasources/local/hive_service.dart
+import 'package:get/get.dart';
 
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:virtual_design/data/models/processing_settings_model.dart';
@@ -32,7 +33,7 @@ class HiveService {
     try {
       await Hive.openBox<PrintProjectModel>(_projectsBox);
     } catch (e) {
-      print('[HiveService] Corrupt projects box, rebuilding: $e');
+      Get.log('[HiveService] Corrupt projects box, rebuilding: $e');
       await Hive.deleteBoxFromDisk(_projectsBox);
       await Hive.openBox<PrintProjectModel>(_projectsBox);
     }
@@ -40,7 +41,7 @@ class HiveService {
     try {
       await Hive.openBox(_settingsBox);
     } catch (e) {
-      print('[HiveService] Corrupt settings box, rebuilding: $e');
+      Get.log('[HiveService] Corrupt settings box, rebuilding: $e');
       await Hive.deleteBoxFromDisk(_settingsBox);
       await Hive.openBox(_settingsBox);
     }

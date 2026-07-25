@@ -87,7 +87,10 @@ def fit_bezier_to_contour(
         base = 0.002
 
         if img_class == "text_logo":
-            return base * 0.4 * scale
+            # FIX: Increase epsilon for text_logo to smooth pixel-level jaggedness
+            # Old: 0.0008 * scale → too small, preserves every pixel bump
+            # New: 0.003 * scale → allows simplification while preserving letter shapes
+            return base * 1.5 * scale
         else:
             return base * 1.25 * scale
 
@@ -180,10 +183,18 @@ def preprocess_mask_for_vector(mask: np.ndarray, apply_blur: bool = False, smoot
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_noise)
     
     # 1) upscale (subpixel support) for small masks only
-    if max_dim < 1200:
-        bw = cv2.resize(mask, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_LANCZOS4)
-        upsample_factor = 2.5
-        logger.debug(f"[Preprocess] Upscaling small mask {mask.shape} -> {bw.shape} (Lanczos4)")
+    # Adaptive threshold: higher resolution sources get less aggressive upscaling
+    if max_dim < 800:
+        up = 2.5
+    elif max_dim < 1600:
+        up = 1.5
+    else:
+        up = 1.0
+
+    if up > 1.0:
+        bw = cv2.resize(mask, None, fx=up, fy=up, interpolation=cv2.INTER_LANCZOS4)
+        upsample_factor = up
+        logger.debug(f"[Preprocess] Upscaling {mask.shape} by {up}x")
     else:
         bw = mask.copy()
         upsample_factor = 1.0
@@ -301,6 +312,7 @@ def export_vector_pdf(
     angle: float = 45.0,
     mesh_count: int = 160,
     mask_dpi: Optional[int] = None,
+    hidden_layer_indices: Optional[List[int]] = None,
 ) -> Path:
     """
     Export all films as multi-page PDF with true vector quality.
@@ -321,12 +333,21 @@ def export_vector_pdf(
         corner_threshold: Threshold to preserve sharp corners (degrees)
         min_contour_area: Smallest contour to draw (pixels²)
         page_size: 'A4', 'A3', 'LETTER'
+        hidden_layer_indices: Optional list of layer indices to exclude from export
 
     Returns:
         Path to saved file
     """
     if not REPORTLAB_AVAILABLE:
         raise ImportError("reportlab required: pip install reportlab")
+
+    # Filter out hidden layers
+    if hidden_layer_indices is not None and hidden_layer_indices:
+        logger.info(f"[VectorExporter] Excluding hidden layers: {hidden_layer_indices}")
+        masks = [m for i, m in enumerate(masks) if i not in hidden_layer_indices]
+        colors = [c for i, c in enumerate(colors) if i not in hidden_layer_indices]
+        color_names = [n for i, n in enumerate(color_names) if i not in hidden_layer_indices]
+        logger.info(f"[VectorExporter] Exporting {len(masks)} layers after filtering")
     
     from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.lib.pagesizes import A4, A3, letter
@@ -390,8 +411,20 @@ def export_vector_pdf(
     # 1. Determine Source Size in MM
     # We use source_dpi to understand how many mm the pixels represent
     source_dpi = getattr(args, 'source_dpi', dpi) or dpi
+    try:
+        source_dpi = int(source_dpi)
+    except Exception:
+        source_dpi = int(dpi)
+    if source_dpi <= 0:
+        logger.warning(f"[VectorExporter] Invalid source_dpi={source_dpi}. Falling back to dpi={dpi}.")
+        source_dpi = int(dpi)
 
     first_mask = masks[0] if masks else None
+    
+    # FIX: Define effective_source_dpi with default before if block
+    # This ensures it's in scope for px_to_pt function regardless of code path
+    effective_source_dpi = float(source_dpi)
+    
     if first_mask is not None:
         first_h, first_w = first_mask.shape[:2]
         # FIX: Use original dimensions if image was downscaled during separation
@@ -404,14 +437,20 @@ def export_vector_pdf(
             scale_ratio_h = orig_h / first_h if first_h > 0 else 1.0
             # Adjust source_dpi to account for the scaling
             effective_dpi = source_dpi * ((scale_ratio_w + scale_ratio_h) / 2)
+            if effective_dpi <= 0:
+                effective_dpi = float(dpi)
             src_w_mm = orig_w / effective_dpi * 25.4
             src_h_mm = orig_h / effective_dpi * 25.4
             logger.info(f"[VectorExporter] Source Artwork (ORIGINAL): {orig_w}x{orig_h}px @ {effective_dpi:.0f} DPI = {src_w_mm:.1f}mm x {src_h_mm:.1f}mm")
             logger.info(f"[VectorExporter] Mask size: {first_w}x{first_h}, Scale ratio: {scale_ratio_w:.2f}x")
         else:
-            src_w_mm = first_w / source_dpi * 25.4
-            src_h_mm = first_h / source_dpi * 25.4
-            logger.info(f"[VectorExporter] Source Artwork: {first_w}x{first_h}px @ {source_dpi} DPI = {src_w_mm:.1f}mm x {src_h_mm:.1f}mm")
+            # FIX: Account for geometry_sync upscale in DPI calculation
+            upscale_factor_geom = getattr(args, 'upscale_factor', 1.0) or 1.0
+            effective_source_dpi = source_dpi * upscale_factor_geom
+            src_w_mm = first_w / effective_source_dpi * 25.4
+            src_h_mm = first_h / effective_source_dpi * 25.4
+            logger.info(f"[VectorExporter] Effective DPI after upscale: {effective_source_dpi:.0f} (upscale={upscale_factor_geom:.2f}x)")
+            logger.info(f"[VectorExporter] Source Artwork: {first_w}x{first_h}px @ {effective_source_dpi:.0f} DPI = {src_w_mm:.1f}mm x {src_h_mm:.1f}mm")
 
         # 2. Identify Scaling Mode
         scale_mode = getattr(args, 'scale_mode', 'fit_to_page')
@@ -457,14 +496,23 @@ def export_vector_pdf(
             scale_factor = min(printable_w_mm / src_w_mm, printable_h_mm / src_h_mm)
             logger.info(f"[VectorExporter] Scale mode: fit_to_page (conservative fit)")
             
-            # Only cap at 2.0x for fit_to_page auto-mode, not for paper-based modes
+            # Only cap for fit_to_page auto-mode, not for paper-based modes
             if 'scale_mode' not in getattr(args, 'overrides', []) and scale_mode == 'fit_to_page':
-                if scale_factor > 2.0:
-                    logger.info(f"[VectorExporter] Capping scale from {scale_factor:.2f}x to 2.0x (fit_to_page default)")
-                    scale_factor = 2.0
+                # FIX: Flexible cap based on printable area ratio with adaptive maximum
+                # Higher resolution sources get more aggressive capping to prevent over-upscaling
+                base_max = 4.0 if src_w_mm < 100 else 3.0
+                max_auto_scale = min(base_max, printable_w_mm / src_w_mm)  # Not larger than printable area
+                if scale_factor > max_auto_scale:
+                    logger.info(f"[VectorExporter] Capping scale from {scale_factor:.2f}x to {max_auto_scale:.2f}x")
+                    scale_factor = max_auto_scale
 
         final_w_mm = src_w_mm * scale_factor
         final_h_mm = src_h_mm * scale_factor
+        if not (scale_factor > 0):
+            logger.warning(f"[VectorExporter] Invalid scale_factor={scale_factor}. Forcing to 1.0")
+            scale_factor = 1.0
+            final_w_mm = src_w_mm * scale_factor
+            final_h_mm = src_h_mm * scale_factor
         logger.info(f"[VectorExporter] Final Print Size: {final_w_mm:.1f}mm x {final_h_mm:.1f}mm (Scale: {scale_factor:.2f}x)")
         logger.info(f"[VectorExporter] Paper Size: {paper_w_mm:.1f}mm x {paper_h_mm:.1f}mm, Printable: {printable_w_mm:.1f}mm x {printable_h_mm:.1f}mm")
     else:
@@ -474,8 +522,8 @@ def export_vector_pdf(
         return px / source_dpi * 25.4
     
     def px_to_pt(px: float) -> float:
-        """Convert pixels to points (1 inch = 72 points = source_dpi pixels)"""
-        return px * 72.0 / source_dpi
+        """Convert pixels to points (1 inch = 72 points = effective_source_dpi pixels)"""
+        return px * 72.0 / effective_source_dpi
 
     if (corner_threshold or 0.0) > 150.0:
         logger.info(f"[VectorExporter] Applying Hard-Corner Logic (Threshold: {corner_threshold:.1f})")
@@ -508,6 +556,13 @@ def export_vector_pdf(
         # 🎯 AUTO-CENTERING: Perfectly center design on film page
         draw_x = margin_pt + (printable_w - draw_w) / 2
         draw_y = margin_pt + (printable_h - draw_h) / 2
+
+        # Safety clamp: never allow negative/off-page placement.
+        # If draw_w/draw_h exceed printable area, anchor to margin.
+        if draw_x < margin_pt:
+            draw_x = margin_pt
+        if draw_y < margin_pt:
+            draw_y = margin_pt
         
         # Log per-film positioning (debug only, not to spam)
         if film_idx == 0:
@@ -534,14 +589,14 @@ def export_vector_pdf(
         # FIX: [1a] Scale-aware smoothing - INCREASE smoothing at high scale
         # A 1px staircase becomes a 5px staircase at 5x scale, requiring MORE smoothing
         adjusted_smooth = smooth_factor
-        if scale_factor > 2.0:
-            # Increase smoothing up to a cap
-            scale_boost = min(2.5, scale_factor / 2.0)
-            adjusted_smooth = min(0.45, smooth_factor * scale_boost)
-            # FIX: [1a] Raise cap for text_logo when high scale
+        if scale_factor > 1.5:
+            # Adaptive boost: more aggressive for higher scales, but with diminishing returns
+            scale_boost = min(4.0, scale_factor ** 0.8)  # Diminishing returns curve
+            adjusted_smooth = min(0.5, smooth_factor * scale_boost)
+            # FIX: [1a] Adaptive cap for text_logo based on scale
             if image_class == 'text_logo':
-                # Raise cap from 0.25 to 0.35 when scale > 4
-                max_smooth = 0.35 if scale_factor > 4.0 else 0.25
+                # Progressive cap: higher scale allows more smoothing but preserves readability
+                max_smooth = 0.25 + min(0.15, (scale_factor - 1.5) * 0.1)
                 adjusted_smooth = min(adjusted_smooth, max_smooth)
             logger.info(f"[VectorExporter] Scale-aware smoothing: {smooth_factor} → {adjusted_smooth:.3f} "
                        f"(scale={scale_factor:.2f}x, boost={scale_boost:.2f})")
@@ -560,6 +615,16 @@ def export_vector_pdf(
 
         # FINAL FIX: enforce strict binary integrity directly before contour trace
         bw = (bw > 127).astype(np.uint8) * 255
+
+        if image_class == 'text_logo' and scale_factor > 1.8:
+            # Adaptive morphological smoothing for staircase artifacts
+            # Kernel size and iterations scale with the scale factor
+            k_size = 3 if scale_factor < 2.5 else (5 if scale_factor < 4.0 else 7)
+            iterations = 1 if scale_factor < 3.0 else 2
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+            bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=iterations)
+            bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN,  kernel, iterations=iterations)
+            bw = (bw > 127).astype(np.uint8) * 255
 
         # Ensure ink=BLACK(0) for contour tracing
         # preprocess_mask_for_vector uses THRESH_BINARY which preserves input polarity

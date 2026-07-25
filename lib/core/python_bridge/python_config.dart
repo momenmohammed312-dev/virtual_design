@@ -76,6 +76,28 @@ class PythonConfig {
       dir = dir.parent;
     }
 
+    // Also check next to the exe directly (for release builds with bundled venv)
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final localVenv = Directory('${exeDir.path}${sep}venv');
+    if (await localVenv.exists()) {
+      final venvPython = Platform.isWindows
+          ? '${localVenv.path}${sep}Scripts${sep}python.exe'
+          : '${localVenv.path}${sep}bin${sep}python';
+      if (await File(venvPython).exists()) {
+        try {
+          final result = await Process.run(venvPython, ['--version']);
+          if (result.exitCode == 0) {
+            debugPrint('[PythonConfig] Found local venv next to exe: $venvPython');
+            _resolvedCommand = venvPython;
+            _resolvedVersion = (result.stdout as String).trim();
+            return venvPython;
+          }
+        } catch (e) {
+          debugPrint('[PythonConfig] local venv failed: $e');
+        }
+      }
+    }
+
     for (final cmd in _candidates) {
       try {
         final result = await Process.run(cmd, ['--version']);
@@ -214,17 +236,17 @@ print(f"MISSING:{','.join(missing)}")
   Future<String> getPythonScriptsDir() async {
     final sep = Platform.pathSeparator;
 
-    // Release mode: بجانب الـ exe مباشرة
-    if (Platform.isWindows && !_isDebugMode()) {
-      final exeDir = File(Platform.resolvedExecutable).parent.path;
-      final releasePath = '$exeDir${sep}python';
-      debugPrint('[PythonConfig] Release mode, checking: $releasePath');
-      return releasePath;
+    // First: try next to exe directly (works when python/ is copied beside the exe)
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final localCandidate = '$exeDir${sep}python';
+    if (await Directory(localCandidate).exists()) {
+      debugPrint('[PythonConfig] Found python dir next to exe: $localCandidate');
+      return localCandidate;
     }
 
-    // Debug mode: walk up from exe path to find "python" folder
-    // Flutter debug exe is typically at:
-    //   build\windows\x64\runner\Debug\virtual_design.exe
+    // Walk up from exe path to find "python" folder (works in both debug and release)
+    // Flutter exe is typically at:
+    //   build\windows\x64\runner\{Debug|Release}\virtual_design.exe
     // Project root is 5-7 levels up
     var dir = File(Platform.resolvedExecutable).parent;
     for (int i = 0; i < 7; i++) {

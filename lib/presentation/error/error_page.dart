@@ -3,8 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:virtual_design/core/python_bridge/process_result.dart';
-import 'package:virtual_design/core/errors/error_codes.dart'
-    hide ProcessingError, ProcessingErrorType;
+import 'package:virtual_design/core/errors/error_codes.dart';
 import 'package:virtual_design/presentation/shared/error_screen_widget.dart';
 
 class ErrorPage extends StatelessWidget {

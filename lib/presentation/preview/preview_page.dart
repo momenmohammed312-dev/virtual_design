@@ -66,44 +66,56 @@ void _showAIFixDialog(PreviewController controller) {
   );
 }
 
-class PreviewPage extends StatelessWidget {
+class PreviewPage extends StatefulWidget {
   const PreviewPage({super.key});
 
+  @override
+  State<PreviewPage> createState() => _PreviewPageState();
+}
+
+class _PreviewPageState extends State<PreviewPage> {
   static const Color primaryBlue = Color(0xFF1564A5);
   static const Color sidebarBlue = Color(0xFF0E3182);
+
+  // FIX 1B-1: Moved scaffoldKey to State — a new key inside build() breaks the Drawer
+  // because every rebuild creates a different key, losing the ScaffoldState reference.
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   Widget build(BuildContext context) {
     final controller = Get.find<PreviewController>();
 
-    final GlobalKey<ScaffoldState> scaffoldKey = GlobalKey<ScaffoldState>();
-
     return Scaffold(
-      key: scaffoldKey,
+      key: _scaffoldKey,
       backgroundColor: const Color(0xFFF5F5F5),
-      drawer: context.isDesktop ? null : Drawer(child: _buildSidebar()),
+      // FIX 1B-2: Wrap drawer sidebar in SafeArea so content is not hidden behind status/notch
+      drawer: context.isDesktop
+          ? null
+          : Drawer(child: SafeArea(child: _buildSidebar())),
       body: Row(
         children: [
           if (context.isDesktop) _buildSidebar(),
           Expanded(
             child: Column(
               children: [
-                _buildTopBar(context.isDesktop, scaffoldKey),
+                _buildTopBar(context.isDesktop, _scaffoldKey),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      final isNarrow = constraints.maxWidth < 1200;
+                      // FIX 1B-2: Lowered isNarrow threshold from 1200 → 900 so tablets
+                      // (600–1023 px) also get the stacked layout.
+                      final isNarrow = constraints.maxWidth < 900;
                       return SingleChildScrollView(
-                        padding: const EdgeInsets.all(30),
+                        padding: EdgeInsets.all(isNarrow ? 16 : 30),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _buildProgressSteps(),
                             const SizedBox(height: 30),
-                            const Text(
+                            Text(
                               'Print Preview',
                               style: TextStyle(
-                                fontSize: 32,
+                                fontSize: isNarrow ? 24 : 32,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black,
                               ),
@@ -118,14 +130,21 @@ class PreviewPage extends StatelessWidget {
                             ),
                             const SizedBox(height: 30),
                             if (isNarrow) ...[
-                              _buildPreviewArea(controller),
-                              const SizedBox(height: 20),
-                              _buildRightPanel(controller),
-                            ] else
                               SizedBox(
                                 height: 500,
+                                child: _buildPreviewArea(controller),
+                              ),
+                              const SizedBox(height: 20),
+                              SizedBox(
+                                height: 450,
+                                child: _buildRightPanel(controller),
+                              ),
+                            ] else
+                              SizedBox(
+                                height: 600,
                                 child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
                                   children: [
                                     // Main Preview Area
                                     Expanded(
@@ -134,7 +153,7 @@ class PreviewPage extends StatelessWidget {
                                     ),
                                     const SizedBox(width: 20),
 
-                                    // Sidebar with Layers Panel only (Bug 1: Removed Fine-Tune tab)
+                                    // Sidebar with Layers Panel only
                                     SizedBox(
                                       width: 260,
                                       child: _buildRightPanel(controller),
@@ -612,6 +631,29 @@ class PreviewPage extends StatelessWidget {
                                 tooltip: 'Per-layer Halftone',
                               )),
                           const SizedBox(width: 4),
+                          // Layer Visibility Toggle
+                          Obx(() => IconButton(
+                                icon: Icon(
+                                  controller.isLayerHidden.length > index &&
+                                          controller.isLayerHidden[index]
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                  color:
+                                      controller.isLayerHidden.length > index &&
+                                              controller.isLayerHidden[index]
+                                          ? Colors.grey.shade400
+                                          : primaryBlue,
+                                  size: 20,
+                                ),
+                                onPressed: () =>
+                                    controller.toggleLayerHidden(index),
+                                tooltip:
+                                    controller.isLayerHidden.length > index &&
+                                            controller.isLayerHidden[index]
+                                        ? 'Show layer in export'
+                                        : 'Hide layer from export',
+                              )),
+                          const SizedBox(width: 4),
                           isPdf
                               ? IconButton(
                                   icon: const Icon(Icons.open_in_new, size: 18),
@@ -661,6 +703,27 @@ class PreviewPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 10),
+                Obx(() {
+                  final hasHiddenLayers =
+                      controller.isLayerHidden.any((hidden) => hidden);
+                  return hasHiddenLayers
+                      ? SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: controller.restoreAllLayers,
+                            icon: const Icon(Icons.restore, size: 18),
+                            label: const Text('Restore Hidden Layers'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: primaryBlue,
+                              side: const BorderSide(color: primaryBlue),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink();
+                }),
+                if (controller.isLayerHidden.any((hidden) => hidden))
+                  const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -798,14 +861,18 @@ class PreviewPage extends StatelessWidget {
   Widget _buildProgressSteps() {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _buildStep(1, 'Upload File', true, false),
-          _buildProgressLine(true),
-          _buildStep(2, 'System Setup', true, false),
-          _buildProgressLine(true),
-          _buildStep(3, 'Print Preview', false, true),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildStep(1, 'Upload File', true, false),
+            _buildProgressLine(true),
+            _buildStep(2, 'System Setup', true, false),
+            _buildProgressLine(true),
+            _buildStep(3, 'Print Preview', false, true),
+          ],
+        ),
       ),
     );
   }
@@ -851,8 +918,10 @@ class PreviewPage extends StatelessWidget {
   }
 
   Widget _buildProgressLine(bool isComplete) {
+    // REVERTED: Fixed width Container instead of Flexible to prevent layout crashes
+    // inside horizontal scroll views.
     return Container(
-      width: 100,
+      width: 80,
       height: 2,
       margin: const EdgeInsets.only(bottom: 30),
       color: isComplete ? Colors.green : const Color(0xFFE5E7EB),
@@ -1095,11 +1164,16 @@ class PreviewPage extends StatelessWidget {
     if (controller.dotSizeMultipliers.length > index) {
       final mult = controller.dotSizeMultipliers[index];
       String label = 'Normal';
-      if (mult <= 0.6) label = 'Very Fine';
-      else if (mult <= 0.8) label = 'Fine';
-      else if (mult >= 1.4) label = 'Very Bold';
-      else if (mult >= 1.2) label = 'Bold';
-      
+      if (mult <= 0.6) {
+        label = 'Very Fine';
+      } else if (mult <= 0.8) {
+        label = 'Fine';
+      } else if (mult >= 1.4) {
+        label = 'Very Bold';
+      } else if (mult >= 1.2) {
+        label = 'Bold';
+      }
+
       detailText += ' • $label (${mult.toStringAsFixed(1)}x)';
     }
 

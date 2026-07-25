@@ -78,8 +78,10 @@ class DecisionOracle:
             'corner_threshold', 'upscale_factor', 'denoise_strength',
             'contour_min_area', 'simplification_epsilon', 'page_size',
             'page_width', 'page_height', 'margin_pt', 'image_type',
-            'dot_size', 'dot_sizes'
+            'dot_size', 'dot_sizes', 'dot_shape'
         ]
+
+        SENTINELS = {'smoothing_factor': -1.0, 'corner_threshold': -1.0}
 
         defaults = {
             'dpi': 300, 'lpi': 85, 'colors': 0, 'halftone': False, 
@@ -87,7 +89,7 @@ class DecisionOracle:
             'corner_threshold': 120.0, 'upscale_factor': 1.0,
             'denoise_strength': 3, 'contour_min_area': 50,
             'simplification_epsilon': 1.2, 'page_size': 'A4',
-            'dot_size': 1.0, 'dot_sizes': None
+            'dot_size': 1.0, 'dot_sizes': None, 'dot_shape': 'round'
         }
 
         # 1. INITIALIZATION & TYPE SANITIZATION
@@ -101,7 +103,8 @@ class DecisionOracle:
                 val = safe_int(val, defaults.get(p))
 
             if val is not None:
-                is_default = (val == defaults.get(p))
+                is_sentinel = (p in SENTINELS and val == SENTINELS[p])
+                is_default = is_sentinel or (val == defaults.get(p))
                 source = DecisionSource.USER_DEFAULT if is_default else DecisionSource.USER_EXPLICIT
                 self.update_param(p, val, source, "Input Setup")
                 if source == DecisionSource.USER_EXPLICIT:
@@ -121,8 +124,23 @@ class DecisionOracle:
 
         # B. AI VISION & FAST CLASSIFIER (Tier 2)
         if not is_class_locked:
-            logger.info("[DecisionEngine] 🧠 AI VISION: Analyzing...")
-            ai_result = ai_module.analyze_image(image)
+            # HIGH-CONFIDENCE HINT / NO-AI: Skip heavy AI vision if Flutter already decided.
+            hint_class = getattr(args, 'image_class_hint', 'auto')
+            hint_conf = float(getattr(args, 'ai_confidence', 0.0) or 0.0)
+            force_no_ai = bool(getattr(args, 'no_ai', False))
+
+            ai_result = None
+            if force_no_ai or (hint_class != 'auto' and hint_conf >= 0.90):
+                logger.info(f"[DecisionEngine] ⚡ Skipping AI Vision (hint={hint_class}, conf={hint_conf:.2f}, no_ai={force_no_ai})")
+                ai_result = {'image_class': hint_class, 'confidence': hint_conf}
+            else:
+                logger.info("[DecisionEngine] 🧠 AI VISION: Analyzing...")
+                ai_result = ai_module.analyze_image(
+                    image,
+                    hint_class=hint_class if hint_class != 'auto' else None,
+                    hint_confidence=hint_conf,
+                )
+
             if ai_result:
                 ai_class = ai_result.get('image_class')
                 ai_conf = ai_result.get('confidence', 0.0)
@@ -176,14 +194,79 @@ class DecisionOracle:
                 logger.warning("[DecisionEngine] ⚠️ Warning: User forced halftone on logo. Routing to artwork pipeline.")
                 self.decision.image_class = 'artwork' # Upgrade for halftone support
 
-        # AUTO-SMOOTHING
+        # AUTO-SMOOTHING — always quality-adjust unless user explicitly set it
         smooth = self.decision.parameters.get('smoothing_factor', 0.25)
-        if smooth < 0: # Handle -1.0 sentinel
-            if self.decision.image_class == 'text_logo': smooth = 0.05
-            elif self.decision.image_class == 'photo': smooth = 0.65
-            else: smooth = 0.35
-            self.update_param('smoothing_factor', smooth, DecisionSource.HEURISTIC, "Class-based auto-smoothing")
-            args.smoothing_factor = smooth  # Sync back to args so pipeline uses it
+        user_set_smooth = 'smoothing_factor' in self.decision.explicit_user_overrides
+        ai_set_smooth = any(
+            a.parameter == 'smoothing_factor' and a.source in (DecisionSource.AI,)
+            for a in self.decision.audit_trail
+        )
+        ai_confident = self.decision.confidence >= 0.7
+
+        if not user_set_smooth:
+            smooth_cfg = {
+                'text_logo': (0.05, 0.3,  (0.03, 0.12)),
+                'photo':     (0.65, 0.5,  (0.40, 0.65)),
+            }
+            base, dscale, (cmin, cmax) = smooth_cfg.get(
+                self.decision.image_class, (0.35, 1.0, (0.15, 0.60))
+            )
+
+            res_q, blur_q, noise_q = self._compute_image_quality_factors(image)
+
+            # If AI set a confident value, use it as base and apply quality delta
+            # Otherwise, use the class base
+            if ai_set_smooth and ai_confident:
+                smooth = float(self.decision.parameters.get('smoothing_factor', base))
+            else:
+                smooth = base
+
+            smooth_delta = (
+                np.interp(res_q,  [0.0, 1.0], [0.08, -0.05]) +
+                np.interp(blur_q, [0.0, 1.0], [0.10,  0.00]) +
+                np.interp(noise_q,[0.0, 1.0], [0.08,  0.00])
+            )
+            smooth = float(np.clip(smooth + smooth_delta * dscale, cmin, cmax))
+
+            self.update_param('smoothing_factor', smooth, DecisionSource.HEURISTIC,
+                              f"Quality-adjusted (rd={res_q:.2f}, bd={blur_q:.2f}, nd={noise_q:.2f})")
+            args.smoothing_factor = smooth
+
+        # AUTO CORNER THRESHOLD — always quality-adjust unless user explicitly set it
+        corner_thr = self.decision.parameters.get('corner_threshold', defaults.get('corner_threshold', 120.0))
+        user_set_corner = 'corner_threshold' in self.decision.explicit_user_overrides
+        ai_set_corner = any(
+            a.parameter == 'corner_threshold' and a.source in (DecisionSource.AI,)
+            for a in self.decision.audit_trail
+        )
+
+        if not user_set_corner:
+            corner_cfg = {
+                'text_logo': (45.0, 0.3,  (30.0, 60.0)),
+                'photo':     (135.0, 0.5, (110.0, 170.0)),
+            }
+            base, dscale, (cmin, cmax) = corner_cfg.get(
+                self.decision.image_class, (120.0, 1.0, (80.0, 160.0))
+            )
+
+            res_q, blur_q, noise_q = self._compute_image_quality_factors(image)
+
+            # If AI set a confident value, use it as base and apply quality delta
+            if ai_set_corner and ai_confident:
+                corner_thr = float(self.decision.parameters.get('corner_threshold', base))
+            else:
+                corner_thr = base
+
+            corner_delta = (
+                np.interp(res_q,  [0.0, 1.0], [15.0, -10.0]) +
+                np.interp(blur_q, [0.0, 1.0], [20.0,   0.0]) +
+                np.interp(noise_q,[0.0, 1.0], [15.0,   0.0])
+            )
+            corner_thr = float(np.clip(corner_thr + corner_delta * dscale, cmin, cmax))
+
+            self.update_param('corner_threshold', corner_thr, DecisionSource.HEURISTIC,
+                              "Quality-adjusted corner threshold")
+            args.corner_threshold = corner_thr
 
         # 4. PHYSICAL CONSTRAINTS & LPI/DPI MAPPING
         mesh = safe_int(getattr(ppm_module, 'mesh_count', 160), 160)
@@ -239,29 +322,29 @@ class DecisionOracle:
             ]
         }
 
-    def _get_image_stats(self, image: np.ndarray) -> Dict:
-        if image is None: return {'is_binary': False}
+    def _compute_image_quality_factors(self, image: np.ndarray) -> tuple:
+        """Compute quality factors 0.0-1.0 for resolution, blur, noise.
+        Returns (res_q, blur_q, noise_q) where 1.0 = best quality.
+        """
+        if image is None or image.size == 0:
+            return (0.5, 0.5, 0.5)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
-        total = max(1, gray.size)
-        dark_ratio = hist[:30].sum() / total
-        light_ratio = hist[225:].sum() / total
-        return {'is_binary': (dark_ratio + light_ratio) > 0.9}
+        h, w = gray.shape
+        max_dim = max(h, w)
 
-    def get_summary_dict(self) -> Dict:
-        return {
-            "image_class": self.decision.image_class,
-            "confidence": self.decision.confidence,
-            "best_params": self.decision.parameters,
-            "overrides": list(self.decision.explicit_user_overrides),
-            "reasoning": self.decision.reasoning,
-            "trace": [
-                {
-                    "param": a.parameter, 
-                    "value": a.value, 
-                    "source": a.source.value, 
-                    "reason": a.reason
-                } for a in self.decision.audit_trail
-            ]
-        }
+        # Resolution: 0.0 (صغير < 300px) → 1.0 (كبير > 4000px)
+        res_q = np.clip((max_dim - 300) / (4000 - 300), 0.0, 1.0)
+
+        # Blur (inverse Laplacian): 0.0 (باهت جداً) → 1.0 (حاد)
+        lap_var = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+        blur_q = np.clip(lap_var / 500, 0.0, 1.0)
+
+        # Noise (Gaussian diff std): 0.0 (شرشرة كتير) → 1.0 (نظيف)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        noise_std = float(np.std(gray.astype(float) - blurred.astype(float)))
+        noise_q = np.clip(1.0 - noise_std / 30, 0.0, 1.0)
+
+        return (res_q, blur_q, noise_q)
+
+
 

@@ -111,14 +111,27 @@ def main():
                 print(json.dumps({"error": f"Local model failed: {e}"}), file=sys.stderr)
                 result = None
         
-        # Last resort: return safe defaults so Flutter doesn't show error
+        # Last resort: return size-aware safe defaults so Flutter doesn't show error
         if not result:
+            orig = cv2.imread(args.original)
+            h, w = orig.shape[:2] if orig is not None else (1000, 1000)
+            max_dim = max(h, w)
+            if max_dim < 400:
+                smooth, corner, eps = 0.35, 60.0, 1.8
+            elif max_dim < 800:
+                smooth, corner, eps = 0.30, 65.0, 1.6
+            elif max_dim < 1500:
+                smooth, corner, eps = 0.25, 80.0, 1.3
+            elif max_dim < 2500:
+                smooth, corner, eps = 0.20, 100.0, 1.0
+            else:
+                smooth, corner, eps = 0.15, 120.0, 0.8
             result = {
-                "smoothing_factor": 0.25,
-                "corner_threshold": 95.0,
+                "smoothing_factor": smooth,
+                "corner_threshold": corner,
                 "denoise_strength": 3,
-                "simplification_epsilon": 1.2,
-                "adjustment_reason": f"Could not analyze image. Returning safe defaults. Prompt was: {args.prompt}"
+                "simplification_epsilon": eps,
+                "adjustment_reason": f"Could not analyze image. Returning size-aware defaults (max_dim={max_dim}px). Prompt was: {args.prompt}"
             }
     else:
         # Standard auto-fix analysis

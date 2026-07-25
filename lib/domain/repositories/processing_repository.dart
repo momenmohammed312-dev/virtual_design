@@ -15,6 +15,14 @@ abstract class ProcessingRepository {
     void Function(double progress, String message)? onProgress,
   });
 
+  /// Process an image using a raw settings map (used by ServerConnector for local fallback)
+  Future<ProcessResult> processImageFromMap({
+    required String imagePath,
+    required Map<String, dynamic> settingsMap,
+    String? outputDir,
+    void Function(double progress, String message)? onProgress,
+  });
+
   /// Get list of saved projects
   Future<List<String>> getSavedProjects();
 

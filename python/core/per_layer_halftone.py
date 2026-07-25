@@ -38,24 +38,18 @@ def parse_dot_sizes_from_args(args, num_layers):
 
 
 def multiplier_to_lpi(base_lpi, multiplier, mesh_count):
+    """Deprecated mapping.
+
+    Historically this function attempted to convert dot-size multiplier into LPI.
+    This couples two independent controls:
+    - LPI: dot density (screen frequency)
+    - dot_size_multiplier: dot radius (dot growth)
+
+    Keep for backward compatibility in case external code imports it.
+    The current pipeline should treat LPI as the sole density control and apply
+    dot_size_multiplier directly in the halftone engine.
     """
-    Converts dot size multiplier to an effective LPI for halftone execution.
-    - Larger dot -> smaller LPI -> coarse halftone
-    - Smaller dot -> larger LPI -> fine halftone
-    Applies safety bounds: 25 <= LPI <= mesh/3.5
-    """
-    if multiplier <= 0:
-        multiplier = 0.7
-        
-    # Standardize: 0.7 is the "Normal" base.
-    # If multiplier = 0.7, effective = base_lpi.
-    # If multiplier = 1.0 (Bold), effective = base_lpi / (1.42) -> Lower LPI -> Larger dots.
-    # If multiplier = 0.3 (Fine), effective = base_lpi / (0.42) -> Higher LPI -> Smaller dots.
-    effective = base_lpi / (multiplier / 0.7)
-    
-    max_lpi = mesh_count / 3.5 if mesh_count else 150
-    
-    return int(max(25, min(max_lpi, effective)))
+    return int(base_lpi)
 
 
 def apply_per_layer_halftone(masks, args, base_lpi, raster_dpi, dot_size_multipliers):
@@ -115,7 +109,9 @@ def apply_per_layer_halftone(masks, args, base_lpi, raster_dpi, dot_size_multipl
 
             # Apply multiplier and instantiate engine for this specific layer
             angle = CMYK_ANGLES[i % 4]
-            layer_lpi = multiplier_to_lpi(base_lpi, multiplier, mesh_count)
+            # LPI controls dot density. Dot size is controlled separately via
+            # dot_size_multiplier passed to RasterHalftoneConfig.
+            layer_lpi = int(base_lpi)
 
             raster_cfg = RasterHalftoneConfig(
                 lpi=layer_lpi,
@@ -124,8 +120,9 @@ def apply_per_layer_halftone(masks, args, base_lpi, raster_dpi, dot_size_multipl
                 dot_fn=dot_shape,
                 gamma=1.6,
                 oversample=2,
-                source_dpi=getattr(args, 'dpi', 450),
+                source_dpi=getattr(args, 'source_dpi', 300),
                 greyscale_output=greyscale_preview,
+                dot_size_multiplier=float(multiplier),
             )
             ht_engine = RasterHalftoneEngine(raster_cfg)
             ht = ht_engine.generate(enhanced)

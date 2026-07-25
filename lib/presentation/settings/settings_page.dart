@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:virtual_design/app/providers/settings_provider.dart';
 import 'package:virtual_design/core/utils/responsive.dart';
+import 'package:virtual_design/core/server/server_connector.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -64,6 +65,8 @@ class _SettingsPageState extends State<SettingsPage> {
                         _buildProcessingDefaultsSection(),
                         const SizedBox(height: 30),
                         _buildStorageSection(),
+                        const SizedBox(height: 30),
+                        _buildServerSettings(),
                         const SizedBox(height: 30),
                         _buildAboutSection(),
                       ],
@@ -419,6 +422,174 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
+    );
+  }
+
+  // ── PC Server configuration ──────────────────────────────────────────────
+
+  Widget _buildServerSettings() {
+    final connector = ServerConnector();
+    final urlController =
+        TextEditingController(text: connector.serverUrl.value);
+
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header ────────────────────────────────────────────────────────
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.computer,
+                    color: Color(0xFF2E7D32), size: 20),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'PC Server',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              // Live mode badge
+              Obx(() {
+                final isServer = connector.isServerMode;
+                final checking = connector.isChecking.value;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: checking
+                        ? Colors.grey.withAlpha(25)
+                        : isServer
+                            ? Colors.green.withAlpha(30)
+                            : Colors.orange.withAlpha(30),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    checking
+                        ? 'Checking…'
+                        : isServer
+                            ? '● Connected'
+                            : '● Not found',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: checking
+                          ? Colors.grey
+                          : isServer
+                              ? Colors.green
+                              : Colors.orange,
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Enter the IP address of your PC running the Virtual Designer Server.\n'
+            'Both devices must be on the same WiFi network.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+
+          // ── URL input + connect ──────────────────────────────────────────
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: urlController,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    hintText: 'http://192.168.1.100:8000',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.link),
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                onPressed: () {
+                  final url = urlController.text.trim();
+                  if (url.isEmpty) return;
+                  connector.setServerUrl(url);
+                  Get.snackbar(
+                    'Connecting…',
+                    'Pinging $url',
+                    snackPosition: SnackPosition.BOTTOM,
+                    duration: const Duration(seconds: 2),
+                  );
+                },
+                icon: const Icon(Icons.wifi_find, size: 18),
+                label: const Text('Connect'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1564A5),
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 14),
+
+          // ── Detailed status row ──────────────────────────────────────────
+          Obx(() => _buildServerStatusRow(connector)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServerStatusRow(ServerConnector connector) {
+    final isServer = connector.isServerMode;
+    final checking = connector.isChecking.value;
+
+    IconData statusIcon;
+    Color statusColor;
+    String statusText;
+
+    if (checking) {
+      statusIcon = Icons.autorenew;
+      statusColor = Colors.blueGrey;
+      statusText = 'Checking server reachability…';
+    } else if (isServer) {
+      statusIcon = Icons.check_circle_outline;
+      statusColor = Colors.green;
+      statusText = 'Connected to PC — full Qwen pipeline enabled. '
+          'Server: ${connector.serverUrl.value}';
+    } else {
+      statusIcon = Icons.info_outline;
+      statusColor = Colors.orange;
+      statusText = 'PC not found — app uses on-device AI only. '
+          'Make sure the PC server is running and both devices share the same WiFi.';
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(statusIcon, color: statusColor, size: 18),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            statusText,
+            style: TextStyle(fontSize: 12, color: statusColor),
+          ),
+        ),
+      ],
     );
   }
 

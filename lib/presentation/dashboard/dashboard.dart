@@ -71,7 +71,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: const Color(0xFFF5F7FB),
-      drawer: context.isDesktop ? null : Drawer(child: _buildSidebar()),
+      // FIX 1C: SafeArea on drawer sidebar content prevents status-bar overlap on mobile
+      drawer: context.isDesktop
+          ? null
+          : Drawer(child: SafeArea(child: _buildSidebar())),
       body: SafeArea(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,

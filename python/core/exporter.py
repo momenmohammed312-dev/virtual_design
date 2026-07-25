@@ -94,6 +94,7 @@ class Exporter:
         color_names: List[str],
         combine_pdf: bool = True,
         smooth_factor: float = 0.25,
+        hidden_layer_indices: Optional[List[int]] = None,
     ) -> List[Path]:
         """
         Export all films.
@@ -103,7 +104,7 @@ class Exporter:
         if combine_pdf and REPORTLAB_AVAILABLE:
             # Use enhanced vector exporter
             from core.vector_exporter import export_vector_pdf
-            
+
             combined_path = self.output_dir / "films_combined.pdf"
             export_vector_pdf(
                 masks=masks,
@@ -112,6 +113,7 @@ class Exporter:
                 output_path=combined_path,
                 dpi=self.dpi,
                 smooth_factor=smooth_factor,
+                hidden_layer_indices=hidden_layer_indices,
             )
             print(f"   ✅ Combined PDF: {combined_path}")
             return [combined_path]

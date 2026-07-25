@@ -29,6 +29,21 @@ class MockProcessingRepository implements ProcessingRepository {
   }
 
   @override
+  Future<ProcessResult> processImageFromMap({
+    required String imagePath,
+    required Map<String, dynamic> settingsMap,
+    String? outputDir,
+    void Function(double progress, String message)? onProgress,
+  }) async {
+    if (shouldSucceed) {
+      return ProcessResult.success(
+          outputPath: outputDir ?? this.outputDir ?? '/tmp/output');
+    } else {
+      return ProcessResult.failure(errorMessage: 'Mock failure');
+    }
+  }
+
+  @override
   Future<List<String>> getSavedProjects() async => [];
 
   @override

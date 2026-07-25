@@ -16,7 +16,7 @@ class SoundManager {
 
   /// Play a success/completion notification sound
   Future<void> playDone() async {
-    if (!_enabled) return;
+    if (!enabled) return;
     try {
       // System notification sound — works on all platforms without needing audio files
       SystemSound.play(SystemSoundType.alert);
@@ -27,7 +27,7 @@ class SoundManager {
 
   /// Play an error notification sound
   Future<void> playError() async {
-    if (!_enabled) return;
+    if (!enabled) return;
     try {
       SystemSound.play(SystemSoundType.alert);
     } catch (e) {
@@ -37,7 +37,7 @@ class SoundManager {
 
   /// Play a click/tap feedback sound
   Future<void> playClick() async {
-    if (!_enabled) return;
+    if (!enabled) return;
     try {
       SystemSound.play(SystemSoundType.click);
     } catch (e) {

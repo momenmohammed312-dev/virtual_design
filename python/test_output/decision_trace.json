@@ -1,0 +1,155 @@
+{
+  "image_class": "text_logo",
+  "confidence": 0.95,
+  "best_params": {
+    "dpi": 300,
+    "lpi": 35,
+    "colors": 0,
+    "halftone": false,
+    "smoothing_factor": 0.09051085716291413,
+    "corner_threshold": 52.872247207002125,
+    "upscale_factor": 1.0,
+    "denoise_strength": 3,
+    "contour_min_area": 50,
+    "simplification_epsilon": 1.2,
+    "page_size": "A4",
+    "page_width": 0.0,
+    "page_height": 0.0,
+    "margin_pt": 28.35,
+    "image_type": "auto",
+    "dot_size": 1.0,
+    "dot_shape": "ellipse",
+    "_final_lpi": 35,
+    "_final_dpi": 300,
+    "_mesh_limit": 35
+  },
+  "overrides": [
+    "page_width",
+    "margin_pt",
+    "dot_shape",
+    "page_height"
+  ],
+  "reasoning": [],
+  "trace": [
+    {
+      "param": "dpi",
+      "value": 300,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "lpi",
+      "value": 85,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "colors",
+      "value": 0,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "halftone",
+      "value": false,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "smoothing_factor",
+      "value": -1.0,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "corner_threshold",
+      "value": -1.0,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "upscale_factor",
+      "value": 1.0,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "denoise_strength",
+      "value": 3,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "contour_min_area",
+      "value": 50,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "simplification_epsilon",
+      "value": 1.2,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "page_size",
+      "value": "A4",
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "page_width",
+      "value": 0.0,
+      "source": "USER_EXPLICIT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "page_height",
+      "value": 0.0,
+      "source": "USER_EXPLICIT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "margin_pt",
+      "value": 28.35,
+      "source": "USER_EXPLICIT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "image_type",
+      "value": "auto",
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "dot_size",
+      "value": 1.0,
+      "source": "USER_DEFAULT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "dot_shape",
+      "value": "ellipse",
+      "source": "USER_EXPLICIT",
+      "reason": "Input Setup"
+    },
+    {
+      "param": "smoothing_factor",
+      "value": 0.09051085716291413,
+      "source": "HEURISTIC",
+      "reason": "Quality-adjusted (rd=0.32, bd=0.10, nd=0.91)"
+    },
+    {
+      "param": "corner_threshold",
+      "value": 52.872247207002125,
+      "source": "HEURISTIC",
+      "reason": "Quality-adjusted corner threshold"
+    },
+    {
+      "param": "lpi",
+      "value": 35,
+      "source": "PHYS",
+      "reason": "Mesh 160 limit"
+    }
+  ]
+}

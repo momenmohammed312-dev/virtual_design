@@ -26,6 +26,12 @@ dependencies:
   # ── Image Processing ─────────────────────────────────
   image: ^4.1.4                     # Image decoding/encoding library
 
+  # ── On-device AI (TFLite) ────────────────────────────
+  tflite_flutter: ^0.12.1           # MobileNetV3 + DeepLabV3 inference
+
+  # ── Archive / ZIP ─────────────────────────────────────
+  archive: ^3.4.9                   # Unzip server response ZIP
+
   # ── File Handling ─────────────────────────────────────
   file_picker: ^8.0.0                # Pick image files
   image_picker: ^1.0.7               # Pick images from gallery/camera
@@ -58,3 +64,5 @@ flutter:
 
   assets:
     - assets/sounds/
+    - assets/models/
+    - assets/labels/

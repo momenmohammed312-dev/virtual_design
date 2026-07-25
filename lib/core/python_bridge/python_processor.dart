@@ -13,7 +13,6 @@ import 'package:path/path.dart' as p;
 
 import 'python_config.dart';
 import 'process_result.dart';
-import 'package:virtual_design/domain/entities/processing_settings.dart';
 
 class PythonProcessor {
   final PythonConfig config;
@@ -164,8 +163,6 @@ class PythonProcessor {
     final errorMessage = _parseError(exitCode, fullStderr);
 
     // Log full stderr for debugging
-    print('❌ PYTHON PROCESS FAILED (exit code $exitCode)');
-    print('Full stderr:\n$fullStderr');
     Get.log('❌ PYTHON PROCESS FAILED (exit code $exitCode)');
     Get.log('Full stderr:\n$fullStderr');
 
@@ -192,8 +189,12 @@ class PythonProcessor {
           RegExp(r'[A-Z]'),
           (match) => '-${match.group(0)!.toLowerCase()}',
         )}';
-        args.add(argName);
-        if (value is! bool) {
+        if (value is bool) {
+          if (value) {
+            args.add(argName);
+          }
+        } else {
+          args.add(argName);
           // Convert values to string, but handle doubles that are whole numbers
           // to pass them as integers to Python (e.g., 4800.0 -> "4800")
           String strValue;
@@ -337,7 +338,8 @@ class PythonProcessor {
 
     try {
       final pythonCmd = await config.resolvePythonCommand();
-      final geminiKey = const String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
+      final geminiKey =
+          const String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
       final process = await Process.start(
         pythonCmd,
         [autoFixScript, ...args],
@@ -407,15 +409,16 @@ class PythonProcessor {
     required String imagePath,
     required int layerIndex,
     required String outputDir,
-    int dpi = 1200,
-    int lpi = 79,
+    int dpi = 300, // FIX 2C: safe default (was 1200 — caused huge files)
+    int lpi = 65, // FIX 2C: safe default for 300 DPI + 110 mesh (was 79)
     String dotShape = 'round',
-    int meshCount = 355,
+    int meshCount = 110, // FIX 2C: matches 300 DPI mesh default
     double dotSizeMultiplier = 0.7,
   }) async {
     try {
       if (!config.isInitialized || !config.isPythonAvailable) {
-        Get.log('[PythonProcessor] reprocessLayerAsHalftone: Python not available');
+        Get.log(
+            '[PythonProcessor] reprocessLayerAsHalftone: Python not available');
         return null;
       }
 
@@ -442,7 +445,8 @@ class PythonProcessor {
       final scriptsDir = await config.getPythonScriptsDir();
       final mainScript = p.join(scriptsDir, 'main.py');
 
-      Get.log('[PythonProcessor] reprocessLayerAsHalftone layer=$layerIndex args=$args');
+      Get.log(
+          '[PythonProcessor] reprocessLayerAsHalftone layer=$layerIndex args=$args');
 
       final result = await Process.run(
         pythonCmd,
@@ -455,7 +459,8 @@ class PythonProcessor {
       );
 
       if (result.exitCode != 0) {
-        Get.log('[PythonProcessor] reprocessLayerAsHalftone FAILED: ${result.stderr}');
+        Get.log(
+            '[PythonProcessor] reprocessLayerAsHalftone FAILED: ${result.stderr}');
         return null;
       }
 
@@ -466,7 +471,9 @@ class PythonProcessor {
       final pngFiles = outputDirObj
           .listSync()
           .whereType<File>()
-          .where((f) => f.path.toLowerCase().endsWith('.png') && !f.path.contains('debug'))
+          .where((f) =>
+              f.path.toLowerCase().endsWith('.png') &&
+              !f.path.contains('debug'))
           .toList()
         ..sort((a, b) => a.path.compareTo(b.path));
 
@@ -480,6 +487,63 @@ class PythonProcessor {
     } catch (e) {
       Get.log('[PythonProcessor] reprocessLayerAsHalftone exception: $e');
       return null;
+    }
+  }
+
+  /// Regenerate combined PDF with hidden layers excluded
+  Future<bool> regenerateCombinedPdf({
+    required String outputDir,
+    required List<int> hiddenLayerIndices,
+    int dpi = 300,
+  }) async {
+    try {
+      if (!config.isInitialized || !config.isPythonAvailable) {
+        Get.log(
+            '[PythonProcessor] regenerateCombinedPdf: Python not available');
+        return false;
+      }
+
+      // Build settings to regenerate combined PDF with hidden layers
+      final settings = {
+        'dpi': dpi,
+        'hiddenLayers': hiddenLayerIndices,
+        'regenerateCombined': true,
+      };
+
+      final args = _buildArgs(
+        imagePath: '', // Not needed for regeneration
+        settings: settings,
+        outputDir: outputDir,
+      );
+
+      final pythonCmd = await config.resolvePythonCommand();
+      final scriptsDir = await config.getPythonScriptsDir();
+      final mainScript = p.join(scriptsDir, 'main.py');
+
+      Get.log(
+          '[PythonProcessor] regenerateCombinedPdf with hidden layers: $hiddenLayerIndices');
+
+      final result = await Process.run(
+        pythonCmd,
+        [mainScript, ...args],
+        workingDirectory: scriptsDir,
+        environment: {
+          ...Platform.environment,
+          'PYTHONIOENCODING': 'utf-8',
+        },
+      );
+
+      if (result.exitCode != 0) {
+        Get.log(
+            '[PythonProcessor] regenerateCombinedPdf FAILED: ${result.stderr}');
+        return false;
+      }
+
+      Get.log('[PythonProcessor] regenerateCombinedPdf SUCCESS');
+      return true;
+    } catch (e) {
+      Get.log('[PythonProcessor] regenerateCombinedPdf exception: $e');
+      return false;
     }
   }
 }

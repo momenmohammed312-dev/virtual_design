@@ -75,15 +75,20 @@ class _UploadPageState extends State<UploadPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      onPressed: () =>
-                          controller.importFromUrl(_urlController.text),
-                      icon: const Icon(Icons.cloud_download),
-                      label: const Text('Import from URL'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 16,
+                    // FIX 1D: Full-width on mobile, capped at 420px on wider screens
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: ElevatedButton.icon(
+                        onPressed: () =>
+                            controller.importFromUrl(_urlController.text),
+                        icon: const Icon(Icons.cloud_download),
+                        label: const Text('Import from URL'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 32,
+                            vertical: 16,
+                          ),
+                          minimumSize: const Size(double.infinity, 50),
                         ),
                       ),
                     ),
@@ -115,29 +120,36 @@ class _UploadPageState extends State<UploadPage> {
                       );
                     }),
                     const SizedBox(height: 32),
-                    ElevatedButton.icon(
-                      onPressed: controller.pickImage,
-                      icon: const Icon(Icons.photo_library),
-                      label: const Text('Pick from Gallery'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 16,
+                    // FIX 1D: Full-width on mobile, capped at 420px on wider screens
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: ElevatedButton.icon(
+                        onPressed: controller.pickImage,
+                        icon: const Icon(Icons.photo_library),
+                        label: const Text('Pick from Gallery'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 32,
+                            vertical: 16,
+                          ),
+                          minimumSize: const Size(double.infinity, 50),
                         ),
-                        minimumSize: const Size(200, 50),
                       ),
                     ),
                     const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      onPressed: controller.pickFile,
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('Pick from Files'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 16,
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: ElevatedButton.icon(
+                        onPressed: controller.pickFile,
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('Pick from Files'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 32,
+                            vertical: 16,
+                          ),
+                          minimumSize: const Size(double.infinity, 50),
                         ),
-                        minimumSize: const Size(200, 50),
                       ),
                     ),
                   ],

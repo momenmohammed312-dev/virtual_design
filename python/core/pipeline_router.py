@@ -91,6 +91,40 @@ class PipelineRouter:
         gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
         
         binary = edge_aware_binarize(gray, use_adaptive=False, denoise_strength=denoise_strength)
+
+        # Morphological cleanup للـ solid mode
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN,  kernel, iterations=1)
+
+        # Adaptive smoothing based on edge roughness measurement AND image size
+        edges = cv2.Canny(binary, 50, 150)
+        edge_density = np.sum(edges > 0) / edges.size
+        # Higher edge density = more detail = less smoothing needed
+        # Lower edge density = smoother = more smoothing needed
+        h, w = binary.shape[:2]
+        max_dim = max(h, w)
+        res_q = np.clip((max_dim - 300) / (4000 - 300), 0.0, 1.0)
+
+        # Edge-density-based auto smoothing
+        auto_smooth = max(0.05, min(0.5, 0.3 - (edge_density - 0.1) * 0.5))
+
+        # Blend with existing params (from AI/decision engine) instead of full override
+        # 60% auto (edge-based) + 40% existing (AI/user preference)
+        existing_smooth = params.get('smoothing_factor', 0.25)
+        params['smoothing_factor'] = float(np.clip(
+            existing_smooth * 0.4 + auto_smooth * 0.6, 0.05, 0.50
+        ))
+
+        # ── FIX 1-A: Apply alpha mask BEFORE enforce_polarity ──────────────────
+        # If we have an alpha mask, blank-out (white) any pixel outside the subject
+        # BEFORE the polarity check. This prevents the background from being treated
+        # as ink when the image has no transparent layer.
+        if self.alpha_mask is not None:
+            alpha_resized = self._resize_alpha(self.alpha_mask, binary.shape)
+            binary = binary.copy()
+            binary[~alpha_resized] = 255  # force background to white
+
         binary = self.controller.enforce_polarity(
             binary, stage="text_logo", force_black_ink=True, alpha_mask=self.alpha_mask
         )
@@ -126,8 +160,51 @@ class PipelineRouter:
         if target_colors == 1 and not should_halftone:
             from core.router_utils import _make_single_color_separation
             gray = cv2.cvtColor(preprocessed, cv2.COLOR_BGR2GRAY)
+
+            # ── FIX 1-B: Apply alpha mask to gray BEFORE binarization ──────────
+            # This prevents the white/light background pixels from being classified
+            # as ink when the background hasn't been removed (no transparency).
+            if self.alpha_mask is not None:
+                alpha_resized = self._resize_alpha(self.alpha_mask, gray.shape)
+                gray = gray.copy()
+                gray[~alpha_resized] = 255  # background → white before Otsu
+
+            # ── FIX 5: Border-based background detection for JPEG/no-alpha ────
+            # When alpha_mask is all-opaque or None, the alpha check does nothing.
+            # Detect background by analyzing image borders; if consistently light,
+            # flood-fill from corners to remove background before Otsu.
+            if self.alpha_mask is not None and np.mean(alpha_resized) > 0.90:
+                needs_floodfill = True
+            elif self.alpha_mask is None:
+                needs_floodfill = True
+            else:
+                needs_floodfill = False
+
+            if needs_floodfill:
+                h, w = gray.shape
+                border_sample = np.concatenate([
+                    gray[:3, :].ravel(), gray[-3:, :].ravel(),
+                    gray[:, :3].ravel(), gray[:, -3:].ravel(),
+                ])
+                if float(np.median(border_sample)) > 200:
+                    ff_mask = np.zeros((h+2, w+2), dtype=np.uint8)
+                    for sx, sy in [(0,0), (w-1,0), (0,h-1), (w-1,h-1)]:
+                        cv2.floodFill(gray, ff_mask, (sx, sy), 255,
+                                      loDiff=20, upDiff=20)
+
             m = edge_aware_binarize(gray, use_adaptive=False, denoise_strength=params.get('denoise_strength', 9))
+
+            # ── FIX 1-C: enforce_polarity AFTER alpha-mask application ──────────
+            # Pass alpha_mask so polarity can use it as a secondary check,
+            # but the primary guard (above) already white-filled the background.
             m = self.controller.enforce_polarity(m, stage="artwork_1color", alpha_mask=self.alpha_mask)
+
+            # Final boundary clip: make absolutely sure nothing is outside alpha
+            if self.alpha_mask is not None:
+                alpha_resized = self._resize_alpha(self.alpha_mask, m.shape)
+                m = m.copy()
+                m[~alpha_resized] = 255
+
             masks = [(m > 127).astype(np.uint8) * 255]
             sep_result = _make_single_color_separation(image)
         elif target_colors == 1 and should_halftone:
@@ -141,7 +218,20 @@ class PipelineRouter:
             masks = [gray]
             sep_result = _make_single_color_separation(image)
         else:
-            sep_result = self.separator.separate(preprocessed, num_colors=target_colors, alpha_mask=self.alpha_mask)
+            # ── FIX 1-D: Multi-color — strip background color from separations ──
+            # ColorSeparator may include the background as a cluster.
+            # We tell it to exclude colors that are dominated by the alpha boundary.
+            sep_result = self.separator.separate(
+                preprocessed,
+                num_colors=target_colors,
+                alpha_mask=self.alpha_mask,
+            )
+
+            # Post-separation background filter:
+            # Remove any color cluster that is ≥ 80 % outside the alpha region.
+            if self.alpha_mask is not None:
+                sep_result = self._filter_background_colors(sep_result, self.alpha_mask, preprocessed.shape)
+
             masks = self.mask_gen.generate_masks(preprocessed, sep_result, grayscale_output=should_halftone)
         
         if should_halftone:
@@ -152,15 +242,28 @@ class PipelineRouter:
                     self._halftone_raster_dpi = None  # Will be set by apply_halftone_pipeline
                     # Critical: Propagate explicit overrides for safety rules
                     self.overrides = p.get('overrides', [])
-                def __getattr__(self, k): 
-                    if k not in self.p and k != '_halftone_raster_dpi' and k != 'overrides':
+                def __getattr__(self, k):
+                    # ── FIX 2-A: dot_size / dot_shape disambiguation ────────────
+                    # The CLI uses 'dot-shape' (hyphen) while internal params use
+                    # 'dot_shape' (underscore).  Previously ParamProxy only exposed
+                    # the exact key, causing apply_halftone_pipeline to fall back to
+                    # 'round' even when the user picked a different shape.
+                    if k == 'dot_shape':
+                        return self.p.get('dot_shape') or self.p.get('dot-shape') or 'round'
+                    if k == 'dot-shape':
+                        return self.p.get('dot-shape') or self.p.get('dot_shape') or 'round'
+                    if k not in self.p and k not in ('_halftone_raster_dpi', 'overrides'):
                         raise AttributeError(f"No such parameter: {k}")
                     val = self.p.get(k)
                     if k in ['lpi', 'dpi', 'halftone', 'mesh_count']:
                         logger.info(f"[ParamProxy] Accessing {k} = {val}")
                     return val
-            logger.info(f"[PipelineRouter] Applying halftone with params: lpi={params.get('lpi')}, dpi={params.get('dpi')}, dot_shape={params.get('dot-shape')}, image_class={image_class}")
-            masks = apply_halftone_pipeline(masks, ParamProxy(params), self.halftone_gen, image_class=image_class)
+
+            logger.info(f"[PipelineRouter] Applying halftone with params: lpi={params.get('lpi')}, dpi={params.get('dpi')}, dot_shape={params.get('dot_shape') or params.get('dot-shape')}, image_class={image_class}")
+            proxy = ParamProxy(params)
+            masks = apply_halftone_pipeline(masks, proxy, self.halftone_gen, image_class=image_class)
+            # Propagate raster DPI that apply_halftone_pipeline stored on proxy
+            params['_halftone_raster_dpi'] = proxy._halftone_raster_dpi
 
         processed_masks = []
         _binarize_denoise = params.get('denoise_strength', 9)
@@ -241,6 +344,72 @@ class PipelineRouter:
             if (min_half_stroke * 2) >= (2 * trap_px):
                 masks = ub_gen.apply_trapping(masks, trap_px=trap_px)
         return masks, sep_result
+
+    # ── FIX 1-D helper ────────────────────────────────────────────────────────
+    def _filter_background_colors(
+        self,
+        sep_result: Dict,
+        alpha_mask: np.ndarray,
+        image_shape: Tuple[int, ...],
+    ) -> Dict:
+        """
+        Remove color clusters that predominantly fall outside the alpha region.
+
+        A cluster is considered 'background' when ≥ 80 % of its pixels lie
+        outside the subject (alpha_mask == False).  We drop those clusters and
+        renumber the label_map so downstream code remains consistent.
+        """
+        label_map = sep_result.get('label_map')
+        if label_map is None:
+            return sep_result
+
+        # Resize alpha to label_map resolution
+        alpha_resized = cv2.resize(
+            alpha_mask.astype(np.uint8),
+            (label_map.shape[1], label_map.shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(bool)
+
+        keep_indices = []
+        for idx in range(sep_result.get('num_colors', 0)):
+            cluster_mask = label_map == idx
+            total_px = np.sum(cluster_mask)
+            if total_px == 0:
+                keep_indices.append(idx)
+                continue
+            outside_px = np.sum(cluster_mask & ~alpha_resized)
+            outside_ratio = outside_px / total_px
+            if outside_ratio < 0.80:
+                keep_indices.append(idx)
+            else:
+                logger.info(
+                    f"[PipelineRouter] Dropping background cluster {idx} "
+                    f"({outside_ratio*100:.1f}% outside alpha)"
+                )
+
+        if len(keep_indices) == sep_result.get('num_colors', 0):
+            return sep_result  # nothing to drop
+
+        # Rebuild sep_result with only kept clusters
+        new_label_map = np.full_like(label_map, -1)
+        for new_idx, old_idx in enumerate(keep_indices):
+            new_label_map[label_map == old_idx] = new_idx
+
+        sep_result = dict(sep_result)  # shallow copy — don't mutate caller's dict
+        sep_result['label_map'] = new_label_map
+        sep_result['num_colors'] = len(keep_indices)
+
+        for key in ('colors', 'color_names', 'color_info'):
+            if key in sep_result and isinstance(sep_result[key], list):
+                sep_result[key] = [sep_result[key][i] for i in keep_indices]
+
+        if 'centers' in sep_result and hasattr(sep_result['centers'], '__len__'):
+            sep_result['centers'] = sep_result['centers'][keep_indices]
+
+        logger.info(
+            f"[PipelineRouter] Background filter: kept {len(keep_indices)}/{sep_result.get('num_colors', '?')} clusters → {keep_indices}"
+        )
+        return sep_result
 
     def _resize_alpha(self, alpha: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
         if alpha.shape == shape: return alpha

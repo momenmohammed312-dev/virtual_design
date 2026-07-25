@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:get/get.dart';
 import 'package:image/image.dart' as img;
 
 // Note: Add 'image: ^4.1.4' to pubspec.yaml dependencies
@@ -81,7 +82,7 @@ class ImageProcessor {
       throw Exception('Could not decode image: $filePath');
     }
 
-    print(
+    Get.log(
       'Original image channels: ${decoded.numChannels}, width: ${decoded.width}, height: ${decoded.height}',
     );
 
@@ -90,7 +91,7 @@ class ImageProcessor {
     // not black. This prevents all-black film output.
     img.Image rgbImage = decoded;
     if (decoded.numChannels > 3) {
-      print('Converting RGBA to RGB (compositing on bg: $bgR,$bgG,$bgB)...');
+      Get.log('Converting RGBA to RGB (compositing on bg: $bgR,$bgG,$bgB)...');
       // Use built-in compositeImage — أأمن من manual loop
       final background = img.Image(
         width: decoded.width,
@@ -100,7 +101,7 @@ class ImageProcessor {
       img.fill(background, color: img.ColorRgb8(bgR, bgG, bgB));
       img.compositeImage(background, decoded);
       rgbImage = background;
-      print('Converted to RGB, channels: ${rgbImage.numChannels}');
+      Get.log('Converted to RGB, channels: ${rgbImage.numChannels}');
     }
 
     // Create temporary PNG file
@@ -123,7 +124,7 @@ class ImageProcessor {
     final pngBytes = img.encodePng(rgbForced, level: 1);
     await tmpFile.writeAsBytes(pngBytes);
 
-    print(
+    Get.log(
       'Normalized image saved to: $tmpPath, size: ${pngBytes.length} bytes',
     );
 
@@ -136,11 +137,11 @@ class ImageProcessor {
       final file = File(tempPath);
       if (await file.exists()) {
         await file.delete();
-        print('Cleaned up temp file: $tempPath');
+        Get.log('Cleaned up temp file: $tempPath');
       }
     } catch (e) {
       // Log but don't throw - cleanup is best effort
-      print('Warning: Could not delete temp file $tempPath: $e');
+      Get.log('Warning: Could not delete temp file $tempPath: $e');
     }
   }
 
@@ -166,10 +167,10 @@ class ImageProcessor {
         }
       }
       if (deleted > 0) {
-        print('[ImageProcessor] Cleaned up $deleted old temp files');
+        Get.log('[ImageProcessor] Cleaned up $deleted old temp files');
       }
     } catch (e) {
-      print('[ImageProcessor] Warning: Temp cleanup scan failed: $e');
+      Get.log('[ImageProcessor] Warning: Temp cleanup scan failed: $e');
     }
     return deleted;
   }

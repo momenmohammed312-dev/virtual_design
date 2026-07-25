@@ -61,32 +61,31 @@ class SmartAnalyzer:
         confidence = sorted_scores[0] - sorted_scores[1]
         
         # Phase 24: CRITICAL FIX - Deterministic Weighted Scoring (eliminates flip-flop)
-        # Calculate final weighted score instead of rule-based overrides
         color_norm = metrics['color_count_estimate'] / 8.0  # -> 0.0 to 1.0
 
         final_text_score = (
-            scores['text'] * 0.5 +      # Primary weight
-            metrics['edge_density'] * 0.2 +   # Edge clarity
-            (1.0 - color_norm) * 0.05 +  # Color simplicity
-            (1.0 - metrics['mid_ratio']) * 0.15 +  # Bimodality
-            (1.0 - metrics['gradient_ratio']) * 0.1   # Low gradients
+            scores['text'] * 0.5 +
+            metrics['edge_density'] * 0.2 +
+            (1.0 - color_norm) * 0.05 +
+            (1.0 - metrics['mid_ratio']) * 0.15 +
+            (1.0 - metrics['gradient_ratio']) * 0.1
         )
         
         final_artwork_score = (
             scores['artwork'] * 0.4 +
-            color_norm * 0.05 +  # Multiple colors
-            metrics['mid_ratio'] * 0.2 +           # Mid-tones present
-            metrics['gradient_ratio'] * 0.15 +          # Moderate gradients
-            metrics['sat_mean'] * 0.1 +               # Some saturation
-            (1.0 - metrics['edge_density']) * 0.1    # Not too edge-heavy
+            color_norm * 0.05 +
+            metrics['mid_ratio'] * 0.2 +
+            metrics['gradient_ratio'] * 0.15 +
+            metrics['sat_mean'] * 0.1 +
+            (1.0 - metrics['edge_density']) * 0.1
         )
         
         final_photo_score = (
             scores['photo'] * 0.4 +
-            metrics['gradient_ratio'] * 0.3 +           # High gradients
-            metrics['mid_ratio'] * 0.2 +               # Many mid-tones
-            color_norm * 0.05 +        # Many colors
-            metrics['sat_mean'] * 0.05                # High saturation
+            metrics['gradient_ratio'] * 0.3 +
+            metrics['mid_ratio'] * 0.2 +
+            color_norm * 0.05 +
+            metrics['sat_mean'] * 0.05
         )
         
         # Deterministic decision based on weighted scores
@@ -103,18 +102,13 @@ class SmartAnalyzer:
             confidence = max(final_artwork_score, 0.70)
             logger.info(f"  [SmartAnalyzer] Weighted Score: ARTWORK ({confidence:.3f})")
 
-        # Adobe-style hard overrides (rules on top of scoring) for borderline cases.
-        # Keep these conservative to avoid pipeline flip-flop.
+        # Adobe-style hard overrides
         if metrics['gradient_ratio'] > 0.30 and float(confidence) < 0.70:
             image_class = ImageClass.PHOTO
             confidence = max(float(confidence), 0.80)
             logger.info("  [SmartAnalyzer] Override: High gradient_ratio. Forcing PHOTO.")
         else:
-            # Adaptive TEXT_LOGO threshold: edge_density is resolution/scale sensitive,
-            # so we modulate the decision threshold based on gradient_ratio.
             edge_threshold = 0.05 + (0.02 * (1.0 - float(metrics['gradient_ratio'])))
-
-            # Stability buffer (anti-flip): avoid overriding when text/artwork are too close.
             score_gap_ta = abs(float(scores['text']) - float(scores['artwork']))
             allow_override = score_gap_ta >= 0.05
 
@@ -135,9 +129,8 @@ class SmartAnalyzer:
             image_class = ImageClass.LOW_QUALITY
             confidence = 0.5
             
-        params = self._get_params(image_class, metrics)
+        params = self._get_params(image_class, metrics, max_dim=max(h_orig, w_orig))
         
-        # Build proper SmartResult with only valid dataclass fields
         result = SmartResult(
             image_class=image_class,
             confidence=float(confidence),
@@ -171,7 +164,6 @@ class SmartAnalyzer:
 
     def _extract_metrics(self, image, dpi):
         """Extract 5 core features for classification."""
-        # Downsample for analysis speed and stability
         h_orig, w_orig = image.shape[:2]
         analysis_scale = min(1.0, 400.0 / max(h_orig, w_orig))
         img_ana = cv2.resize(image, None, fx=analysis_scale, fy=analysis_scale, interpolation=cv2.INTER_AREA)
@@ -185,8 +177,18 @@ class SmartAnalyzer:
         edge_density = np.sum(edges > 0) / (total_px + 1e-6)
         
         # 2. Color Count (Quick K-means elbow)
+        # ── FIX 3-A: Exclude near-white background pixels from color counting ──
+        # Background pixels (very bright, low saturation) bias the K-means toward
+        # counting the background as an extra color.
+        # We mask them out before the elbow analysis.
         img_small = cv2.resize(img_ana, (100, 100))
-        pixels = img_small.reshape(-1, 3).astype(np.float32)
+        pixels_all = img_small.reshape(-1, 3).astype(np.float32)
+
+        # Background exclusion: pixels brighter than 230 in all channels are likely BG
+        brightness = pixels_all.min(axis=1)  # min of BGR = darkest channel
+        fg_mask = brightness < 230  # keep non-background pixels
+        pixels = pixels_all[fg_mask] if fg_mask.sum() > 50 else pixels_all  # safety fallback
+
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
         inertias = []
         for k in [2, 4, 6, 8]:
@@ -204,13 +206,13 @@ class SmartAnalyzer:
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
         mid_ratio = np.sum(hist[85:170]) / (total_px + 1e-6)
         
-        # 4. Gradient Ratio (Sobel) - High for photos, low for flat logos
+        # 4. Gradient Ratio (Sobel)
         sobelx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
         sobely = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
         grad_mag = cv2.magnitude(sobelx, sobely)
         gradient_ratio = np.mean(grad_mag) / 255.0
         
-        # 5. Saturation Mean (HSV) - High for art/photos, low for BW logos
+        # 5. Saturation Mean (HSV)
         hsv = cv2.cvtColor(img_ana, cv2.COLOR_BGR2HSV)
         sat_mean = np.mean(hsv[:,:,1]) / 255.0
         
@@ -236,42 +238,38 @@ class SmartAnalyzer:
 
     def _score_classes(self, m: dict) -> dict:
         """Soft scoring using weighted features."""
-        # Normalize features to 0-1 range
         f_mid = m["mid_ratio"]
-        f_col = m["color_count_estimate"] / 8.0  # Normalize 0-8 -> 0-1
+        f_col = m["color_count_estimate"] / 8.0
         f_edge = m["edge_density"]
         f_grad = m["gradient_ratio"]
-        f_sat = m["sat_mean"]  # Already normalized to 0-1 in _extract_metrics
+        f_sat = m["sat_mean"]
         f_noise = m["noise_level"]
         
         # TEXT SCORE
-        # Low midtones (bimodal), few colors, high edge density relative to gradient complexity
         s_text = (
             self._soft(f_mid, 0.02, 0.15, invert=True) * 0.35 +
-            self._soft(f_col, 0.25, 1.0, invert=True) * 0.25 +  # Normalized 0-1
+            self._soft(f_col, 0.25, 1.0, invert=True) * 0.25 +
             self._soft(f_edge, 0.01, 0.10) * 0.20 +
             self._soft(f_grad, 0.05, 0.20, invert=True) * 0.10 +
-            self._soft(f_sat, 0.04, 0.39, invert=True) * 0.05 +  # Normalized 0-1
+            self._soft(f_sat, 0.04, 0.39, invert=True) * 0.05 +
             self._soft(m["shape_ratio"], 0.0005, 0.01) * 0.05
         )
         
         # PHOTO SCORE
-        # High midtones, many colors, high gradients, high saturation
         s_photo = (
-            self._soft(f_col, 0.5, 2.0) * 0.30 +  # Normalized 0-1 (0.5-2.0 = 4-16 colors)
+            self._soft(f_col, 0.5, 2.0) * 0.30 +
             self._soft(f_mid, 0.10, 0.40) * 0.25 +
             self._soft(f_grad, 0.15, 0.50) * 0.20 +
-            self._soft(f_sat, 0.16, 0.59) * 0.15 +  # Normalized 0-1 (0.16-0.59 = 40-150 sat)
+            self._soft(f_sat, 0.16, 0.59) * 0.15 +
             self._soft(f_edge, 0.05, 0.20, invert=True) * 0.10
         )
         
         # ARTWORK SCORE
-        # Mid-range colors, low noise, moderate gradients
         s_art = (
-            self._soft(f_col, 0.25, 1.25) * 0.30 +  # Normalized 0-1 (0.25-1.25 = 2-10 colors)
+            self._soft(f_col, 0.25, 1.25) * 0.30 +
             self._soft(f_noise, 100, 800, invert=True) * 0.25 +
             self._soft(f_mid, 0.05, 0.25) * 0.20 +
-            self._soft(f_sat, 0.08, 0.47) * 0.15 +  # Normalized 0-1 (0.08-0.47 = 20-120 sat)
+            self._soft(f_sat, 0.08, 0.47) * 0.15 +
             self._soft(f_edge, 0.02, 0.15) * 0.10
         )
         
@@ -282,41 +280,57 @@ class SmartAnalyzer:
             "artwork": s_art / total
         }
     
-    def _get_params(self, cls: ImageClass, m: dict) -> dict:
-        """Parameters mapping based on classification."""
+    def _get_params(self, cls: ImageClass, m: dict, max_dim: int = 0) -> dict:
+        """Parameters mapping based on classification AND image size.
+        All values are adaptive based on resolution to avoid jagged edges
+        on large images and over-smoothing on small ones."""
         base = {"use_potrace_style": False, "use_halftone": False, "lpi": 55, "num_colors": 0}
-        
+
+        # Resolution quality: 0.0 (small < 300px) → 1.0 (large > 4000px)
+        res_q = np.clip((max_dim - 300) / (4000 - 300), 0.0, 1.0) if max_dim else 0.5
+
         if cls == ImageClass.TEXT_LOGO:
-            # Modified: Increased smoothing to 0.25 and corner to 95
-            # This makes logos like Nike have curves not jagged lines
-            return {**base, "smoothing_factor": 0.25, "corner_threshold": 95.0, "global_threshold": 160, "use_potrace_style": True}
+            # Small: smooth=0.30, corner=55 | Large: smooth=0.08, corner=35
+            smooth = float(np.clip(0.30 - res_q * 0.22, 0.05, 0.35))
+            corner = float(np.clip(55.0 - res_q * 25.0, 30.0, 70.0))
+            return {**base, "smoothing_factor": smooth, "corner_threshold": corner,
+                    "global_threshold": 160, "use_potrace_style": True}
 
         if cls == ImageClass.ARTWORK:
-            # Medium smoothing for illustrations
-            return {**base, "smoothing_factor": 0.35, "corner_threshold": 110.0, "global_threshold": 180}
+            # Small: smooth=0.45, corner=130 | Large: smooth=0.20, corner=85
+            smooth = float(np.clip(0.45 - res_q * 0.25, 0.15, 0.50))
+            corner = float(np.clip(130.0 - res_q * 45.0, 70.0, 145.0))
+            return {**base, "smoothing_factor": smooth, "corner_threshold": corner,
+                    "global_threshold": 180}
 
         if cls == ImageClass.PHOTO:
-            # High smoothing for photos for halftone
-            return {**base, "smoothing_factor": 0.45, "corner_threshold": 140.0, "global_threshold": 200, "use_halftone": True}
-        
-        return {**base, "smoothing_factor": 0.20, "corner_threshold": 120.0, "global_threshold": 200}
+            # Small: smooth=0.55, corner=155 | Large: smooth=0.35, corner=115
+            smooth = float(np.clip(0.55 - res_q * 0.20, 0.30, 0.65))
+            corner = float(np.clip(155.0 - res_q * 40.0, 100.0, 170.0))
+            return {**base, "smoothing_factor": smooth, "corner_threshold": corner,
+                    "global_threshold": 200, "use_halftone": True}
 
-
+        # LOW_QUALITY: extra smoothing to handle noise
+        # Small: smooth=0.25, corner=135 | Large: smooth=0.10, corner=100
+        smooth = float(np.clip(0.25 - res_q * 0.15, 0.08, 0.30))
+        corner = float(np.clip(135.0 - res_q * 35.0, 90.0, 150.0))
+        return {**base, "smoothing_factor": smooth, "corner_threshold": corner,
+                "global_threshold": 200}
 
     def get_recommended_lpi(self, image_class: ImageClass, detail_level: str = "medium") -> int:
         lpi_map = {
-            ImageClass.TEXT_LOGO: {"high": 85, "medium": 65, "low": 45},
-            ImageClass.ARTWORK:   {"high": 75, "medium": 55, "low": 40},
-            ImageClass.PHOTO:     {"high": 85, "medium": 65, "low": 45},
+            ImageClass.TEXT_LOGO:   {"high": 85, "medium": 65, "low": 45},
+            ImageClass.ARTWORK:     {"high": 75, "medium": 55, "low": 40},
+            ImageClass.PHOTO:       {"high": 85, "medium": 65, "low": 45},
             ImageClass.LOW_QUALITY: {"high": 55, "medium": 45, "low": 35},
         }
         return lpi_map.get(image_class, {}).get(detail_level, 55)
     
     def get_dot_shape(self, image_class: ImageClass) -> str:
         dot_shape_map = {
-            ImageClass.TEXT_LOGO: "square",
-            ImageClass.ARTWORK:   "round",
-            ImageClass.PHOTO:     "round",
+            ImageClass.TEXT_LOGO:   "square",
+            ImageClass.ARTWORK:     "round",
+            ImageClass.PHOTO:       "round",
             ImageClass.LOW_QUALITY: "round",
         }
         return dot_shape_map.get(image_class, "round")

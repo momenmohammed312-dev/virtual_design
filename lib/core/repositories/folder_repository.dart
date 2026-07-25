@@ -1,3 +1,4 @@
+import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // Note: flutter_secure_storage is optional - using SharedPreferences for simplicity
 
@@ -80,7 +81,7 @@ class FolderRepository {
   Future<void> createFolder(String name, String path) async {
     final userId = await getCurrentUserId();
     // In a real app, this would create the directory and update database
-    print('Creating folder $name at $path for user $userId');
+    Get.log('Creating folder $name at $path for user $userId');
   }
 
   /// Delete a folder (only if user owns it)
@@ -89,6 +90,6 @@ class FolderRepository {
       throw Exception('Access denied: You do not own this folder');
     }
     // In a real app, delete from database and optionally filesystem
-    print('Deleting folder $folderId');
+    Get.log('Deleting folder $folderId');
   }
 }

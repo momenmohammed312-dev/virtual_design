@@ -61,13 +61,17 @@ def apply_mobile_hints(args, decision, image):
     if not hints:
          return decision, None
          
-    # FIX: Disable automatic class injection; delegate to Fast Classifier for consistency
-    # if hints.image_class_hint != 'auto' and hints.ai_confidence > 0.8:
-    #      if getattr(decision, 'is_locked', False):
-    #           logger.info(f"[Mobile AI] Ignoring class hint '{hints.image_class_hint}' because decision is already LOCKED.")
-    #      else:
-    #           logger.info(f"[Mobile AI] Injecting highly confident class: {hints.image_class_hint}")
-    #           decision.image_class = hints.image_class_hint
+    # Tier 1.5: Inject confident mobile class hint if not locked by user
+    if hints.image_class_hint != 'auto' and hints.ai_confidence > 0.8:
+         if getattr(decision, 'is_locked', False):
+              logger.info(f"[Mobile AI] Ignoring class hint '{hints.image_class_hint}' because decision is already LOCKED by User.")
+         else:
+              logger.info(f"[Mobile AI] Injecting highly confident mobile class: {hints.image_class_hint} ({hints.ai_confidence:.2%})")
+              decision.image_class = hints.image_class_hint
+              decision.confidence = hints.ai_confidence
+              # Optionally lock it so Tier 2/3 (Server AI) doesn't override it if confidence is high
+              if hints.ai_confidence > 0.95:
+                  decision.is_locked = True
          
     alpha_mask = None
     if hints.pre_mask_path:

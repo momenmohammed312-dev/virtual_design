@@ -11,15 +11,11 @@ FIX GROUP: Robust AI AutoFix System with:
 
 from __future__ import annotations
 import base64
-import contextlib
 import json
 import logging
 import os
-import time
-import glob
 from pathlib import Path
 from typing import Optional, Dict, Tuple
-from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -136,7 +132,6 @@ def _get_llm():
         
         _llm = Llama(
             model_path   = MODEL_PATH,
-            mmproj       = MMPROJ_PATH,
             n_ctx        = 8192,
             n_threads    = target_threads,
             n_gpu_layers = gpu_layers, 
@@ -171,107 +166,80 @@ def _classify_without_ai(image: np.ndarray) -> Optional[str]:
         return 'text_logo'
     return None
 
-def analyze_image(image: np.ndarray, opencv_colors: list = None) -> Optional[dict]:
-    """Analyze image with Fast-Classifier bypass for speed."""
+def analyze_image(
+    image: np.ndarray,
+    opencv_colors: list = None,
+    hint_class: str = None,
+    hint_confidence: float = 0.0,
+) -> Optional[dict]:
+    """Classify image only. Processing parameters are estimated by OpenCV."""
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+    h, w = gray.shape
+
+    # HIGH-CONFIDENCE HINT: Skip AI entirely if Flutter already decided
+    if hint_class and float(hint_confidence or 0.0) >= 0.90:
+        print(f"⚡ [AIBridge] HIGH-CONF HINT: {hint_class} ({float(hint_confidence):.2f}) — skipping AI", flush=True)
+        logger.info(f"[AIBridge] ⚡ HIGH-CONF HINT bypass: {hint_class}")
+        return {"image_class": hint_class, "num_colors": 3, "confidence": float(hint_confidence)}
+
     print("🤖 [AIBridge] ===== AI ANALYSIS STARTED =====", flush=True)
     logger.info("[AIBridge] ===== AI ANALYSIS STARTED =====")
-    
+
     # 1. Check Cache
     img_hash = _get_image_hash(image)
-    if img_hash in _ai_cache: 
+    if img_hash in _ai_cache:
         print("♻️ [AIBridge] Using cached result", flush=True)
         logger.info("[AIBridge] ♻️ Using cached result")
         return _ai_cache[img_hash]
-    
-    # 2. Skip AI for simple logos (Fix for analysis delay)
+
+    # 2. Skip AI for simple logos
     fast_class = _classify_without_ai(image)
     if fast_class:
         print(f"⚡ [AIBridge] FAST CLASSIFIER BYPASS: {fast_class}", flush=True)
-        logger.info(f"[AIBridge] ⚡ FAST CLASSIFIER BYPASS: {fast_class} (pure B&W logo)")
-        res = _get_safe_fallback()
-        res['image_class'] = fast_class
-        res['confidence'] = 1.0
-        return _validate_ai_params(res)
-    
-    print("🧠 [AIBridge] AI Model required (not a simple B&W logo)", flush=True)
-    logger.info("[AIBridge] 🧠 AI Model required (not a simple B&W logo)")
+        logger.info(f"[AIBridge] ⚡ FAST CLASSIFIER BYPASS: {fast_class}")
+        result = {"image_class": fast_class, "num_colors": 2, "confidence": 1.0}
+        _ai_cache[img_hash] = result
+        return result
+
+    print("🧠 [AIBridge] AI Model required", flush=True)
+    logger.info("[AIBridge] 🧠 AI Model required")
 
     llm = _get_llm()
-    if llm is None: 
-        print("❌ [AIBridge] AI Model NOT AVAILABLE - using safe fallback", flush=True)
-        logger.warning("[AIBridge] ❌ AI Model NOT AVAILABLE - using safe fallback")
-        return _get_safe_fallback()
-    
-    print("✅ [AIBridge] AI Model loaded, analyzing image...", flush=True)
-    logger.info("[AIBridge] ✅ AI Model loaded, analyzing image...")
+    if llm is None:
+        print("❌ [AIBridge] AI Model NOT AVAILABLE - using fallback", flush=True)
+        logger.warning("[AIBridge] ❌ AI Model NOT AVAILABLE")
+        return {"image_class": "artwork", "num_colors": 3, "confidence": 0.5}
 
-    h, w = image.shape[:2]
-    max_dim = 512
-    if max(h, w) > max_dim:
-        scale = max_dim / max(h, w)
-        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-    
-    _, buf = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    img_b64 = base64.b64encode(buf).decode()
+    print("✅ [AIBridge] AI Model loaded, classifying...", flush=True)
+    logger.info("[AIBridge] ✅ AI Model loaded")
 
     prompt = _PROMPT
     if opencv_colors:
         color_lines = [f"  {i+1}. {c['hex']} - {c['coverage']:.1f}% coverage" for i, c in enumerate(opencv_colors[:8])]
         prompt = _PROMPT_TEMPLATE.replace("{opencv_colors_context}", "\n".join(color_lines))
 
-    # LOG: Show the prompt being sent to AI
-    logger.info("=" * 60)
-    logger.info("[AIBridge] 📝 PROMPT SENT TO AI MODEL:")
-    logger.info(f"{prompt}")
-    logger.info("=" * 60)
-    print("=" * 60, flush=True)
-    print("📝 [AIBridge] PROMPT SENT TO AI MODEL:", flush=True)
-    print(f"{prompt}", flush=True)
-    print("=" * 60, flush=True)
+    logger.info(f"[AIBridge] 📝 PROMPT:\n{prompt}")
 
     try:
         response = llm.create_chat_completion(
-            messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}, {"type": "text", "text": prompt}]}],
-            temperature = 0.1, max_tokens = 250
+            messages=[{"role": "user", "content": f"--- Image Analysis ---\n{w}x{h}\n\n--- Instructions ---\n{prompt}"}],
+            temperature=0.1, max_tokens=100,
         )
         raw = response["choices"][0]["message"]["content"]
         result = _parse_response(raw) or _get_safe_fallback()
-        result = _adjust_for_resolution(result, h, w)
+        result = _validate_ai_params(result)
         _ai_cache[img_hash] = result
-        
-        # Log AI results
-        print(f"✅ [AIBridge] AI ANALYSIS COMPLETE", flush=True)
-        print(f"📊 [AIBridge] Class: {result.get('image_class', 'unknown')}", flush=True)
-        print(f"📊 [AIBridge] Params: denoise={result.get('denoise_strength', '-')}, "
-              f"upscale={result.get('upscale_factor', '-')}, "
-              f"smooth={result.get('smoothing_factor', '-')}, "
-              f"corner={result.get('corner_threshold', '-')}", flush=True)
-        logger.info(f"[AIBridge] ✅ AI ANALYSIS COMPLETE")
-        logger.info(f"[AIBridge] 📊 Class: {result.get('image_class', 'unknown')}")
-        logger.info(f"[AIBridge] 📊 Params: denoise={result.get('denoise_strength', '-')}, "
-                   f"upscale={result.get('upscale_factor', '-')}, "
-                   f"smooth={result.get('smoothing_factor', '-')}, "
-                   f"corner={result.get('corner_threshold', '-')}")
+
+        print(f"✅ [AIBridge] AI ANALYSIS COMPLETE: class={result.get('image_class')}, "
+              f"colors={result.get('num_colors')}, conf={result.get('confidence'):.2f}", flush=True)
+        logger.info(f"[AIBridge] ✅ Class: {result.get('image_class')}, "
+                    f"Colors: {result.get('num_colors')}, Confidence: {result.get('confidence'):.2f}")
         return result
     except Exception as e:
         print(f"❌ [AIBridge] AI Analysis failed: {e}", flush=True)
         logger.error(f"[AIBridge] ❌ AI Analysis failed: {e}")
-        return _get_safe_fallback()
-
-def _get_safe_fallback() -> dict:
-    return {
-        "image_class":"artwork", "num_colors":3, "use_halftone":False,
-        "smoothing_factor":0.25, "corner_threshold":95.0, "lpi":55,
-        "dot_shape":"round", "upscale_factor":1.0, "denoise_strength":3,
-        "contour_min_area":50, "simplification_epsilon":1.2
-    }
-
-def _adjust_for_resolution(result: dict, h: int, w: int) -> dict:
-    max_dim = max(h, w)
-    if max_dim < 500:
-        result["smoothing_factor"] = max(result.get("smoothing_factor", 0.1), 0.3)
-        result["simplification_epsilon"] = max(result.get("simplification_epsilon", 0.1), 1.5)
-    return result
+        return {"image_class": "artwork", "num_colors": 3, "confidence": 0.5}
 
 def _parse_response(raw: str) -> Optional[dict]:
     import re
@@ -281,49 +249,45 @@ def _parse_response(raw: str) -> Optional[dict]:
         clean = "\n".join(lines[1:-1])
     if "<think>" in clean:
         clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.DOTALL).strip()
-    
+
     try:
         res = json.loads(clean)
         return _validate_ai_params(res)
-    except: return None
+    except:
+        return None
 
-def _validate_ai_params(result: dict) -> dict:
-    img_class = result.get("image_class", "artwork")
-    
-    # FIX A-15: Tightened constraints for Text Logos (Diagonal edges in M, A, etc.)
-    if img_class == "text_logo":
-        # REDUCED: Epsilon 0.05 ensures geometric perfection
-        result["simplification_epsilon"] = 0.05
-        # REDUCED: Smoothing 0.05 prevents vertices from jittering
-        result["smoothing_factor"] = 0.05
-        # STRICT: Corner threshold 35 preserves sharp serifs
-        result["corner_threshold"] = 35.0
-    
-    # Global safety clamps
-    result["smoothing_factor"] = max(0.01, min(0.6, float(result.get("smoothing_factor", 0.25))))
-    result["corner_threshold"] = max(20.0, min(180.0, float(result.get("corner_threshold", 95.0))))
-    result["simplification_epsilon"] = max(0.01, min(3.0, float(result.get("simplification_epsilon", 1.2))))
-    
+def _validate_ai_params(result: dict, h: int = 0, w: int = 0) -> dict:
+    """Validate classification output from AI."""
+    cls = str(result.get("image_class", "artwork")).strip()
+    if cls not in ("text_logo", "artwork", "photo"):
+        cls = "artwork"
+    result["image_class"] = cls
+
+    nc = result.get("num_colors", 3)
+    try:
+        nc = max(1, min(8, int(nc)))
+    except (TypeError, ValueError):
+        nc = 3
+    result["num_colors"] = nc
+
+    conf = result.get("confidence", 0.5)
+    try:
+        conf = max(0.0, min(1.0, float(conf)))
+    except (TypeError, ValueError):
+        conf = 0.5
+    result["confidence"] = conf
+
     return result
 
-_PROMPT = """You are a professional silk screen printing expert and image analyst.
-Analyze this image and respond ONLY with a valid JSON object. No markdown, no explanation.
+_PROMPT = """You are a silk screen printing expert. Classify this image.
 
-Determine the best processing parameters for silk screen printing:
+Respond ONLY with this JSON (no markdown, no explanation):
+{"image_class": "text_logo", "num_colors": 2, "confidence": 0.95}
 
-- image_class: one of "text_logo" (sharp edges, 1-3 flat colors, text/icons), "artwork" (illustrations, limited colors, medium detail), "photo" (photographs, gradients, many tones)
-- num_colors: integer 1-8, exact number of ink colors needed for printing
-- use_halftone: true if gradients or photographic tones are present, false for flat/solid areas
-- lpi: integer 35-150, recommended lines-per-inch for halftone screen (lower for coarse mesh, higher for fine mesh)
-- smoothing_factor: float 0.01-0.5, how much to smooth vector paths (low for text/logos, higher for photos)
-- corner_threshold: float 20-180, angle in degrees for corner detection (low=sharp corners, high=smooth curves)
-- simplification_epsilon: float 0.01-3.0, path simplification tolerance
-- dot_shape: one of "round", "ellipse", "square", "line"
-- upscale_factor: float 1.0-4.0, how much to upscale if image is low resolution
-- denoise_strength: integer 0-10, noise removal strength
-
-Respond with ONLY this JSON structure:
-{"image_class": "artwork", "num_colors": 3, "use_halftone": false, "lpi": 65, "smoothing_factor": 0.25, "corner_threshold": 95.0, "simplification_epsilon": 1.2, "dot_shape": "round", "upscale_factor": 1.0, "denoise_strength": 3}"""
+Rules:
+- image_class: "text_logo" (sharp edges, 1-3 flat colors, text/icons), "artwork" (illustrations, limited colors), or "photo" (photographs, gradients, many tones)
+- num_colors: integer 1-8, exact ink colors needed
+- confidence: 0.0-1.0, how certain you are"""
 
 _PROMPT_TEMPLATE = _PROMPT
 _ai_cache = {}
@@ -335,10 +299,6 @@ def _get_image_hash(image: np.ndarray) -> str:
 
 def apply_to_args(ai_result: dict, args) -> None:
     if not ai_result: return
-    # Final clamping for text path
-    if ai_result.get('image_class') == 'text_logo':
-         args.smoothing = 0.05
-         args.simplification = 0.05
     if getattr(args, 'colors', 0) == 0:
         args.colors = ai_result.get("num_colors", 1)
 
@@ -394,17 +354,20 @@ def analyze_preview_flaws(
 
     # If preview lost too many edges → reduce smoothing
     if edge_ratio < 0.6:
-        suggestions['smoothing_factor'] = max(0.05, (prev_params or {}).get('smoothing_factor', 0.25) * 0.7)
+        prev_smooth = (prev_params or {}).get('smoothing_factor', 0.25)
+        suggestions['smoothing_factor'] = max(0.05, prev_smooth * 0.7)
         suggestions['reason_smoothing'] = f'Edge loss detected (ratio={edge_ratio:.2f}), reducing smoothing'
 
     # If preview has too many edges → increase smoothing
     if edge_ratio > 1.5:
-        suggestions['smoothing_factor'] = min(0.5, (prev_params or {}).get('smoothing_factor', 0.25) * 1.3)
+        prev_smooth = (prev_params or {}).get('smoothing_factor', 0.25)
+        suggestions['smoothing_factor'] = min(0.5, prev_smooth * 1.3)
         suggestions['reason_smoothing'] = f'Edge noise detected (ratio={edge_ratio:.2f}), increasing smoothing'
 
     # If histogram diverges significantly → adjust corner threshold
     if hist_correlation < 0.85:
-        suggestions['corner_threshold'] = min(150.0, (prev_params or {}).get('corner_threshold', 95.0) * 1.1)
+        prev_corner = (prev_params or {}).get('corner_threshold', 95.0)
+        suggestions['corner_threshold'] = min(150.0, prev_corner * 1.1)
         suggestions['reason_histogram'] = f'Histogram divergence (corr={hist_correlation:.3f})'
 
     # Build result
